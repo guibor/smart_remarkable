@@ -41,18 +41,17 @@ const VIRTUAL_HEIGHT: u32 = 1024;
 )]
 #[command(after_help = "See https://github.com/yangg1224/smart_remarkable for updates!")]
 pub struct Args {
-    /// Sets the engine to use (openai, anthropic);
+    /// Sets the engine to use (openai, openclaw, anthropic, google);
     /// Sometimes we can guess the engine from the model name
     #[arg(long)]
     engine: Option<String>,
 
     /// Sets the base URL for the engine API;
-    /// Or use environment variable OPENAI_BASE_URL or ANTHROPIC_BASE_URL
+    /// Or use the engine-specific base URL environment variable
     #[arg(long)]
     engine_base_url: Option<String>,
 
-    /// Sets the API key for the engine;
-    /// Or use environment variable OPENAI_API_KEY or ANTHROPIC_API_KEY
+    /// Sets the provider API key or OpenClaw Gateway token for the engine
     #[arg(long)]
     engine_api_key: Option<String>,
 
@@ -442,10 +441,11 @@ fn determine_engine_name(engine_arg: &Option<String>, model: &str) -> Result<Str
 fn create_engine(engine_name: &str, engine_options: &OptionMap) -> Result<Box<dyn LLMEngine>> {
     match engine_name {
         "openai" => Ok(Box::new(OpenAI::new(engine_options))),
+        "openclaw" => Ok(Box::new(OpenAI::new_openclaw(engine_options))),
         "anthropic" => Ok(Box::new(Anthropic::new(engine_options))),
         "google" => Ok(Box::new(Google::new(engine_options))),
         _ => Err(anyhow::anyhow!(
-            "Unknown engine '{}'. Supported engines: openai, anthropic, google",
+            "Unknown engine '{}'. Supported engines: openai, openclaw, anthropic, google",
             engine_name
         )),
     }

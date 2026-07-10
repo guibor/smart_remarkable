@@ -5,16 +5,20 @@
 - Run Smart Remarkable on a Developer Mode reMarkable Paper Pro with firmware 3.28.
 - Keep the stock =xochitl= notebook application running; do not take over the display.
 - Install runtime files only under encrypted =/home= and do not add a boot service.
-- Use the existing OpenAI credential without printing it or weakening its file permissions.
-- Let the user lasso handwriting with the stock selection tool, invoke one command, receive one pen-stroke answer, and have Smart Remarkable exit.
+- Send selected-note requests to the user's existing OpenClaw agent rather than calling an LLM provider with an API key.
+- Keep the OpenClaw Gateway private; authenticate with its gateway token through a one-shot, forwarding-only SSH tunnel and never expose the operator endpoint on the public web.
+- Let the user lasso handwriting with the stock selection tool, invoke one command, receive one stock text-box answer below it, and have Smart Remarkable exit.
+- Use the repository's existing =draw_text= implementation for answers; do not convert ordinary text into simulated pen strokes.
 - Consume the one-shot trigger file even while the Paper Pro touch device is emitting continuous events.
 - Do not install the Xovi LLM/Draw extension on firmware 3.28.
 - Preserve a recovery path over key-authenticated Wi-Fi SSH.
 
 * Requirements that changed
 
+- The first working deployment called OpenAI directly with an API key. The supported backend is now =openclaw/default= through the user's private OpenClaw Gateway; no provider API key may be used by the tablet workflow.
 - The first trial used a persistent corner-trigger Select Mode process. Paper Pro touch events caused repeated and tiny selections, so the supported workflow is now one-shot native-selection activation through =/tmp/llm_button_trigger=.
 - The upstream trigger-file poll waited on a timer that was starved by continuous Paper Pro touch events. File consumption now runs before each event wait.
+- The first successful native-selection response used =selection.json= and =draw_answer=, which rasterized text and retraced it as visibly distorted pen strokes. It was first changed to =selection_print.json=; the current OpenClaw workflow uses =selection_openclaw.json= with the same existing stock =draw_text= output path.
 - Riddle's full-display takeover was evaluated first. It was replaced by Smart Remarkable's stock-UI integration because stopping and restarting =xochitl= was too risky and unstable on firmware 3.28.
 
 * Immediate next steps
@@ -24,16 +28,30 @@
 3. [X] Deploy the binary and one-shot launcher under =/home/root/smart_remarkable=.
 4. [X] Lasso a disposable handwritten question and verify one answer is drawn below it.
 5. [X] Confirm the Smart Remarkable process exits, =xochitl= stays active, and the root filesystem stays read-only.
+6. [X] Deploy and validate the print-specific selection prompt through the repository's runtime prompt override.
+7. [X] Verify that the same native-selection workflow creates a stock text box below the selection and no pen strokes.
+8. [X] Enable and smoke-test OpenClaw's authenticated Chat Completions endpoint on the private gateway.
+9. [X] Add a restricted, forwarding-only tablet tunnel and route the one-shot launcher to =openclaw/default=.
+10. [X] Remove the direct OpenAI credential from the active tablet configuration and verify one live lasso-to-OpenClaw-to-stock-text round trip.
 
 * Verification notes
 
 - The selected handwritten question =What is 7+3= was detected as =Rect { x: 154, y: 83, w: 195, h: 45 }=.
-- OpenAI returned an eight-line explanation, which was rendered below the selection as real pen strokes.
-- The one-shot process exited, =xochitl= remained active with zero restarts, and =/= remained read-only.
-- All four new regression tests pass. The full library suite is 14/15 because an existing unrelated font-render test writes to the upstream author's missing hard-coded =/private/tmp/claude-501/...= directory.
+- OpenAI returned an eight-line explanation in the first end-to-end test, proving selection and placement. That pen-stroke renderer was rejected for normal text because its traced glyphs looked poor.
+- A synthetic no-draw API test loaded =selection_print.json= at runtime, called =draw_text=, and produced =7 + 3 = 10= without changing the validated binary.
+- The final live test reused the same native marquee, invoked =draw_text= once, created an editable stock text object below the handwriting, and emitted no pen strokes.
+- OpenClaw's loopback-only Chat Completions endpoint lists =openclaw/default= and passed authenticated plain-text smoke tests. The endpoint was not added to public nginx.
+- The tablet's dedicated SSH key cannot open a shell and is authorized to forward only to =127.0.0.1:18789=. The launcher starts and removes that tunnel for each invocation.
+- The active tablet =.env= contains only =OPENCLAW_GATEWAY_TOKEN=; the direct =OPENAI_API_KEY= and =OPENAI_BASE_URL= entries were removed.
+- A dedicated =smart-remarkable-rmpp= OpenClaw session avoided contention with the default WhatsApp conversation. Its exact no-draw tablet route answered the stored arithmetic crop with =10= in eight seconds.
+- The final live test detected the native marquee, sent only the selected handwriting to =openclaw/default=, received =10=, inserted it through the stock text tool, and exited successfully. Because this disposable page already contained the earlier test's text object in the placement area, reMarkable appended =10= to that existing editable object rather than creating another overlapping object.
+- The OpenClaw watchdog now honors the gateway's plugin-heavy 90-second startup window instead of repeatedly restarting it before its port opens.
+- The one-shot process exited, no Smart Remarkable or tunnel process remained, the trigger file was removed, =xochitl= remained active with zero restarts, and =/= remained read-only.
+- All four Paper Pro regressions and all three OpenClaw transport tests pass. The relevant library suite is 17/17; one existing unrelated font-render test is excluded because it writes to the upstream author's missing hard-coded =/private/tmp/claude-501/...= directory.
 
 * Later
 
 - Consider upstreaming the trigger-source fix after device validation.
 - Consider a user-friendly Mac shortcut for the one-shot SSH command.
+- Detect an already-occupied stock text object in the automatic placement area and choose the next free vertical position.
 - Re-evaluate a device-local button only when a firmware-3.28-compatible extension mechanism exists.
