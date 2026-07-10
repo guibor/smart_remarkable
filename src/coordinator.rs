@@ -67,6 +67,14 @@ pub struct CoordinatorChannels {
     pub progress_rx: watch::Receiver<ProgressState>,
 }
 
+/// Manual touch triggers need four follow-up taps to define the selection
+/// and placement rectangles. Button-file triggers already refer to xochitl's
+/// active native selection, so processing must detect that marquee instead of
+/// consuming unrelated touch events as rectangle corners.
+fn should_collect_selection_taps(collect_taps: bool, is_real: bool, source: TriggerSource) -> bool {
+    collect_taps && is_real && source == TriggerSource::Touch
+}
+
 impl CoordinatorChannels {
     pub fn new() -> Self {
         let (trigger_tx, trigger_rx) = mpsc::channel(10);
@@ -147,7 +155,7 @@ pub async fn trigger_task(
 
                 // In select mode, collect the selection and placement box corners
                 // while we still hold the touch event stream
-                let event = if collect_taps && touch_guard.is_real() {
+                let event = if should_collect_selection_taps(collect_taps, touch_guard.is_real(), source) {
                     match collect_selection(&mut touch_guard, &cancellation, source).await {
                         Ok(event) => event,
                         Err(e) => {
@@ -192,6 +200,29 @@ pub async fn trigger_task(
     debug!("Escaped from trigger task loop");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_collect_selection_taps;
+    use crate::touch::TriggerSource;
+
+    #[test]
+    fn physical_touch_collects_select_mode_rectangles() {
+        assert!(should_collect_selection_taps(true, true, TriggerSource::Touch));
+    }
+
+    #[test]
+    fn native_button_triggers_use_the_active_marquee() {
+        assert!(!should_collect_selection_taps(true, true, TriggerSource::LlmButton));
+        assert!(!should_collect_selection_taps(true, true, TriggerSource::DrawButton));
+    }
+
+    #[test]
+    fn simulation_and_non_select_modes_skip_manual_rectangles() {
+        assert!(!should_collect_selection_taps(true, false, TriggerSource::Touch));
+        assert!(!should_collect_selection_taps(false, true, TriggerSource::Touch));
+    }
 }
 
 /// Collect the four taps that define the selection box (what to answer)

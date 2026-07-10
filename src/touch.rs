@@ -63,6 +63,19 @@ const LLM_BUTTON_TRIGGER_FILE: &str = "/tmp/llm_button_trigger";
 /// normal answer prompt for that one processing run -- see `TriggerSource`.
 const DRAW_BUTTON_TRIGGER_FILE: &str = "/tmp/draw_button_trigger";
 
+/// Consume at most one button trigger, preferring the LLM action when both
+/// files exist. This check runs before waiting for another touch event so a
+/// continuously busy Paper Pro event stream cannot starve file activation.
+fn take_button_trigger(llm_trigger_file: &str, draw_trigger_file: &str) -> Option<TriggerSource> {
+    if std::fs::remove_file(llm_trigger_file).is_ok() {
+        return Some(TriggerSource::LlmButton);
+    }
+    if std::fs::remove_file(draw_trigger_file).is_ok() {
+        return Some(TriggerSource::DrawButton);
+    }
+    None
+}
+
 /// Which physical trigger woke up `wait_for_trigger`. Threaded through so select-mode
 /// can pick a different prompt/behavior for the Draw button without changing the
 /// public `wait_for_trigger` signature (see `Touch::last_trigger_source`).
@@ -220,6 +233,12 @@ impl Touch {
 
             loop {
                 debug!("wait_for_real_trigger: loop iteration starting");
+
+                if let Some(source) = take_button_trigger(LLM_BUTTON_TRIGGER_FILE, DRAW_BUTTON_TRIGGER_FILE) {
+                    debug!("Button trigger file detected: {:?}", source);
+                    return Ok(source);
+                }
+
                 tokio::select! {
                     // Check for cancellation (only main token, not execution cycles)
                     _ = async {
@@ -233,16 +252,7 @@ impl Touch {
                     }
 
                     // Poll for the LLM/Draw buttons' trigger files (independent of trigger_corner)
-                    _ = sleep(Duration::from_millis(150)) => {
-                        if std::fs::remove_file(LLM_BUTTON_TRIGGER_FILE).is_ok() {
-                            debug!("LLM button trigger file detected");
-                            return Ok(TriggerSource::LlmButton);
-                        }
-                        if std::fs::remove_file(DRAW_BUTTON_TRIGGER_FILE).is_ok() {
-                            debug!("Draw button trigger file detected");
-                            return Ok(TriggerSource::DrawButton);
-                        }
-                    }
+                    _ = sleep(Duration::from_millis(150)) => {}
 
                     // Wait for next event
                     event_result = events.next_event() => {
@@ -780,5 +790,28 @@ impl Touch {
         if let TouchMode::Simulated { simulator } = &self.mode {
             simulator.add_manual_trigger(corner);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{take_button_trigger, TriggerSource};
+
+    #[test]
+    fn button_trigger_is_consumed_without_waiting_for_touch_idle() {
+        let base = std::env::temp_dir().join(format!("smart-remarkable-trigger-{}", std::process::id()));
+        let llm = base.with_extension("llm");
+        let draw = base.with_extension("draw");
+
+        let _ = std::fs::remove_file(&llm);
+        let _ = std::fs::remove_file(&draw);
+        std::fs::write(&llm, []).unwrap();
+
+        assert_eq!(
+            take_button_trigger(llm.to_str().unwrap(), draw.to_str().unwrap()),
+            Some(TriggerSource::LlmButton)
+        );
+        assert!(!llm.exists());
+        assert_eq!(take_button_trigger(llm.to_str().unwrap(), draw.to_str().unwrap()), None);
     }
 }

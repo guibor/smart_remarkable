@@ -1,0 +1,39 @@
+#+title: Smart Remarkable Paper Pro Deployment
+
+* Requirements
+
+- Run Smart Remarkable on a Developer Mode reMarkable Paper Pro with firmware 3.28.
+- Keep the stock =xochitl= notebook application running; do not take over the display.
+- Install runtime files only under encrypted =/home= and do not add a boot service.
+- Use the existing OpenAI credential without printing it or weakening its file permissions.
+- Let the user lasso handwriting with the stock selection tool, invoke one command, receive one pen-stroke answer, and have Smart Remarkable exit.
+- Consume the one-shot trigger file even while the Paper Pro touch device is emitting continuous events.
+- Do not install the Xovi LLM/Draw extension on firmware 3.28.
+- Preserve a recovery path over key-authenticated Wi-Fi SSH.
+
+* Requirements that changed
+
+- The first trial used a persistent corner-trigger Select Mode process. Paper Pro touch events caused repeated and tiny selections, so the supported workflow is now one-shot native-selection activation through =/tmp/llm_button_trigger=.
+- The upstream trigger-file poll waited on a timer that was starved by continuous Paper Pro touch events. File consumption now runs before each event wait.
+- Riddle's full-display takeover was evaluated first. It was replaced by Smart Remarkable's stock-UI integration because stopping and restarting =xochitl= was too risky and unstable on firmware 3.28.
+
+* Immediate next steps
+
+1. [X] Verify the trigger-routing and trigger-file regression tests.
+2. [X] Cross-build the aarch64 binary with the pinned Rust toolchain.
+3. [X] Deploy the binary and one-shot launcher under =/home/root/smart_remarkable=.
+4. [X] Lasso a disposable handwritten question and verify one answer is drawn below it.
+5. [X] Confirm the Smart Remarkable process exits, =xochitl= stays active, and the root filesystem stays read-only.
+
+* Verification notes
+
+- The selected handwritten question =What is 7+3= was detected as =Rect { x: 154, y: 83, w: 195, h: 45 }=.
+- OpenAI returned an eight-line explanation, which was rendered below the selection as real pen strokes.
+- The one-shot process exited, =xochitl= remained active with zero restarts, and =/= remained read-only.
+- All four new regression tests pass. The full library suite is 14/15 because an existing unrelated font-render test writes to the upstream author's missing hard-coded =/private/tmp/claude-501/...= directory.
+
+* Later
+
+- Consider upstreaming the trigger-source fix after device validation.
+- Consider a user-friendly Mac shortcut for the one-shot SSH command.
+- Re-evaluate a device-local button only when a firmware-3.28-compatible extension mechanism exists.
