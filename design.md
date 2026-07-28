@@ -355,33 +355,39 @@ QMD is
 `0fea5e9d78cb085528f0cde5af672abb9c3ca2b327127f43dc6e54605a688412`;
 the disabled canary is
 `0e5eec4ffa03b2b0fdbc6b42519165f93ae77a00c01cf77d92db8993d934978e`.
-The tablet still has the earlier literal-label functional QMD
-`761b7fd4f86ceed9625a541c1a8e7c2c101abc835b56e22c8f8e1a5f919f8ac7`
-until the new disabled canary is physically confirmed.
+The tablet runs that exact functional stock-icon QMD. The user visually
+accepted disabled transaction `20260728T095031Z-58185`; guarded transaction
+`20260728T104334Z-63134` then promoted only that accepted layout and wrote the
+device-bound marker `validated:refresh-functional:78929`. `xochitl` remained
+on PID `78929` with zero automatic restarts, the root filesystem stayed
+read-only, and both canary units exited.
+
 The server bridge/plugin, dedicated restricted SSH account, and current
-aarch64 worker are installed. Server source transaction
-`20260725T230143Z` atomically promoted all eleven bridge source modules and
-retained the previous source directory for rollback. The bridge returned
-healthy on PID `389425`; OpenClaw Gateway remained on PID `372756`, both with
-zero restarts, while the unit, delivery-plugin hashes, and request-journal
-inode remained unchanged. Tablet transaction `20260725T230352Z` installed the
-current worker and staged manifest
-`7a68ae2303e176b96014c34f559f641c6130646dcb8f1e7e8b616479293b9ab1`
-under `/home` with a preserved prior bundle. A no-request start/health/stop
-smoke test left the journal count unchanged. Guarded inert transaction
-`20260725T163235Z-44111` replaced the one-button baseline with the exact
-disabled two-button canary. After human visual confirmation, guarded
-transaction `20260725T211315Z-12106` promoted the exact functional QMD.
-After both new promotions, `xochitl` remained on PID `60746` with zero
-automatic restarts, the functional QMD remained byte-identical, `/` stayed
-read-only, and all worker/deployment units returned inactive.
+aarch64 worker are installed. Server transaction
+`20260728T094046Z-7054958` promoted plugin version `0.2.2` and the tested
+bridge with a complete same-filesystem rollback. The bridge is healthy on PID
+`492930`; OpenClaw Gateway is healthy on PID `492755`, both with zero
+restarts. The refreshed tablet worker retains the reviewed binary hash above
+and has staged-manifest SHA-256
+`845e1fa437fb86b8be2b60efe7a95b0600f46c5b314223e1b68e8d569b3df502`.
+A post-promotion, request-free launcher smoke test started the bounded
+core-disabled worker, proved the restricted private bridge tunnel healthy,
+created no trigger, and toggled the worker off. Smart Remarkable and T.M.R.
+returned inactive while `xochitl` stayed on PID `78929` with zero restarts
+and `/` stayed read-only.
 
 A harmless live `whatsapp_only` request then produced the canonical envelope
 `{"received_text":"Bridge smoke test\nPlease reply READY","response_text":"READY"}`.
 Both acknowledgement and atomic final received native WhatsApp `sent`
 receipts, while the tablet-facing body contained only the fixed WhatsApp-only
-receipt. The remaining live gate is a disposable handwritten selection through
-each physical button, including answer-only stock-text insertion for `LLM`.
+receipt. A second deployed-adapter canary,
+`smart-remarkable-origin-canary-20260728T094530Z`, ran in canonical
+`agent:main:main`, recorded `sourceChannel: remarkable` plus reMarkable
+external-user provenance, and received acknowledgement and final WhatsApp
+`sent` receipts. The remaining live gate is a disposable handwritten
+selection through each physical icon, including answer-only stock-text
+insertion for notebook-with-sparkles, followed by one harmless document
+delivery.
 
 ### Historical one-button deployment baseline
 
