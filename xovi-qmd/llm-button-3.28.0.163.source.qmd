@@ -1,0 +1,126 @@
+; Smart Remarkable answer-here and agent selection-menu buttons.
+; Exact target: Ferrari firmware 3.28.0.163.
+; No credentials, file I/O, network I/O, native ABI calls, or Draw action.
+
+VERSION 3.28.0.163
+
+AFFECT /qml/common/SceneSelectionHandler.qml
+    TRAVERSE Item#selectionRoot
+        TRAVERSE SelectionContextualMenu#tools
+            LOCATE AFTER ArkControls.ContextualMenu.Button#selectionDuplicate
+            INSERT {
+                ArkControls.ContextualMenu.Button {
+                    id: smartRemarkableLlmButton
+                    focusPolicy: Qt.NoFocus
+                    type: tools.type
+                    // One pending mode shared by both buttons prevents a rapid
+                    // answer-here + agent double tap from creating two requests.
+                    property string pendingMode: ""
+                    iconSource: "qrc:/ark/icons/notebook_sparkles"
+                    selected: pendingMode === "write_back"
+
+                    Connections {
+                        target: selectionRoot
+                        function onVisibleChanged() {
+                            smartRemarkableLlmButton.clearPendingMode()
+                        }
+                    }
+
+                    // AppLoad's launcher API has no completion callback. If
+                    // startup or pre-acceptance transport fails, keep the
+                    // selection visible but release the UI guard after a
+                    // bounded interval so the same lasso can be retried.
+                    Timer {
+                        id: smartRemarkablePendingReset
+                        interval: 45000
+                        repeat: false
+                        onTriggered: smartRemarkableLlmButton.clearPendingMode()
+                    }
+
+                    // The worker sends this private chord only after the
+                    // selected crop has been accepted by the remote bridge.
+                    // Calling the stock close() path clears selection state
+                    // without copying or deleting the underlying strokes.
+                    Shortcut {
+                        enabled: smartRemarkableLlmButton.pendingMode !== "" && selectionRoot.visible
+                        sequence: "Ctrl+Alt+Shift+9"
+                        onActivated: {
+                            // Release the guard before close() changes visibility.
+                            // This also disables the shortcut immediately, so a
+                            // delayed chord cannot affect the next selection.
+                            smartRemarkableLlmButton.clearPendingMode()
+                            Qt.callLater(function() {
+                                if (selectionRoot.visible) {
+                                    selectionRoot.close()
+                                }
+                            })
+                        }
+                    }
+
+                    function clearPendingMode() {
+                        smartRemarkablePendingReset.stop()
+                        pendingMode = ""
+                    }
+
+                    function requestMode(mode) {
+                        if (pendingMode !== "") {
+                            return
+                        }
+                        if (mode !== "write_back" &&
+                                mode !== "whatsapp_only") {
+                            return
+                        }
+                        pendingMode = mode
+                        smartRemarkablePendingReset.restart()
+                        if (!launch(mode)) {
+                            clearPendingMode()
+                        }
+                    }
+
+                    function launch(mode) {
+                        // Resolve AppLoad only when tapped. Keeping the module
+                        // out of the host file's static imports lets the stock
+                        // selection component keep loading if AppLoad is ever
+                        // absent or disabled.
+                        var helper = null
+                        try {
+                            helper = Qt.createQmlObject(
+                                'import QtQuick;\n' +
+                                'import net.asivery.AppLoad 1.0;\n' +
+                                'QtObject { function go(mode) { AppLoadLauncher.launchApplication("external::smart-remarkable", ["--selection-button=" + mode], ({}), false) } }',
+                                selectionRoot,
+                                "smart_remarkable_appload_launcher"
+                            )
+                            if (helper) {
+                                helper.go(mode)
+                                helper.destroy()
+                                return true
+                            } else {
+                                return false
+                            }
+                        } catch (error) {
+                            console.warn("Smart Remarkable launcher unavailable")
+                            if (helper) {
+                                helper.destroy()
+                            }
+                            return false
+                        }
+                    }
+
+                    onClicked: requestMode("write_back")
+                }
+
+                ArkControls.ContextualMenu.Button {
+                    id: smartRemarkableSendButton
+                    focusPolicy: Qt.NoFocus
+                    type: tools.type
+                    iconSource: "qrc:/icons/sparkles.svg"
+                    selected: smartRemarkableLlmButton.pendingMode === "whatsapp_only"
+
+                    onClicked: smartRemarkableLlmButton.requestMode(
+                        "whatsapp_only")
+                }
+            }
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT

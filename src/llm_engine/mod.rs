@@ -11,10 +11,42 @@ use std::collections::HashMap;
 pub enum ModelExecutionStatus {
     BuildingContext,
     LlmProcessing,
+    /// The remote endpoint accepted this request. For HTTP transports this is
+    /// emitted only after a successful response status has been received,
+    /// before waiting for the response body.
+    RemoteAccepted,
     ProcessingResponse,
     CallingTools,
     Done,
     Error(String),
+}
+
+/// Where the response to one selected-page request should be rendered.
+///
+/// The OpenClaw worker is long lived and can receive both button types, so
+/// this is request-scoped rather than an engine-construction option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResponseMode {
+    /// Deliver through OpenClaw and also write the returned final text into
+    /// the notebook.
+    #[default]
+    WriteBack,
+    /// Deliver through OpenClaw/WhatsApp only; never invoke a tablet drawing
+    /// or typing callback.
+    WhatsappOnly,
+}
+
+impl ResponseMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WriteBack => "write_back",
+            Self::WhatsappOnly => "whatsapp_only",
+        }
+    }
+
+    pub const fn writes_to_tablet(self) -> bool {
+        matches!(self, Self::WriteBack)
+    }
 }
 
 pub struct Tool {
@@ -44,5 +76,8 @@ pub trait LLMEngine: Send {
     fn add_text_content(&mut self, text: &str);
     fn add_image_content(&mut self, base64_image: &str);
     fn clear_content(&mut self);
+    /// Set the response destination for the next execution. Non-OpenClaw
+    /// engines retain their historical behavior through this default no-op.
+    fn set_response_mode(&mut self, _mode: ResponseMode) {}
     async fn execute(&mut self, cancellation: &SmartRemarkableCancellation, status_callback: Option<StatusCallback>) -> Result<()>;
 }

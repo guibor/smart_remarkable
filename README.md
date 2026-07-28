@@ -6,21 +6,196 @@ response back onto the screen.
 
 This project is a fork of [awwaiid/ghostwriter](https://github.com/awwaiid/ghostwriter), extended with Select Mode.
 
+## Paper Pro 3.28 / OpenClaw workflow
+
+This branch keeps the stock notebook UI running and prints each response as
+ordinary editable reMarkable text. It provides one **Smart Remarkable**
+AppLoad tile and exactly three configurable modes:
+
+| Mode | What submits | Lifetime |
+|---|---|---|
+| `once` | Complete a native lasso and lift the pen. | Exits after the first valid selection; default limit 10 minutes. |
+| `session-hold` | Complete a native lasso, pause at the closing point with the pen still touching, then lift after the hold. | Handles multiple requests; default limit 60 minutes. This is the default and the safest button-free session mode. |
+| `session-auto` | Every completed native lasso submits when the pen lifts. | Handles multiple requests; default limit 60 minutes. Opt in carefully because an ordinary selection edit can also be sent. |
+
+The AppLoad tile toggles the configured worker on and off. To start a session,
+open **My files → left sidebar → AppLoad**, tap **Smart Remarkable**, return
+to the notebook, and use the interaction for the configured mode. Tap the
+same AppLoad tile again to stop early; otherwise PID 1 stops the worker at its
+time limit or whenever stock `xochitl` stops.
+
+### Exact `session-hold` gesture
+
+The hold happens *before* pen-up, at the point where the lasso loop closes:
+
+1. Select reMarkable's native lasso tool.
+2. Put the pen down, draw a loop around the handwriting, and return to the
+   starting point without lifting.
+3. With the loop closed, keep the tip touching the screen and keep the
+   endpoint nearly still for at least 800 ms. The default tolerance is 12
+   normalized screen pixels; moving farther resets the hold timer.
+4. Lift the pen only after that pause. Smart then waits for the stock
+   selection marquee, submits only the selected crop, and types the response
+   below it.
+
+Lifting immediately still creates an ordinary reMarkable selection but does
+not submit it in `session-hold`. A pen tap or a too-small path is ignored. A
+contact that began while another answer was processing is also ignored
+rather than queued; draw a fresh lasso after the answer finishes.
+
+### Native answer-here and agent buttons
+
+The preferred explicit interaction, once the firmware-specific two-button
+patch has passed its device canary, is:
+
+1. Use the native lasso normally and lift the pen.
+2. Immediately after the stock **Copy** action, choose:
+   - The **sparkling notebook** to send the selection to canonical OpenClaw,
+     receive the working acknowledgement and final in WhatsApp, and insert
+     that exact final as editable stock text below the selection.
+   - The **sparkles** to send the same canonical OpenClaw turn and receive the
+     same WhatsApp acknowledgement/final sequence, with no tablet text, pen,
+     or touch output.
+3. The chosen button highlights at once and shared pending state ignores
+   repeated taps. It asks AppLoad to deliver
+   `--selection-button=write_back` or
+   `--selection-button=whatsapp_only`. If no Smart session is active, AppLoad
+   starts the configured mode, waits for its readiness marker and a live
+   forwarded bridge health check, and signals the selection; otherwise it
+   signals the active healthy worker. A stale active worker is restarted once
+   and never receives a trigger until the fresh bridge is healthy.
+4. Smart captures the still-active selection, then clears the marquee/menu
+   through reMarkable's own selection-close path only after OpenClaw has
+   accepted the exact request. This does not copy, delete, move, or change the
+   selected ink. If capture, bridge authentication, or remote acceptance
+   fails, the selection stays visible. No pen hold or four-finger gesture is
+   involved.
+
+Both buttons are explicit triggers in all three modes. In `once`, the worker
+exits after the request; in either session mode it rearms for another one.
+
+### Configuration
+
+The non-secret settings live separately from the OpenClaw credential in
+root-owned, mode-600
+`/home/root/.config/smart-remarkable/settings.conf`. The file is parsed as
+data, never evaluated as shell code:
+
+```ini
+mode=session-hold
+hold_ms=800
+hold_radius_px=12
+min_extent_px=24
+once_timeout_seconds=600
+session_timeout_seconds=3600
+```
+
+Valid modes are only `once`, `session-hold`, and `session-auto`. Unknown
+keys, malformed numbers, and out-of-range values fail closed instead of
+starting a worker.
+
+AppLoad is injected into the stock sidebar only while Xovi is active. On this
+deployment it is deliberately not enabled at boot: if **AppLoad** is absent
+after a restart, triple-press the power button with no more than two seconds
+between presses, wait for the stock UI to return, then open the left sidebar
+again. A single power press remains the ordinary sleep/wake action.
+
+The deployment targets the canonical `agent:main:main` session through a
+loopback-only server bridge. That bridge—not the tablet—owns the full Gateway
+credential and the direct WhatsApp route. The tablet stores only an unrelated
+narrow bridge bearer and a dedicated forwarding-only SSH key in root-owned
+mode-600 files. History and memory stay in the canonical OpenClaw server
+session; the client creates no separate tablet transcript and retains no page
+screenshots.
+
+Each tablet turn is also bound to trusted server-side reMarkable provenance
+before it enters the canonical WhatsApp-routed session. If the handwritten
+request asks OpenClaw to create or send a document, OpenClaw can create a PDF
+or EPUB in its workspace and upload the validated artifact to the ordinary
+reMarkable cloud library. It reports what it read and what it did in WhatsApp.
+That delivery tool is execution-gated to the bound tablet run; typing similar
+words in a normal WhatsApp turn does not authorize it.
+
+The AppLoad tile starts a transient, non-boot
+`smart-remarkable-session.service` bound to `xochitl` and mutually exclusive
+with T.M.R. It uses local tunnel port `18791`, while T.M.R. uses `18790`.
+Volatile readiness and trigger state is root-only under
+`/run/smart-remarkable`; it is removed when the worker stops. The optional
+unauthenticated web server, full request/response logging, output files, old
+provider API keys, and bundled kernel modules are not used.
+
+The raw `xovi-ext/llmbutton` extension described below is deliberately not
+used on firmware 3.28. It resolves private Qt ABI from native code and has a
+real `xochitl` crash history. The candidate for 3.28.0.163 is instead a
+small, firmware-hashed QMLDiff patch that adds the firmware's stock
+sparkling-notebook and sparkles resources after **Copy** and delegates to
+AppLoad. It contains no
+credentials, networking, model call, Draw action, kernel code, or boot action.
+
+### Implementation and deployment status
+
+The two response destinations, three trigger modes, narrow bridge protocol,
+single-request admission, per-request cleanup, guarded QMLDiff artifacts, and
+exact-device coexistence policy are implemented and locally tested. The
+current stock-icon functional QMD has SHA-256
+`0fea5e9d78cb085528f0cde5af672abb9c3ca2b327127f43dc6e54605a688412`;
+the matching disabled visual canary has SHA-256
+`0e5eec4ffa03b2b0fdbc6b42519165f93ae77a00c01cf77d92db8993d934978e`.
+The tablet still retains the previous literal-label functional QMD until the
+new disabled layout completes its guarded visual-confirmation phase.
+
+The loopback bridge/plugin and dedicated local-forward-only SSH account are
+live. The current worker
+`0bce9522c47aa2becc2f07171ed59ade012061ff33bd5cdbc11ec1c94eefde50`
+is installed under `/home`. Small selected crops are now transiently cleaned
+to black-on-white and enlarged before upload. OpenClaw's canonical final is a
+strict literal-transcription/answer envelope: WhatsApp receives one atomic
+`I read:` quote followed by the answer, while the sparkling notebook returns
+only the answer for stock-text insertion and the sparkles action returns no
+assistant text to the tablet.
+
+Server source transaction `20260725T230143Z` and tablet transaction
+`20260725T230352Z` both retain rollback preimages. The new worker passed a
+start/health/stop tunnel smoke test without creating a model request. A
+harmless live `Send`-mode canary was transcribed exactly as
+`Bridge smoke test / Please reply READY`, answered `READY`, and received native
+WhatsApp receipts for both acknowledgement and final. After human confirmation
+of the disabled layout, guarded transaction
+`20260725T211315Z-12106` promoted the exact functional two-button QMD
+`761b7fd4f86ceed9625a541c1a8e7c2c101abc835b56e22c8f8e1a5f919f8ac7`.
+Stock `xochitl` is healthy on the committed PID with zero automatic restarts,
+the root filesystem remains read-only, and all assistant/deployment units are
+inactive. A disposable-page answer-here and agent acceptance test remains required
+to verify real handwriting and notebook insertion through the physical UI.
+The current allowlist requires the exact reviewed Better TOC, Better TOC
+Collapse, Gestik, Ghostbuster, Pen Layer Memory, Quick Settings Timer, and TOC
+From Selection QMDs and rejects every additional, missing, changed, symlinked,
+wrongly owned, or wrongly moded QML artifact. No root remount, boot unit,
+firmware write, kernel module, raw Qt-ABI extension, or stock `xochitl`
+replacement is permitted.
+
+The deployment intentionally adds no tablet boot service. After a tablet restart,
+activate Xovi with the installed triple-power toggle before expecting the
+selection-menu buttons. Once the functional phase is confirmed, lasso ink,
+lift the pen, and tap the sparkling notebook or sparkles immediately after
+**Copy**.
+
 <img src="docs/select-mode-demo.gif" width="300">
 
-It also has a **Select Mode**: lasso a region of handwriting, get an LLM
+The upstream project also has a **Select Mode**: lasso a region of handwriting, get an LLM
 answer drawn into a box you choose. Because the answer is real pen strokes,
 you can afterwards move and resize it with reMarkable's own selection tool.
 
-**New: LLM button.** When you lasso text with reMarkable's own selection
+**Experimental upstream LLM button.** When you lasso text with reMarkable's own selection
 tool, an **LLM** button now shows up right beside the usual cut/copy/paste
 menu — tap it to kick off Select Mode on that selection, no corner tap or
 gesture required. It's added by a small extension
-(`xovi-ext/llmbutton`) that hooks into xochitl's UI.
+(`xovi-ext/llmbutton`) that hooks into xochitl's UI. It is not part of the
+supported Paper Pro 3.28 deployment above.
 
 <img src="docs/llm-button.jpeg" width="300">
 
-**New: Draw button.** A second button, **Draw**, sits right beside the LLM
+**Experimental upstream Draw button.** A second button, **Draw**, sits right beside the LLM
 button (same extension). Lasso a region and tap it instead of LLM: if the
 selection is mostly handwritten/typed text, it sketches a small pencil-scratch
 doodle illustrating what you wrote, drawn below the selection; if the
@@ -68,14 +243,15 @@ the refined version draws in their place. Needs `GEMINI_API_KEY` or
   afterward with reMarkable's native selection tool. See `SELECT_MODE.md`
   for the full walkthrough.
 
-- **LLM button (`xovi-ext/llmbutton`).** A XOVI native extension
+- **Experimental upstream LLM button (`xovi-ext/llmbutton`).** A XOVI native extension
   (`llmbutton.so`) that hooks into the running `xochitl` process at the Qt
   scene-graph level and injects an "LLM" button next to the stock
   cut/copy/paste selection menu. Tapping it writes a trigger file
   (`/tmp/llm_button_trigger`) that kicks off Select Mode on the current
-  selection — no corner tap needed.
+  selection — no corner tap needed. This legacy path is not installed or
+  consumed by the guarded Paper Pro AppLoad workflow.
 
-- **Draw button** (same extension). A second injected button beside LLM.
+- **Experimental upstream Draw button** (same extension). A second injected button beside LLM.
   Tapping it after lassoing a region writes `/tmp/draw_button_trigger` and
   routes to `prompts/draw.json`'s `draw_sketch` tool instead of an LLM
   answer: if the selection is mostly text, the model draws an illustrative
@@ -136,6 +312,19 @@ the refined version draws in their place. Needs `GEMINI_API_KEY` or
 
 ## Usage
 
+**Paper Pro AppLoad/OpenClaw mode** uses the single-tile and three-mode
+workflow documented above. It does not use a provider API key on the tablet.
+Set the desired mode in
+`/home/root/.config/smart-remarkable/settings.conf`, tap the tile once to
+start, and tap it again to stop. With the native buttons, lasso, lift, and tap
+the stock **notebook-with-sparkles** icon for WhatsApp plus notebook text or
+the stock **sparkles** icon for WhatsApp/agent handling only. Without the
+buttons, use the exact hold-before-lift gesture in `session-hold`; `once` and
+`session-auto` submit on an ordinary lasso pen-up.
+
+The following commands describe the generic upstream/direct-provider
+interface and are not the supported OpenClaw launch path.
+
 **Normal mode**, from an SSH session on the device:
 
 ```bash
@@ -166,11 +355,14 @@ There's no on-screen guidance between taps — the sequence is always
 trigger → 2 selection taps → 2 placement taps. Run with `--log-level debug`
 over SSH while you're learning the gesture.
 
-**LLM button / Draw button**: with `xovi-ext/llmbutton` installed, lassoing
-text with xochitl's own selection tool shows **LLM** and **Draw** buttons
-beside cut/copy/paste — tap either to run Select Mode on that selection
-without a corner-tap trigger, using the LLM-answer flow or the
-sketch/redraw flow respectively.
+**Experimental upstream LLM button / Draw button**: with the raw
+`xovi-ext/llmbutton` installed, lassoing text with xochitl's own selection
+tool shows **LLM** and **Draw** buttons beside cut/copy/paste. That native
+extension is not the safe Paper Pro integration. The guarded 3.28.0.163
+candidate in `xovi-qmd/` adds the stock notebook-with-sparkles and sparkles
+actions, and it launches the corresponding AppLoad
+`--selection-button=...` action instead of talking to the Rust process
+directly.
 
 **Key CLI flags**
 
@@ -184,7 +376,10 @@ sketch/redraw flow respectively.
 | `--select-mode` | off | Enable Select Mode |
 | `--image-model` | off (`gemini-2.5-flash-image` if passed bare) | Render Draw-button sketches with an image-generation model |
 | `--image-api-key` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | API key for the image model |
-| `--trigger-corner` | `UR` | `UR`/`UL`/`LR`/`LL` |
+| `--trigger-corner` | `UR` | `UR`/`UL`/`LR`/`LL`, `four-finger`, `pen-release`, or `pen-hold` |
+| `--pen-hold-ms` | `800` | Dwell required at the closed-lasso endpoint in `pen-hold` mode; 400–3000 ms |
+| `--pen-hold-radius-px` | `12` | Maximum normalized endpoint movement before the dwell timer resets; 4–48 px |
+| `--pen-min-extent-px` | `24` | Minimum normalized maximum path extent eligible for lasso submission; 8–128 px |
 | `--apply-segmentation` | off | Add CV-derived spatial hints to the prompt |
 | `--web-search` / `--thinking` / `--thinking-tokens` | off / off / `5000` | Anthropic-only extras |
 | `--web-server` / `--web-port` | off / `8080` | Live config UI/API |
@@ -206,12 +401,50 @@ GOOGLE_API_KEY=... ./smart_remarkable --select-mode -m gemini-2.5-pro --web-serv
 # Offline test against a saved screenshot, no drawing, single pass
 ./smart_remarkable --input-png ./test.png --no-draw --no-loop --no-trigger --no-submit
 
-# Select Mode with nano-banana image generation for the Draw button
+# Experimental upstream four-finger/Draw path; not the supported Paper Pro
+# AppLoad workflow described above
 OPENAI_API_KEY=... GEMINI_API_KEY=... ./smart_remarkable --select-mode \
   --trigger-corner four-finger -m gpt-5.4 --image-model
 ```
 
 ## Install
+
+**ReMagic-compatible AppLoad installation for the supported OpenClaw path**
+
+After building the aarch64 binary, the transactional installer packages the
+local external app and places it under encrypted `/home`. It requires the
+already-provisioned dedicated forwarding-only bridge key and live private
+server bridge:
+
+```bash
+ops/install-smart-openclaw.sh remarkable-rmpp-new
+```
+
+The installer verifies hashes, file modes, stock-UI health, `/dev/uinput`,
+and a read-only root filesystem before and after an atomic directory swap.
+It also builds a sorted `STAGED-FILES.sha256` over every other regular file in
+the bundle, including files sourced from an untracked worktree. The manifest's
+own SHA-256 and the exact device-installer SHA-256 travel out of band and are
+embedded with the manifest contents in the root-only recovery record
+`/home/root/.smart-remarkable-recovery/install-<deployment-id>.provenance`.
+That record is synced as `phase=prepared` before either application rename
+and atomically becomes `phase=installed` only after the new app and manifest
+have been reverified, leaving a useful map even if power is lost mid-swap.
+Both installer halves also require the archive's exact path-only member list
+before extraction. This makes the archive contents auditable without treating
+`git diff` as the source of truth.
+It does not rerun the ReMagic/Xovi installer, enable a service at boot, or
+install `llmbutton.so`. Automatic uinput kernel-module loading is disabled
+unless a developer explicitly opts in with
+`SMART_REMARKABLE_ALLOW_UINPUT_MODULE_LOAD=1`; the supported 3.28 launchers
+require the firmware-provided `/dev/uinput` and fail otherwise.
+
+The local provenance regression is device-free:
+
+```bash
+bash tests/staged-file-manifest-test.sh
+bash tests/smart-openclaw-recovery-metadata-test.sh
+```
 
 **Toolchain**: Rust `1.92.0` (pinned in `.tool-versions`).
 
@@ -317,17 +550,18 @@ image).
 
 ## Architecture
 
-**Data flow**: touch trigger → screenshot → LLM → draw/type.
+**Data flow**: admitted trigger → selected framebuffer crop → OpenClaw/LLM →
+draw/type → cleanup and optional rearm.
 
 1. **Trigger** (`touch.rs`, `coordinator::trigger_task`) — waits on
-   `/dev/input/eventN` for a corner-tap release, a four-finger tap, or an
-   external write to `/tmp/llm_button_trigger` or `/tmp/draw_button_trigger`
-   (from the `llmbutton` xovi extension). Which one fired is tracked as
-   `touch::TriggerSource` (`Touch` / `LlmButton` / `DrawButton`) and threaded
-   through `TriggerEvent`/`processing_task`, which picks `prompts/draw.json`
-   over the configured `--prompt` only for `DrawButton`. In Select Mode it
-   also collects the two pairs of corner taps defining the selection rect
-   and the placement rect.
+   `/dev/input/eventN` for a corner release, four-finger gesture, eligible
+   lasso pen-up, or held-lasso pen-up. It also atomically consumes root-only
+   `/run/smart-remarkable/llm_button_trigger` and
+   `/run/smart-remarkable/draw_button_trigger`. Which source fired is tracked
+   in `touch::TriggerSource`; an atomic admission gate and channel capacity
+   of one prevent overlapping or surprise queued requests. Native selection
+   triggers reuse xochitl's active marquee; manual Select Mode can still
+   collect its two selection and two placement corners.
 2. **Capture** (`screenshot.rs`) — reads `xochitl`'s framebuffer directly
    out of `/proc/<pid>/mem`, decodes/rotates/color-corrects it into a
    normalized 768×1024 PNG; can detect the native selection marquee via
@@ -337,8 +571,10 @@ image).
    `mpsc`/`watch` channels. `processing_task` optionally crops to the
    selection rect, optionally runs `segmenter.rs`, loads the JSON prompt
    template, and hands the base64 image + prompt to the LLM engine.
-   `progress_task` types a "Thinking..." dot animation via the virtual
-   keyboard while waiting.
+   It suppresses repeated pen submission of the same still-active selection,
+   clears request image/model/tool scratch state after every path, and rearms
+   only after cleanup. The supported OpenClaw wrapper disables the
+   `progress_task` text animation.
 4. **LLM call** (`src/llm_engine/`) — a shared `LLMEngine` trait
    abstracts over `openai.rs`, `anthropic.rs`, `google.rs`. Each builds a
    provider-specific tool-forcing request and invokes the callback for
@@ -361,8 +597,8 @@ image).
 | Module | Responsibility |
 |---|---|
 | `main.rs` | CLI entry point, config/engine wiring, tool registration, restart-on-config-change loop, `--debug-*` one-shot helpers |
-| `coordinator.rs` | Async task graph: trigger detection, progress reporting, screenshot→LLM→tool pipeline |
-| `touch.rs` | Raw touch/evdev reading, corner/four-finger trigger detection, coordinate mapping, gesture helpers |
+| `coordinator.rs` | Async task graph: trigger detection, no-selection re-arming, progress reporting, screenshot→LLM→tool pipeline |
+| `touch.rs` | Raw touch/evdev reading, corner/four-finger/pen-release/pen-hold trigger detection, `/run` button signaling, coordinate mapping, gesture helpers |
 | `screenshot.rs` | Framebuffer capture, decode, selection-marquee detection, cropping |
 | `pen.rs` | Virtual pen (`evdev`/uinput): SVG/bitmap rendering strategies |
 | `keyboard.rs` | Virtual keyboard (`evdev`/uinput): text typing, progress-dot animation |
@@ -389,14 +625,20 @@ armv7/aarch64; a `prompts/*.json` system (`general.json`, `selection.json`,
 plus one `tool_*.json` schema per registered tool) that drives LLM
 tool-calling across all three provider backends.
 
-The **LLM/Draw button** extension (`xovi-ext/llmbutton`) is architecturally
-separate: it's a standalone C shared object built against the XOVI
-extension framework, loaded into the *stock* `xochitl` process itself
-(resolving Qt6 symbols via `dlsym`, walking the live QtQuick scene graph to
-inject both buttons into the native selection menu) rather than part of the
-Rust `smart_remarkable` binary — the two communicate only via the
-filesystem trigger files `/tmp/llm_button_trigger` and
-`/tmp/draw_button_trigger`.
+The upstream **LLM/Draw button** extension (`xovi-ext/llmbutton`) is a
+separate C shared object that resolves private Qt6 symbols with `dlsym` and
+walks the live QtQuick scene graph. It is retained only as upstream source
+and is not compatible with the guarded Paper Pro path.
+
+The Paper Pro candidate instead uses firmware-specific QMLDiff artifacts in
+`xovi-qmd/`. The functional patch inserts one
+`ArkControls.ContextualMenu.Button` into the exact
+`SceneSelectionHandler.qml` resource and dynamically asks AppLoad to launch
+`external::smart-remarkable --selection-button`. AppLoad owns worker startup
+and writes the `/run` trigger; the QML has no credential, network, or model
+access. A separate disabled-button patch is the first visual canary. Neither
+artifact is activated until live hashes pass the exact allowlist and a
+bounded rollback transaction is available.
 
 ## License
 

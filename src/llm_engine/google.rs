@@ -85,7 +85,12 @@ impl LLMEngine for Google {
             }
         });
 
-        debug!("Request: {}", body);
+        debug!(
+            "Google request prepared (model={}, content_items={}, tool_count={})",
+            self.model,
+            self.content.len(),
+            self.tools.len()
+        );
 
         // Notify that we're building context
         status_update!(status_callback, super::ModelExecutionStatus::BuildingContext);
@@ -101,19 +106,26 @@ impl LLMEngine for Google {
                 .header("Content-Type", "application/json")
                 .json(&body)
                 .send()
-                .await?;
+                .await
+                // reqwest error displays may include the full request URL.
+                // Google's API key is a query parameter, so never propagate
+                // that display string to the coordinator log.
+                .map_err(|_| anyhow::anyhow!("Google request failed"))?;
 
             if !response.status().is_success() {
                 return Err(anyhow::anyhow!("API Error: {}", response.status()));
             }
 
-            let body_text = response.text().await?;
+            let body_text = response
+                .text()
+                .await
+                .map_err(|_| anyhow::anyhow!("Google response read failed"))?;
             let json: json = serde_json::from_str(&body_text)?;
             Ok(json)
         };
 
         let json: json = with_cancellation(request_future, cancellation).await?;
-        debug!("Response: {}", json);
+        debug!("Google response received and parsed");
 
         // Notify that we're processing the response
         status_update!(status_callback, super::ModelExecutionStatus::ProcessingResponse);

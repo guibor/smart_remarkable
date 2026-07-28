@@ -1,0 +1,341 @@
+# Smart Remarkable OpenClaw bridge
+
+This is a loopback-only protocol adapter between Smart Remarkable's
+OpenAI-shaped HTTP request and OpenClaw's native Gateway RPC. It is intended to
+run on the same server, as the same Unix user, as the OpenClaw Gateway.
+
+It does not run on or modify the reMarkable. The tablet reaches it through the
+existing SSH local forward:
+
+```text
+tablet 127.0.0.1:18791
+        -> SSH direct-tcpip
+server 127.0.0.1:18792
+        -> OpenClaw Gateway ws://127.0.0.1:18789
+```
+
+## Two-button behavior
+
+- The stock notebook-with-sparkles icon sends
+  `x-smart-remarkable-response-mode: write_back`. OpenClaw runs the request in
+  `agent:main:main`, sends an immediate working acknowledgement and one final
+  WhatsApp message containing the literal transcription followed by the
+  answer. The bridge returns only the answer for insertion in the notebook.
+- The stock sparkles icon sends
+  `x-smart-remarkable-response-mode: whatsapp_only`. It uses the same OpenClaw
+  session, acknowledgement, tools, memory, and WhatsApp delivery, but the
+  tablet deliberately does not insert the returned text. Its HTTP response
+  contains only a fixed delivery receipt; the assistant answer is never echoed
+  to the tablet in this mode.
+
+For both modes, the tablet selection can disappear as soon as the bridge
+flushes its HTTP 200 headers. Those headers are withheld until native
+`chat.send` has admitted the run. The JSON body follows only after the matching
+protocol-valid live final or strict canonical-history reconciliation.
+
+The two actions use stock firmware resources instead of custom glyphs or the
+ambiguous labels `LLM` and `Send`. A pending mode is cleared before AppLoad
+closes, on visibility loss, on timeout, and on launch failure, so one failed
+attempt cannot silently consume the next tap.
+
+## Data flow
+
+1. The tablet posts one prompt and one PNG to `POST /v1/chat/completions` with a
+   narrow Bearer token, a response-mode header, and a unique request ID.
+2. The bridge validates the fixed request shape and computes a content
+   fingerprint. Before any Gateway call, it atomically reserves that request
+   ID, fingerprint, and response mode in its persistent request journal. The
+   selected PNG and prompt are never persisted there. The request ID is both
+   the bridge coalescing key and OpenClaw's `chat.send` idempotency key.
+3. The bridge preflights canonical history to capture the transcript ID for
+   recovery and authority binding. It then calls
+   `smart_remarkable.bind_origin` with the request ID, response mode, and
+   captured transcript ID and requires the plugin's exact receipt. This creates
+   trusted, run-scoped state before model admission. The bridge does not pass
+   the captured transcript ID to `chat.send`; on OpenClaw 2026.7.1 that field
+   can rotate current session state rather than atomically assert identity.
+4. The bridge appends a versioned instruction requiring the canonical
+   assistant final to be exactly
+   `{"received_text":"...","response_text":"..."}`, then calls native
+   `chat.send` with the fixed server-side session `agent:main:main`, the PNG as
+   an inline image attachment,
+   `suppressCommandInterpretation: true`, `deliver: false`, and an explicit
+   direct WhatsApp origin and the startup-validated
+   `expectedSessionRoutingContract: "per-sender|main|main"`. It also attaches
+   durable external-user provenance whose source channel is `remarkable` and
+   source tool is `smart_remarkable`. This records one canonical
+   user/assistant turn without relying on unverified automatic delivery or
+   changing persistent verbose settings in the canonical session. A
+   pre-admission failure clears the run binding.
+5. The plugin's prompt hook reads only the trusted run context and requires
+   the hook's actual transcript ID to match the captured one. It tells OpenClaw
+   that the current turn originated on reMarkable while preserving normal
+   WhatsApp continuity. If the user actually asks to create, export, send, add,
+   or place a document, the hook tells the agent to create a finished PDF or
+   EPUB in its workspace and call `remarkable_deliver_document`. Discussing a
+   document does not imply an upload.
+6. On Gateway acceptance with `runId` exactly equal to the tablet request ID,
+   the bridge calls the bundled `smart_remarkable.deliver` plugin method with
+   kind `ack`, then flushes the tablet's 200 response headers. The plugin is
+   scoped to `operator.write`, derives the direct WhatsApp destination from
+   `agent:main:main`, and accepts no caller-supplied route.
+7. The bridge accepts a matching live final only when that envelope is valid.
+   Current history is eligible only while its transcript ID still matches the
+   captured ID; a live final remains only a candidate until that same
+   transcript contains the exact `<requestId>:user` anchor. If the canonical
+   mapping changed, recovery prefers the exact preflight-captured transcript
+   and otherwise considers only bounded exact-name reset archives with
+   no-follow, size, session-header, uniqueness, and request-anchor checks.
+8. The bridge waits for the acknowledgement attempt, then renders and sends one
+   atomic final through `smart_remarkable.deliver`: `I read:`, the line-quoted
+   literal transcription, a blank line, and the answer. `[unclear]` becomes an
+   explicit inability-to-read message. A failed acknowledgement does not
+   prevent the final attempt, but the final cannot overtake an in-flight ack.
+9. The delivery plugin uses OpenClaw 2026.7.1's public
+   `sendDurableMessageBatch` helper and loaded native WhatsApp adapter.
+   `mirror` and `session` are deliberately omitted, so these status/final sends
+   are not appended to the canonical transcript a second time. Only a
+   successful final plugin RPC with exact `status: "sent"` is reported as
+   `openclaw_delivery.final.status: "sent"`. Success requires the native result
+   to contain the exact derived run ID, channel `whatsapp`, and a matching
+   non-empty platform receipt/message ID. A rejected or incomplete result is
+   reported as `failed`; a final chat event alone is never described as
+   successful delivery. The acknowledgement is held to the same checks.
+10. When the agent calls `remarkable_deliver_document`, a second plugin hook
+    requires the exact bound request, captured transcript ID, canonical main
+    agent, and canonical main session before injecting a server-only
+    capability. Tool execution rechecks that session identity. The tool admits
+    only a workspace-contained regular PDF or EPUB, snapshots it privately,
+    invokes the pinned `remarkable-sync` CLI without a shell, and accepts only
+    a strict cloud ID/hash receipt. Its durable journal prevents an identical
+    confirmed upload from being repeated and fails closed after an ambiguous
+    outcome.
+11. Internal Gateway/provider error text is logged only server-side. Tablet
+   responses use fixed public run, acknowledgement, and final-delivery
+   messages.
+
+Concurrent retries with the same ID, mode, and content share one Gateway turn,
+one acknowledgement, and one final send. Reuse of an ID for different content
+or a different mode is rejected with HTTP 409. Replay labeling is per caller:
+the caller that started the work receives
+`x_smart_remarkable.replayed: false`; concurrent or delayed duplicate callers
+receive `true`. The tablet suppresses notebook writeback for a replay so an
+HTTP retry cannot insert the same answer twice.
+
+The bridge request journal survives process restarts. A completed entry returns
+its cached safe response, marked as a replay, without calling `chat.send` or
+either delivery RPC again. A reserved, corrupt, or ambiguous entry fails
+closed and never resubmits the request. Records contain the request ID, mode,
+content fingerprint, and final safe response only; they never contain the
+selected PNG, prompt, image base64, Gateway token, or WhatsApp credentials.
+Entry directories are atomically reserved and records are committed with
+write-fsync-rename-fsync. Record reads refuse symlinks and records larger than
+128 KiB.
+
+The journal has a fixed hard capacity (20,000 entries by default, configurable
+up to 100,000) implemented with atomically claimed slot files. It never evicts
+or automatically reuses an old request ID because that could weaken restart
+idempotency. Once full, new IDs receive HTTP 503 and require explicit operator
+maintenance. A filesystem failure can conservatively leak a slot; that reduces
+available capacity but can never permit more than the configured maximum or
+cause duplicate work.
+
+The delivery plugin separately keeps
+a persistent, plugin-owned receipt journal under OpenClaw's state directory.
+A completed receipt is replayed without resending; a reservation left by an
+interrupted or uncertain send is never automatically retried because its
+platform outcome cannot be proven. This fail-closed rule can omit a message
+after a pre-send crash, but it avoids silently duplicating a WhatsApp message
+after an ambiguous post-send crash. The journal uses atomic directory
+reservation plus write-fsync-rename commits. Directory and record reads use
+no-follow handles, owner/type/identity checks, private modes, a one-link/64 KiB
+record policy, stable descriptor reads, and fatal UTF-8 validation before
+parsing a cached receipt. It does not call OpenClaw's trusted-plugin-only keyed
+state API.
+`sendDurableMessageBatch` also creates its own random-ID OpenClaw queue entry.
+After a process crash that entry may still be pending or recovering while the
+plugin reservation blocks a second batch. Queue recovery may eventually
+complete the original attempt, but the plugin reports `UNAVAILABLE` until a
+matching receipt is already journaled; it does not claim that the message was
+automatically delivered or enqueue a duplicate.
+
+The tablet requires both
+`openclaw_delivery.acknowledgement.status: "sent"` and
+`openclaw_delivery.final.status: "sent"` before it accepts completion or
+writes an answer back into the notebook. The bridge still attempts the final
+send after an acknowledgement failure so the user can receive the answer on
+WhatsApp, but the tablet fails closed when either receipt is absent.
+
+If a restarted bridge receives a completed `chat.send` `status: "ok"` replay,
+it accepts it only with the exact request ID, then calls `chat.history` with
+`maxChars: 500000` and the maximum 1000-message recent tail. It requires exactly
+one user anchor whose idempotency key is `<requestId>:user`, ignores unrelated
+assistant IDs, and accepts only a protocol-valid assistant record before the
+next user turn. Duplicate anchors, target-interval truncation, a cross-user
+boundary, or missing attributable output fail closed. Older history may exist
+when the exact anchor is already in the returned tail. `status: "in_flight"` is
+treated as accepted only with the same exact ID and uses the same bounded
+live-event/history reconciliation.
+
+If the canonical session mapping changes after admission, recovery is limited
+to the exact transcript ID captured before the send. The reader validates that
+ID as a filename component and first tries its active JSONL. If OpenClaw reset
+it, the reader considers at most 128 exact
+`.jsonl.reset.<safe-ISO-timestamp>` names, opens each with `O_NOFOLLOW`, bounds
+the file at 64 MiB and each line at 8 MiB, validates the first session record,
+and requires one unique exact request anchor. It never examines another
+session's transcript. The captured ID is a recovery locator and authority
+constraint only; it is never used to repin or mutate the current OpenClaw
+session.
+
+## Runtime prerequisites
+
+- Node must satisfy OpenClaw 2026.7.1's exact engine constraint:
+  `>=22.22.3 <23`, `>=24.15.0 <25`, or `>=25.9.0`.
+- Run `npm ci --omit=dev` in this directory. The dependency is pinned to
+  `openclaw@2026.7.1`; the production import is the official
+  `openclaw/plugin-sdk/gateway-runtime` export.
+- Run the bridge process as the same Unix user as
+  `openclaw-gateway.service`. The sample system unit explicitly drops to
+  `User=mdf`; that user's home must contain the canonical OpenClaw
+  configuration and main-agent session store.
+- Install and enable `openclaw-plugin/` as a native workspace plugin before
+  starting the bridge. Its manifest activates on Gateway startup, and the
+  Gateway must expose `smart_remarkable.deliver`,
+  `smart_remarkable.bind_origin`, and `smart_remarkable.clear_origin`, plus the
+  `remarkable_deliver_document` agent tool.
+- Document delivery uses the existing reMarkable Cloud client at
+  `/home/mdf/code/remarkable-sync/.venv/bin/python` and its private config at
+  `/home/mdf/.config/remarkable-sync/config.json`. The config must be a
+  non-symlinked regular file owned by the Gateway user and mode 0600 or
+  stricter. The plugin passes its path only through
+  `REMARKABLE_SYNC_CONFIG`; it does not copy the credential into OpenClaw
+  prompts, tool arguments, or logs.
+- The OpenClaw Gateway must listen on `ws://127.0.0.1:18789`, and its token
+  authentication must be enabled.
+- OpenClaw's resolved session routing must remain exactly
+  `per-sender|main|main`. The bridge validates this at startup and also passes
+  it as `expectedSessionRoutingContract` on each native send, so a scope,
+  main-key, or default-agent change fails closed instead of silently
+  recanonicalizing the main alias.
+- The SSH key used by the tablet belongs to a dedicated password-locked Unix
+  account. The example policy in
+  `ssh/sshd_config.smart-remarkable-tunnel.example` allows only client-local
+  TCP forwarding to literal `127.0.0.1:18792` and denies reverse TCP,
+  StreamLocal, shell/exec/subsystem, PTY, agent/X11, tunnel, and user-rc
+  access. The bridge itself never binds a LAN address.
+- The bridge request journal must be in a dedicated absolute directory whose
+  leaf name is `request-journal-v1`. The sample service gives it a private
+  `StateDirectory` while leaving the rest of the user's home read-only.
+
+By default no full Gateway token or WhatsApp destination is duplicated:
+
+- `~/.openclaw/openclaw.json` supplies `gateway.auth.token`.
+- `~/.openclaw/agents/main/sessions/sessions.json` supplies
+  `["agent:main:main"].origin`.
+- That origin must have `provider: "whatsapp"`, direct `chatType`, and non-empty
+  `to` and `accountId` values.
+- WhatsApp destination environment overrides are rejected, so a service
+  configuration cannot silently diverge from the canonical main conversation.
+- `~/.config/smart-remarkable-openclaw-bridge/tablet.token` supplies the
+  unrelated tablet-facing Bearer token. It must contain 43-128 base64url
+  characters and be mode 0600 or stricter.
+
+Environment overrides are listed in `.env.example`. In particular, the bridge
+refuses a non-loopback HTTP listener, a non-loopback Gateway URL, or a
+non-canonical WhatsApp route even if one is configured.
+
+The default request-journal location for an unsandboxed manual run is
+`$OPENCLAW_HOME/smart-remarkable-bridge/request-journal-v1`. The sample
+production service explicitly sets it to
+`%S/smart-remarkable-openclaw-bridge/request-journal-v1`, backed by
+`StateDirectory=smart-remarkable-openclaw-bridge` at mode 0700. Do not add a
+broad writable-home exception to the service sandbox.
+
+## System service assumptions
+
+The sample is a systemd **system** unit because systemd 249 does not enforce
+`ProtectHome=` or `ProtectSystem=` for user-manager services. PID 1 creates the
+private state directory and the service then runs unprivileged as
+`User=mdf`, with the rest of `/home` read-only and the system filesystem
+protected. The bridge files remain under
+`/home/mdf/.local/share/smart-remarkable-openclaw-bridge`; the full Gateway
+credential and canonical session files are read from the same user's home.
+Only unit installation and lifecycle control require root.
+
+The Gateway remains an independent systemd **user** service. A system unit
+cannot order itself against a different user's service manager, so the bridge
+depends only on network readiness. If the loopback Gateway is not ready, the
+bridge exits before opening HTTP and `Restart=on-failure` retries it.
+
+Install and start commands are intentionally not automated here:
+
+```bash
+npm ci --omit=dev
+sudo install -m 0644 \
+  systemd/smart-remarkable-openclaw-bridge.service.example \
+  /etc/systemd/system/smart-remarkable-openclaw-bridge.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now smart-remarkable-openclaw-bridge.service
+curl --fail http://127.0.0.1:18792/health
+```
+
+The health endpoint is deliberately simple and carries no credentials. It is
+only reachable through loopback or the constrained tablet SSH tunnel. The
+listener is opened only after the request journal has been created, ownership
+checked, and proven writable, so `/health` cannot be green while durable
+request reservation is unavailable. Missing manual-run directory ancestors are
+created one at a time with a parent-directory fsync after every creation; crash
+durability therefore does not depend on `StateDirectory=` having pre-created
+the parent.
+
+## OpenClaw 2026.7.1 acceptance compatibility
+
+`GatewayClient.request(..., { expectFinal: true, onAccepted })` invokes
+`onAccepted` for an interim status named `accepted`, but the native
+`chat.send` handler in OpenClaw 2026.7.1 names its post-admission response
+`started`. The bridge prefers `onAccepted` and also treats that exact native
+`started` response as the same acceptance boundary. After acceptance, a later
+request-callback failure cannot discard the already admitted turn; the bridge
+continues bounded canonical-history reconciliation for up to ten minutes. It
+never flushes success headers merely because the socket connected or the HTTP
+request parsed, and missing or mismatched acceptance run IDs never flush
+success headers.
+
+## Verification
+
+```bash
+npm test
+node --test openclaw-plugin/test/*.test.mjs
+```
+
+The 118 bridge/plugin tests use a fake Gateway client and temporary filesystem
+journals. They verify pre-acceptance header
+withholding, both modes, fixed routing, one turn/acknowledgement/final send per
+request ID, conflicting duplicates, acknowledgement and final delivery
+failure, ack-before-final ordering, exact transcription-plus-answer delivery,
+answer-only writeback, strict envelope parsing, completed and in-flight replay
+behavior, exact acceptance IDs, history misses and truncation, empty live-final
+recovery, history-only `started` completion, cross-user attribution refusal,
+fixed public errors, WhatsApp-only response redaction, the OpenClaw 2026.7.1
+`started` compatibility path, persistent restart replay, fail-closed incomplete
+reservations, per-caller replay labeling, fixed capacity, symlink/corruption
+rejection, trusted origin/session binding and clearing, routing-contract drift,
+durable provenance, active and real reset-archive transcript recovery,
+replacement-session/live-final rejection, production service wiring, and
+pre-health journal preparation.
+
+The plugin tests use fake sends plus both a fake journal and the real atomic
+file journal in a temporary directory. They verify ordinary workspace-plugin
+registration never touches OpenClaw's restricted keyed state API, the exact
+`operator.write` scope, strict bounded params, fixed canonical route
+derivation, direct-adapter receipt checks, absent `mirror`/`session` fields,
+in-flight coalescing, durable receipt replay, and fail-closed ambiguous restart
+behavior, including a surviving reservation while an independently keyed
+OpenClaw queue entry may still recover. They also cover prompt-hook scoping,
+run-capability enforcement, workspace containment, link and format rejection,
+private snapshots, strict CLI invocation and receipt parsing, upload
+idempotency, ambiguous-outcome refusal, and no-follow bounded durable receipt
+reads that reject symlinks, hard links, unsafe modes, oversized files, invalid
+UTF-8, and forged envelopes. Neither suite makes network, server, tablet, or
+reMarkable Cloud changes.

@@ -3,7 +3,10 @@ use clap::Parser;
 use dotenv::dotenv;
 use log::info;
 use serde::Serialize;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use tokio::sync::{Mutex as TokioMutex, RwLock as TokioRwLock};
 
 use std::time::Duration;
@@ -23,7 +26,7 @@ use smart_remarkable::{
     status::SmartRemarkableStatus,
     touch::{PenTool, Rect, Touch, TriggerCorner, TriggerSource},
     util::{
-        build_svg_from_lines, fit_lines_to_rect, fit_svg_to_rect, image_to_ink_bitmap, setup_uinput, svg_to_bitmap, upscale_png_b64,
+        build_svg_from_lines, fit_lines_to_rect, fit_svg_to_rect, image_to_ink_bitmap, setup_uinput, svg_to_bitmap,
         write_bitmap_to_file, OptionMap,
     },
     web_server::start_web_server,
@@ -51,7 +54,7 @@ pub struct Args {
     #[arg(long)]
     engine_base_url: Option<String>,
 
-    /// Sets the provider API key or OpenClaw Gateway token for the engine
+    /// Sets the provider API key or narrow OpenClaw bridge token for the engine
     #[arg(long)]
     engine_api_key: Option<String>,
 
@@ -150,9 +153,21 @@ pub struct Args {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// Sets which corner the touch trigger listens to (UR, UL, LR, LL, upper-right, upper-left, lower-right, lower-left)
+    /// Sets the touch trigger (UR, UL, LR, LL, four-finger, pen-release, or pen-hold)
     #[arg(long, default_value = "UR")]
     trigger_corner: String,
+
+    /// Milliseconds the lasso endpoint must remain still before pen-up in pen-hold mode
+    #[arg(long, default_value_t = 800)]
+    pen_hold_ms: u64,
+
+    /// Allowed endpoint jitter in normalized 768x1024 pixels during a hold
+    #[arg(long, default_value_t = 12)]
+    pen_hold_radius_px: i32,
+
+    /// Minimum normalized path extent accepted as a lasso rather than a tap
+    #[arg(long, default_value_t = 24)]
+    pen_min_extent_px: i32,
 
     /// Save current configuration to ~/.smart_remarkable.toml and exit
     #[arg(long)]
@@ -485,7 +500,13 @@ async fn smart_remarkable(args: &Args) -> Result<()> {
             let simulation_config = SimulationConfig::from_config(&config);
             Touch::new_simulated(simulation_config, trigger_corner)?
         } else {
-            Touch::new(config.no_draw, trigger_corner)
+            Touch::new_with_pen_hold(
+                config.no_draw,
+                trigger_corner,
+                config.pen_hold_ms,
+                config.pen_hold_radius_px,
+                config.pen_min_extent_px,
+            )
         };
         Some(Arc::new(TokioRwLock::new(touch)))
     } else {
@@ -547,6 +568,10 @@ async fn smart_remarkable(args: &Args) -> Result<()> {
         .await
         {
             Ok(()) => {
+                if shared_config.read().await.no_loop {
+                    info!("One-shot Smart Remarkable loop exited cleanly");
+                    break Ok(());
+                }
                 info!("Smart Remarkable loop exited normally, restarting to pick up config changes...");
                 continue; // Restart the loop
             }
@@ -591,8 +616,19 @@ async fn run_smart_remarkable_loop(
     let touch = if let Some(shared_touch) = shared_touch {
         shared_touch
     } else {
-        Arc::new(TokioRwLock::new(Touch::new(config.no_draw, trigger_corner)))
+        Arc::new(TokioRwLock::new(Touch::new_with_pen_hold(
+            config.no_draw,
+            trigger_corner,
+            config.pen_hold_ms,
+            config.pen_hold_radius_px,
+            config.pen_min_extent_px,
+        )))
     };
+
+    // Only the long-lived listener owns trigger cleanup/readiness. Helper
+    // Touch instances used by drawing tools must never delete a real button
+    // press that arrived during processing.
+    touch.write().await.prepare_trigger_listener()?;
 
     // Give keyboard time to initialize
     // sleep(Duration::from_millis(1000)).await;
@@ -637,6 +673,14 @@ async fn run_smart_remarkable_loop(
     // so the image-generation draw tool can attach it to its request when
     // refining an existing sketch
     let input_image_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    // One admitted request at a time. The trigger listener also snapshots
+    // this value at pen-down, so a contact begun while busy cannot become a
+    // delayed request after the current response finishes.
+    let trigger_admission = Arc::new(AtomicBool::new(true));
+    // Last successfully processed native selection, used to reject an
+    // accidental repeat of a still-active marquee.
+    let last_selection_fingerprint: Arc<Mutex<Option<u64>>> =
+        Arc::new(Mutex::new(None));
 
     // Register tools
     register_tools(
@@ -658,10 +702,27 @@ async fn run_smart_remarkable_loop(
         let trigger_tx = channels.trigger_tx.clone();
         let cancellation = Arc::clone(&cancellation);
         let no_trigger = config.no_trigger;
-        // With the four-finger trigger, the selection comes from the native
-        // selection-tool marquee (detected in the screenshot), not corner taps
-        let collect_taps = config.select_mode && trigger_corner != TriggerCorner::FourFinger;
-        tokio::spawn(async move { coordinator::trigger_task(touch, trigger_tx, cancellation, no_trigger, collect_taps).await })
+        let admission = Arc::clone(&trigger_admission);
+        // Native-selection triggers use the stock marquee detected in the
+        // screenshot, not four follow-up corner taps.
+        let collect_taps = config.select_mode
+            && !matches!(
+                trigger_corner,
+                TriggerCorner::FourFinger
+                    | TriggerCorner::PenRelease
+                    | TriggerCorner::PenHold
+            );
+        tokio::spawn(async move {
+            coordinator::trigger_task(
+                touch,
+                trigger_tx,
+                cancellation,
+                no_trigger,
+                collect_taps,
+                admission,
+            )
+            .await
+        })
     };
 
     let progress_handle = {
@@ -717,22 +778,27 @@ async fn run_smart_remarkable_loop(
                     let engine_clone = Arc::clone(&engine);
                     let progress_tx_clone = progress_tx.clone();
                     let cancellation_clone = Arc::clone(&cancellation);
+                    let keyboard_clone = Arc::clone(&keyboard);
                     let touch_clone = Arc::clone(&touch);
                     let placement_slot_clone = Arc::clone(&placement_slot);
                     let selection_slot_clone = Arc::clone(&selection_slot);
                     let input_image_slot_clone = Arc::clone(&input_image_slot);
+                    let last_selection_fingerprint_clone =
+                        Arc::clone(&last_selection_fingerprint);
                     tokio::spawn(async move {
                         coordinator::processing_task(
                             config_clone,
                             engine_clone,
                             progress_tx_clone,
                             cancellation_clone,
+                            keyboard_clone,
                             touch_clone,
                             selection,
                             placement_slot_clone,
                             selection_slot_clone,
                             input_image_slot_clone,
                             trigger_source,
+                            last_selection_fingerprint_clone,
                         ).await
                     })
                 };
@@ -748,28 +814,43 @@ async fn run_smart_remarkable_loop(
                 //     cancel_handle
                 // ).await;
 
-                match processing_result {
-                    Ok(Ok(_)) => {
+                let finish_one_shot = match processing_result {
+                    Ok(Ok(coordinator::ProcessingOutcome::Completed)) => {
                         info!("Processing completed successfully, ready for next trigger");
+                        true
+                    }
+                    Ok(Ok(coordinator::ProcessingOutcome::NoSelection)) => {
+                        info!("No native selection yet; keeping the worker armed");
+                        false
+                    }
+                    Ok(Ok(coordinator::ProcessingOutcome::DuplicateSelection)) => {
+                        info!("Still-active selection already processed; keeping the worker armed");
+                        false
                     }
                     Ok(Err(e)) => {
                         info!("Processing error: {}, ready for next trigger", e);
+                        true
                     }
                     Err(e) => {
                         info!("Processing task join error: {}, ready for next trigger", e);
+                        true
                     }
-                }
+                };
 
-                // Check no_loop mode
-                if config.no_loop {
-                    info!("No-loop mode, exiting");
-                    std::process::exit(0);
+                // A stray pen tap or repeated marquee is not the one-shot
+                // request. Stay armed until a new native selection was
+                // accepted. Real processing errors retain prior behavior.
+                if config.no_loop && finish_one_shot {
+                    info!("No-loop mode, cleaning up and exiting");
+                    cancellation.cancel_all();
+                    break;
                 }
 
                 // Drain any triggers that arrived during processing
                 while trigger_rx.try_recv().is_ok() {
                     info!("Ignoring trigger received during processing");
                 }
+                trigger_admission.store(true, Ordering::Release);
             }
 
             // Wait for config changes via watch channel (priority 2)
@@ -1111,12 +1192,12 @@ fn register_tools(
                         }
                     }
 
-                    // Only attach the user's sketch when refining a drawing;
-                    // for text selections the prompt alone drives generation.
-                    // Lasso crops are small (a few hundred px) — upscale so
-                    // the image model can actually read the sketch.
+                    // Only attach the user's sketch when refining a drawing.
+                    // Selection preprocessing already normalized and enlarged
+                    // this request-scoped in-memory PNG before it reached the
+                    // slot, so do not resample it a second time.
                     let image_input = if redraw_in_place {
-                        input_image.map(|img| upscale_png_b64(&img, 768))
+                        input_image
                     } else {
                         None
                     };

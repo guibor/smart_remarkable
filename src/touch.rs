@@ -3,7 +3,8 @@ use evdev::EventType as EvdevEventType;
 use evdev::{Device, EventStream, InputEvent};
 use log::{debug, info, trace};
 
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 use tokio::time::sleep;
 
 use crate::cancellation::SmartRemarkableCancellation;
@@ -29,6 +30,11 @@ pub enum TriggerCorner {
     LowerLeft,
     /// Trigger on a simultaneous four-finger tap anywhere on the screen
     FourFinger,
+    /// Trigger when the pen is lifted after the armed stock lasso gesture.
+    PenRelease,
+    /// Trigger only when a completed lasso ends with a stationary dwell
+    /// before pen-up.
+    PenHold,
 }
 
 impl TriggerCorner {
@@ -39,8 +45,10 @@ impl TriggerCorner {
             "lr" | "lower-right" => Ok(TriggerCorner::LowerRight),
             "ll" | "lower-left" => Ok(TriggerCorner::LowerLeft),
             "4f" | "four-finger" | "fourfinger" => Ok(TriggerCorner::FourFinger),
+            "pen-release" | "penrelease" | "lasso" => Ok(TriggerCorner::PenRelease),
+            "pen-hold" | "penhold" | "hold" => Ok(TriggerCorner::PenHold),
             _ => Err(anyhow::anyhow!(
-                "Invalid trigger corner: {}. Use UR, UL, LR, LL, upper-right, upper-left, lower-right, lower-left, or four-finger",
+                "Invalid trigger corner: {}. Use UR, UL, LR, LL, upper-right, upper-left, lower-right, lower-left, four-finger, pen-release, or pen-hold",
                 s
             )),
         }
@@ -56,24 +64,37 @@ const VIRTUAL_HEIGHT: u16 = 1024;
 /// consumed, matching the extension's own file-trigger-is-an-ack convention. This is an
 /// additional trigger source alongside the four-finger gesture, not a replacement for
 /// it -- see SELECT_MODE.md.
-const LLM_BUTTON_TRIGGER_FILE: &str = "/tmp/llm_button_trigger";
+const RUNTIME_STATE_DIR: &str = "/run/smart-remarkable";
+const RUNTIME_READY_FILE: &str = "/run/smart-remarkable/ready";
+const RUNTIME_BUSY_FILE: &str = "/run/smart-remarkable/busy";
+const LLM_BUTTON_TRIGGER_FILE: &str = "/run/smart-remarkable/llm_button_trigger";
+const SEND_BUTTON_TRIGGER_FILE: &str = "/run/smart-remarkable/send_button_trigger";
 
 /// Written by the same xovi extension when the sibling "Draw" button (beside the LLM
 /// button) is tapped. Selects the Draw prompt (`prompts/draw.json`) instead of the
 /// normal answer prompt for that one processing run -- see `TriggerSource`.
-const DRAW_BUTTON_TRIGGER_FILE: &str = "/tmp/draw_button_trigger";
+const DRAW_BUTTON_TRIGGER_FILE: &str = "/run/smart-remarkable/draw_button_trigger";
 
-/// Consume at most one button trigger, preferring the LLM action when both
-/// files exist. This check runs before waiting for another touch event so a
-/// continuously busy Paper Pro event stream cannot starve file activation.
-fn take_button_trigger(llm_trigger_file: &str, draw_trigger_file: &str) -> Option<TriggerSource> {
-    if std::fs::remove_file(llm_trigger_file).is_ok() {
-        return Some(TriggerSource::LlmButton);
+/// Consume all button markers as one admission decision. If concurrent
+/// launchers somehow create more than one marker, deterministic priority plus
+/// draining prevents a second request from being queued behind the first.
+fn take_button_trigger(
+    llm_trigger_file: &str,
+    send_trigger_file: &str,
+    draw_trigger_file: &str,
+) -> Option<TriggerSource> {
+    let llm = std::fs::remove_file(llm_trigger_file).is_ok();
+    let send = std::fs::remove_file(send_trigger_file).is_ok();
+    let draw = std::fs::remove_file(draw_trigger_file).is_ok();
+    if llm {
+        Some(TriggerSource::LlmButton)
+    } else if send {
+        Some(TriggerSource::SendButton)
+    } else if draw {
+        Some(TriggerSource::DrawButton)
+    } else {
+        None
     }
-    if std::fs::remove_file(draw_trigger_file).is_ok() {
-        return Some(TriggerSource::DrawButton);
-    }
-    None
 }
 
 /// Which physical trigger woke up `wait_for_trigger`. Threaded through so select-mode
@@ -86,8 +107,177 @@ pub enum TriggerSource {
     Touch,
     /// The injected "LLM" button beside xochitl's selection menu.
     LlmButton,
+    /// The injected "Send" button: deliver through OpenClaw/WhatsApp without
+    /// writing the returned answer into the notebook.
+    SendButton,
     /// The injected "Draw" button beside xochitl's selection menu.
     DrawButton,
+    /// The pen was lifted after the AppLoad-armed native lasso gesture.
+    PenLasso,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PenReleaseKind {
+    Quick,
+    Held,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PenGestureOutcome {
+    release: PenReleaseKind,
+    admitted_at_down: bool,
+    extent_px: i32,
+}
+
+/// Pure state reducer for the Paper Pro pen stream. xochitl remains the
+/// authority on whether the path actually produced a native marquee; this
+/// reducer only rejects taps, detects the optional endpoint dwell, and
+/// remembers whether the contact began while another request was busy.
+#[derive(Debug, Default)]
+struct PenGestureTracker {
+    touching: bool,
+    admitted_at_down: bool,
+    current_x: Option<i32>,
+    current_y: Option<i32>,
+    min_x: i32,
+    max_x: i32,
+    min_y: i32,
+    max_y: i32,
+    have_bounds: bool,
+    anchor_x: i32,
+    anchor_y: i32,
+    stationary_since_ms: u64,
+    last_event_ms: u64,
+    timestamp_regressed: bool,
+}
+
+impl PenGestureTracker {
+    const BTN_TOUCH: u16 = 330;
+    const ABS_X: u16 = 0;
+    const ABS_Y: u16 = 1;
+
+    fn observe(
+        &mut self,
+        event_type: EvdevEventType,
+        code: u16,
+        value: i32,
+        event_time_ms: u64,
+        admission_ready: bool,
+        hold_ms: u64,
+        hold_radius_px: i32,
+    ) -> Option<PenGestureOutcome> {
+        if event_type == EvdevEventType::ABSOLUTE
+            && (code == Self::ABS_X || code == Self::ABS_Y)
+        {
+            if code == Self::ABS_X {
+                self.current_x = Some(value);
+            } else {
+                self.current_y = Some(value);
+            }
+            if self.touching {
+                self.observe_position(event_time_ms, hold_radius_px);
+            }
+            return None;
+        }
+
+        if event_type != EvdevEventType::KEY || code != Self::BTN_TOUCH {
+            return None;
+        }
+
+        if value > 0 {
+            if !self.touching {
+                self.touching = true;
+                self.admitted_at_down = admission_ready;
+                self.have_bounds = false;
+                self.stationary_since_ms = event_time_ms;
+                self.last_event_ms = event_time_ms;
+                self.timestamp_regressed = false;
+                self.initialize_position(event_time_ms);
+            }
+            return None;
+        }
+
+        if value != 0 || !self.touching {
+            return None;
+        }
+
+        if event_time_ms < self.last_event_ms {
+            self.timestamp_regressed = true;
+        }
+        let extent_px = if self.have_bounds {
+            (self.max_x - self.min_x).max(self.max_y - self.min_y)
+        } else {
+            0
+        };
+        let held = !self.timestamp_regressed
+            && event_time_ms.saturating_sub(self.stationary_since_ms) >= hold_ms;
+        let outcome = PenGestureOutcome {
+            release: if held {
+                PenReleaseKind::Held
+            } else {
+                PenReleaseKind::Quick
+            },
+            admitted_at_down: self.admitted_at_down,
+            extent_px,
+        };
+        self.touching = false;
+        self.have_bounds = false;
+        self.admitted_at_down = false;
+        Some(outcome)
+    }
+
+    fn initialize_position(&mut self, event_time_ms: u64) {
+        if let (Some(x), Some(y)) = (self.current_x, self.current_y) {
+            self.min_x = x;
+            self.max_x = x;
+            self.min_y = y;
+            self.max_y = y;
+            self.anchor_x = x;
+            self.anchor_y = y;
+            self.have_bounds = true;
+            self.stationary_since_ms = event_time_ms;
+        }
+    }
+
+    fn observe_position(&mut self, event_time_ms: u64, hold_radius_px: i32) {
+        let (Some(x), Some(y)) = (self.current_x, self.current_y) else {
+            return;
+        };
+        if event_time_ms < self.last_event_ms {
+            self.timestamp_regressed = true;
+            self.stationary_since_ms = event_time_ms;
+            self.anchor_x = x;
+            self.anchor_y = y;
+        }
+        self.last_event_ms = event_time_ms;
+
+        if !self.have_bounds {
+            self.min_x = x;
+            self.max_x = x;
+            self.min_y = y;
+            self.max_y = y;
+            self.anchor_x = x;
+            self.anchor_y = y;
+            self.have_bounds = true;
+            self.stationary_since_ms = event_time_ms;
+            return;
+        }
+
+        self.min_x = self.min_x.min(x);
+        self.max_x = self.max_x.max(x);
+        self.min_y = self.min_y.min(y);
+        self.max_y = self.max_y.max(y);
+
+        let dx = x - self.anchor_x;
+        let dy = y - self.anchor_y;
+        if dx.saturating_mul(dx) + dy.saturating_mul(dy)
+            > hold_radius_px.saturating_mul(hold_radius_px)
+        {
+            self.anchor_x = x;
+            self.anchor_y = y;
+            self.stationary_since_ms = event_time_ms;
+        }
+    }
 }
 
 // Event codes
@@ -127,6 +317,7 @@ pub enum TouchMode {
     Real {
         input_device: Option<Device>,      // For sending touch events
         event_stream: Option<EventStream>, // For reading touch events
+        pen_event_stream: Option<EventStream>, // For the arm-then-lasso trigger
         device_model: DeviceModel,
     },
     Simulated {
@@ -138,10 +329,23 @@ pub struct Touch {
     mode: TouchMode,
     trigger_corner: TriggerCorner,
     last_trigger_source: TriggerSource,
+    pen_hold_ms: u64,
+    pen_hold_radius_px: i32,
+    pen_min_extent_px: i32,
 }
 
 impl Touch {
     pub fn new(no_touch: bool, trigger_corner: TriggerCorner) -> Self {
+        Self::new_with_pen_hold(no_touch, trigger_corner, 800, 12, 24)
+    }
+
+    pub fn new_with_pen_hold(
+        no_touch: bool,
+        trigger_corner: TriggerCorner,
+        pen_hold_ms: u64,
+        pen_hold_radius_px: i32,
+        pen_min_extent_px: i32,
+    ) -> Self {
         let device_model = DeviceModel::detect();
         info!("Touch using device model: {}", device_model.name());
 
@@ -151,28 +355,42 @@ impl Touch {
             DeviceModel::Unknown => "/dev/input/event2", // Default to RM2
         };
 
-        let (input_device, event_stream) = if no_touch {
-            (None, None)
+        let (input_device, event_stream, pen_event_stream) = if no_touch {
+            (None, None, None)
         } else {
             let input_dev = Device::open(device_path).unwrap();
             let read_dev = Device::open(device_path).unwrap();
             let stream = read_dev.into_event_stream().unwrap();
-            (Some(input_dev), Some(stream))
+            let pen_stream = if device_model == DeviceModel::RemarkablePaperPro
+                && matches!(
+                    trigger_corner,
+                    TriggerCorner::PenRelease | TriggerCorner::PenHold
+                )
+            {
+                Some(
+                    Device::open("/dev/input/event2")
+                        .unwrap()
+                        .into_event_stream()
+                        .unwrap(),
+                )
+            } else {
+                None
+            };
+            (Some(input_dev), Some(stream), pen_stream)
         };
-
-        // Never act on a trigger file left over from a previous run (matches the xovi
-        // extension's own "unlink stale triggers on load" convention).
-        let _ = std::fs::remove_file(LLM_BUTTON_TRIGGER_FILE);
-        let _ = std::fs::remove_file(DRAW_BUTTON_TRIGGER_FILE);
 
         Self {
             mode: TouchMode::Real {
                 input_device,
                 event_stream,
+                pen_event_stream,
                 device_model,
             },
             trigger_corner,
             last_trigger_source: TriggerSource::default(),
+            pen_hold_ms,
+            pen_hold_radius_px,
+            pen_min_extent_px,
         }
     }
 
@@ -184,7 +402,37 @@ impl Touch {
             mode: TouchMode::Simulated { simulator },
             trigger_corner,
             last_trigger_source: TriggerSource::default(),
+            pen_hold_ms: 800,
+            pen_hold_radius_px: 12,
+            pen_min_extent_px: 24,
         })
+    }
+
+    /// Initialize the one long-lived trigger listener. This deliberately does
+    /// not happen in `Touch::new`, because drawing callbacks construct helper
+    /// Touch instances and must not erase a button press.
+    pub fn prepare_trigger_listener(&mut self) -> Result<()> {
+        let _ = std::fs::remove_file(LLM_BUTTON_TRIGGER_FILE);
+        let _ = std::fs::remove_file(SEND_BUTTON_TRIGGER_FILE);
+        let _ = std::fs::remove_file(DRAW_BUTTON_TRIGGER_FILE);
+        let _ = std::fs::remove_file(RUNTIME_BUSY_FILE);
+        let _ = std::fs::remove_file(RUNTIME_READY_FILE);
+
+        let runtime_dir = std::path::Path::new(RUNTIME_STATE_DIR);
+        if !runtime_dir.is_dir() {
+            return Ok(());
+        }
+        if std::fs::symlink_metadata(RUNTIME_READY_FILE)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(anyhow::anyhow!(
+                "Refusing symlink runtime marker {}",
+                RUNTIME_READY_FILE
+            ));
+        }
+        std::fs::write(RUNTIME_READY_FILE, [])?;
+        Ok(())
     }
 
     /// Which physical trigger caused the most recent `wait_for_trigger` to return `Ok`.
@@ -194,6 +442,15 @@ impl Touch {
     }
 
     pub async fn wait_for_trigger(&mut self, cancellation: &SmartRemarkableCancellation) -> Result<()> {
+        let admission = AtomicBool::new(true);
+        self.wait_for_trigger_admitted(cancellation, &admission).await
+    }
+
+    pub async fn wait_for_trigger_admitted(
+        &mut self,
+        cancellation: &SmartRemarkableCancellation,
+        admission: &AtomicBool,
+    ) -> Result<()> {
         debug!("wait_for_trigger: entered, checking mode");
         self.last_trigger_source = TriggerSource::default();
         match &mut self.mode {
@@ -202,13 +459,154 @@ impl Touch {
                 simulator.wait_for_trigger(cancellation).await
             }
             TouchMode::Real {
-                event_stream, device_model, ..
+                event_stream,
+                pen_event_stream,
+                device_model,
+                ..
             } => {
                 debug!("wait_for_trigger: using Real device mode");
                 let trigger_corner = self.trigger_corner;
-                let source = Self::wait_for_real_trigger(event_stream, device_model, trigger_corner, cancellation).await?;
+                let source = if matches!(
+                    trigger_corner,
+                    TriggerCorner::PenRelease | TriggerCorner::PenHold
+                ) {
+                    Self::wait_for_pen_lasso_trigger(
+                        pen_event_stream,
+                        device_model,
+                        trigger_corner,
+                        self.pen_hold_ms,
+                        self.pen_hold_radius_px,
+                        self.pen_min_extent_px,
+                        cancellation,
+                        admission,
+                    )
+                    .await?
+                } else {
+                    Self::wait_for_real_trigger(
+                        event_stream,
+                        device_model,
+                        trigger_corner,
+                        cancellation,
+                        admission,
+                    )
+                    .await?
+                };
                 self.last_trigger_source = source;
                 Ok(())
+            }
+        }
+    }
+
+    async fn wait_for_pen_lasso_trigger(
+        pen_event_stream: &mut Option<EventStream>,
+        device_model: &DeviceModel,
+        trigger_corner: TriggerCorner,
+        pen_hold_ms: u64,
+        pen_hold_radius_px: i32,
+        pen_min_extent_px: i32,
+        cancellation: &SmartRemarkableCancellation,
+        admission: &AtomicBool,
+    ) -> Result<TriggerSource> {
+        let events = pen_event_stream
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Pen event stream unavailable"))?;
+        let mut tracker = PenGestureTracker::default();
+        let mut raw_x: Option<i32> = None;
+        let mut raw_y: Option<i32> = None;
+        info!(
+            "Waiting for {:?} native-lasso trigger (hold={}ms, radius={}px)",
+            trigger_corner, pen_hold_ms, pen_hold_radius_px
+        );
+
+        loop {
+            if let Some(source) =
+                take_button_trigger(
+                    LLM_BUTTON_TRIGGER_FILE,
+                    SEND_BUTTON_TRIGGER_FILE,
+                    DRAW_BUTTON_TRIGGER_FILE,
+                )
+            {
+                if admission.load(Ordering::Acquire) {
+                    return Ok(source);
+                }
+                info!("Ignoring button trigger while another request is active");
+            }
+
+            tokio::select! {
+                _ = async {
+                    while !cancellation.should_cancel_main() {
+                        sleep(Duration::from_millis(50)).await;
+                    }
+                } => {
+                    return Err(anyhow::anyhow!("Pen waiting cancelled"));
+                }
+
+                _ = sleep(Duration::from_millis(150)) => {}
+
+                event_result = events.next_event() => {
+                    let event = event_result?;
+                    let value = if event.event_type() == EvdevEventType::ABSOLUTE
+                        && (event.code() == PenGestureTracker::ABS_X
+                            || event.code() == PenGestureTracker::ABS_Y)
+                    {
+                        if event.code() == PenGestureTracker::ABS_X {
+                            raw_x = Some(event.value());
+                        } else {
+                            raw_y = Some(event.value());
+                        }
+                        if let (Some(x), Some(y)) = (raw_x, raw_y) {
+                            let (virtual_x, virtual_y) =
+                                Self::input_to_virtual((x, y), device_model);
+                            if event.code() == PenGestureTracker::ABS_X {
+                                virtual_x
+                            } else {
+                                virtual_y
+                            }
+                        } else {
+                            // Bounds require both axes. The next axis update
+                            // will provide a complete normalized point.
+                            continue;
+                        }
+                    } else {
+                        event.value()
+                    };
+                    let event_time_ms = event
+                        .timestamp()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|duration| {
+                            duration.as_millis().min(u64::MAX as u128) as u64
+                        })
+                        .unwrap_or_default();
+                    if let Some(outcome) = tracker.observe(
+                        event.event_type(),
+                        event.code(),
+                        value,
+                        event_time_ms,
+                        admission.load(Ordering::Acquire),
+                        pen_hold_ms,
+                        pen_hold_radius_px,
+                    ) {
+                        if !outcome.admitted_at_down {
+                            info!("Ignoring pen gesture that began while another request was active");
+                            continue;
+                        }
+                        if outcome.extent_px < pen_min_extent_px {
+                            debug!(
+                                "Ignoring pen contact with {}px extent (< {}px)",
+                                outcome.extent_px, pen_min_extent_px
+                            );
+                            continue;
+                        }
+                        if trigger_corner == TriggerCorner::PenHold
+                            && outcome.release != PenReleaseKind::Held
+                        {
+                            debug!("Quick lasso left as an ordinary stock selection");
+                            continue;
+                        }
+                        debug!("Accepted {:?} lasso release", outcome.release);
+                        return Ok(TriggerSource::PenLasso);
+                    }
+                }
             }
         }
     }
@@ -218,6 +616,7 @@ impl Touch {
         device_model: &DeviceModel,
         trigger_corner: TriggerCorner,
         cancellation: &SmartRemarkableCancellation,
+        admission: &AtomicBool,
     ) -> Result<TriggerSource> {
         debug!("wait_for_real_trigger: entered");
         let mut position_x = 0;
@@ -234,9 +633,16 @@ impl Touch {
             loop {
                 debug!("wait_for_real_trigger: loop iteration starting");
 
-                if let Some(source) = take_button_trigger(LLM_BUTTON_TRIGGER_FILE, DRAW_BUTTON_TRIGGER_FILE) {
-                    debug!("Button trigger file detected: {:?}", source);
-                    return Ok(source);
+                if let Some(source) = take_button_trigger(
+                    LLM_BUTTON_TRIGGER_FILE,
+                    SEND_BUTTON_TRIGGER_FILE,
+                    DRAW_BUTTON_TRIGGER_FILE,
+                ) {
+                    if admission.load(Ordering::Acquire) {
+                        debug!("Button trigger file detected: {:?}", source);
+                        return Ok(source);
+                    }
+                    info!("Ignoring button trigger while another request is active");
                 }
 
                 tokio::select! {
@@ -709,6 +1115,7 @@ impl Touch {
             TriggerCorner::LowerRight => x > VIRTUAL_WIDTH as i32 - CORNER_SIZE && y > VIRTUAL_HEIGHT as i32 - CORNER_SIZE,
             TriggerCorner::LowerLeft => x < CORNER_SIZE && y > VIRTUAL_HEIGHT as i32 - CORNER_SIZE,
             TriggerCorner::FourFinger => false, // handled by slot counting, not position
+            TriggerCorner::PenRelease | TriggerCorner::PenHold => false, // pen stream
         }
     }
 
@@ -795,23 +1202,242 @@ impl Touch {
 
 #[cfg(test)]
 mod tests {
-    use super::{take_button_trigger, TriggerSource};
+    use super::{
+        take_button_trigger, PenGestureOutcome, PenGestureTracker,
+        PenReleaseKind, TriggerCorner, TriggerSource,
+    };
+    use evdev::EventType;
+
+    fn pen_lasso(
+        hold_for_ms: u64,
+        admission_ready: bool,
+        last_move: (i32, i32),
+    ) -> PenGestureOutcome {
+        let mut tracker = PenGestureTracker::default();
+        tracker.observe(EventType::ABSOLUTE, 0, 100, 0, true, 800, 12);
+        tracker.observe(EventType::ABSOLUTE, 1, 100, 0, true, 800, 12);
+        tracker.observe(
+            EventType::KEY,
+            330,
+            1,
+            10,
+            admission_ready,
+            800,
+            12,
+        );
+        tracker.observe(EventType::ABSOLUTE, 0, 220, 100, true, 800, 12);
+        tracker.observe(EventType::ABSOLUTE, 1, 220, 100, true, 800, 12);
+        tracker.observe(
+            EventType::ABSOLUTE,
+            0,
+            last_move.0,
+            200,
+            true,
+            800,
+            12,
+        );
+        tracker.observe(
+            EventType::ABSOLUTE,
+            1,
+            last_move.1,
+            200,
+            true,
+            800,
+            12,
+        );
+        tracker
+            .observe(
+                EventType::KEY,
+                330,
+                0,
+                200 + hold_for_ms,
+                true,
+                800,
+                12,
+            )
+            .unwrap()
+    }
 
     #[test]
     fn button_trigger_is_consumed_without_waiting_for_touch_idle() {
         let base = std::env::temp_dir().join(format!("smart-remarkable-trigger-{}", std::process::id()));
         let llm = base.with_extension("llm");
+        let send = base.with_extension("send");
         let draw = base.with_extension("draw");
 
         let _ = std::fs::remove_file(&llm);
+        let _ = std::fs::remove_file(&send);
         let _ = std::fs::remove_file(&draw);
         std::fs::write(&llm, []).unwrap();
 
         assert_eq!(
-            take_button_trigger(llm.to_str().unwrap(), draw.to_str().unwrap()),
+            take_button_trigger(
+                llm.to_str().unwrap(),
+                send.to_str().unwrap(),
+                draw.to_str().unwrap(),
+            ),
             Some(TriggerSource::LlmButton)
         );
         assert!(!llm.exists());
-        assert_eq!(take_button_trigger(llm.to_str().unwrap(), draw.to_str().unwrap()), None);
+        assert_eq!(
+            take_button_trigger(
+                llm.to_str().unwrap(),
+                send.to_str().unwrap(),
+                draw.to_str().unwrap(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn simultaneous_button_markers_are_drained_as_one_request() {
+        let base = std::env::temp_dir().join(format!(
+            "smart-remarkable-multi-trigger-{}",
+            std::process::id()
+        ));
+        let llm = base.with_extension("llm");
+        let send = base.with_extension("send");
+        let draw = base.with_extension("draw");
+        for path in [&llm, &send, &draw] {
+            let _ = std::fs::remove_file(path);
+            std::fs::write(path, []).unwrap();
+        }
+
+        assert_eq!(
+            take_button_trigger(
+                llm.to_str().unwrap(),
+                send.to_str().unwrap(),
+                draw.to_str().unwrap(),
+            ),
+            Some(TriggerSource::LlmButton)
+        );
+        assert!(!llm.exists());
+        assert!(!send.exists());
+        assert!(!draw.exists());
+        assert_eq!(
+            take_button_trigger(
+                llm.to_str().unwrap(),
+                send.to_str().unwrap(),
+                draw.to_str().unwrap(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn send_button_marker_selects_whatsapp_only_source() {
+        let base = std::env::temp_dir().join(format!(
+            "smart-remarkable-send-trigger-{}",
+            std::process::id()
+        ));
+        let llm = base.with_extension("llm");
+        let send = base.with_extension("send");
+        let draw = base.with_extension("draw");
+        for path in [&llm, &send, &draw] {
+            let _ = std::fs::remove_file(path);
+        }
+        std::fs::write(&send, []).unwrap();
+
+        assert_eq!(
+            take_button_trigger(
+                llm.to_str().unwrap(),
+                send.to_str().unwrap(),
+                draw.to_str().unwrap(),
+            ),
+            Some(TriggerSource::SendButton)
+        );
+    }
+
+    #[test]
+    fn pen_release_requires_a_real_contact_first() {
+        let mut tracker = PenGestureTracker::default();
+        assert_eq!(
+            tracker.observe(EventType::KEY, 330, 0, 0, true, 800, 12),
+            None
+        );
+        assert_eq!(
+            tracker.observe(EventType::ABSOLUTE, 0, 10, 1, true, 800, 12),
+            None
+        );
+    }
+
+    #[test]
+    fn hold_requires_the_full_dwell_and_preserves_admission_at_down() {
+        assert_eq!(
+            pen_lasso(799, true, (100, 100)).release,
+            PenReleaseKind::Quick
+        );
+        assert_eq!(
+            pen_lasso(800, true, (100, 100)).release,
+            PenReleaseKind::Held
+        );
+        assert!(!pen_lasso(800, false, (100, 100)).admitted_at_down);
+    }
+
+    #[test]
+    fn small_jitter_does_not_restart_hold_but_large_movement_does() {
+        let mut tracker = PenGestureTracker::default();
+        tracker.observe(EventType::ABSOLUTE, 0, 100, 0, true, 800, 12);
+        tracker.observe(EventType::ABSOLUTE, 1, 100, 0, true, 800, 12);
+        tracker.observe(EventType::KEY, 330, 1, 10, true, 800, 12);
+        tracker.observe(EventType::ABSOLUTE, 0, 200, 100, true, 800, 12);
+        tracker.observe(EventType::ABSOLUTE, 1, 200, 100, true, 800, 12);
+        tracker.observe(EventType::ABSOLUTE, 0, 207, 500, true, 800, 12);
+        tracker.observe(EventType::ABSOLUTE, 1, 205, 500, true, 800, 12);
+        let held = tracker
+            .observe(EventType::KEY, 330, 0, 900, true, 800, 12)
+            .unwrap();
+        assert_eq!(held.release, PenReleaseKind::Held);
+
+        let mut moved = PenGestureTracker::default();
+        moved.observe(EventType::ABSOLUTE, 0, 100, 0, true, 800, 12);
+        moved.observe(EventType::ABSOLUTE, 1, 100, 0, true, 800, 12);
+        moved.observe(EventType::KEY, 330, 1, 10, true, 800, 12);
+        moved.observe(EventType::ABSOLUTE, 0, 200, 100, true, 800, 12);
+        moved.observe(EventType::ABSOLUTE, 1, 200, 100, true, 800, 12);
+        moved.observe(EventType::ABSOLUTE, 0, 225, 500, true, 800, 12);
+        let quick = moved
+            .observe(EventType::KEY, 330, 0, 900, true, 800, 12)
+            .unwrap();
+        assert_eq!(quick.release, PenReleaseKind::Quick);
+    }
+
+    #[test]
+    fn tiny_contact_and_timestamp_regression_fail_closed() {
+        let mut tiny = PenGestureTracker::default();
+        tiny.observe(EventType::ABSOLUTE, 0, 100, 0, true, 800, 12);
+        tiny.observe(EventType::ABSOLUTE, 1, 100, 0, true, 800, 12);
+        tiny.observe(EventType::KEY, 330, 1, 10, true, 800, 12);
+        tiny.observe(EventType::ABSOLUTE, 0, 105, 20, true, 800, 12);
+        let tiny_outcome = tiny
+            .observe(EventType::KEY, 330, 0, 1000, true, 800, 12)
+            .unwrap();
+        assert!(tiny_outcome.extent_px < 24);
+
+        let mut regressed = PenGestureTracker::default();
+        regressed.observe(EventType::ABSOLUTE, 0, 100, 100, true, 800, 12);
+        regressed.observe(EventType::ABSOLUTE, 1, 100, 100, true, 800, 12);
+        regressed.observe(EventType::KEY, 330, 1, 100, true, 800, 12);
+        regressed.observe(EventType::ABSOLUTE, 0, 200, 50, true, 800, 12);
+        let outcome = regressed
+            .observe(EventType::KEY, 330, 0, 1000, true, 800, 12)
+            .unwrap();
+        assert_eq!(outcome.release, PenReleaseKind::Quick);
+    }
+
+    #[test]
+    fn pen_release_trigger_aliases_parse() {
+        assert_eq!(
+            TriggerCorner::from_string("pen-release").unwrap(),
+            TriggerCorner::PenRelease
+        );
+        assert_eq!(
+            TriggerCorner::from_string("lasso").unwrap(),
+            TriggerCorner::PenRelease
+        );
+        assert_eq!(
+            TriggerCorner::from_string("pen-hold").unwrap(),
+            TriggerCorner::PenHold
+        );
     }
 }

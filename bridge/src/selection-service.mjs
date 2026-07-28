@@ -1,0 +1,870 @@
+import { HttpError } from "./errors.mjs";
+import {
+  buildPostAcceptanceErrorResponse,
+  buildSuccessResponse,
+} from "./openai-response.mjs";
+import {
+  markResponseReplayed,
+  RequestJournalError,
+} from "./request-journal.mjs";
+import {
+  parseResponseEnvelope,
+  renderResponseEnvelope,
+  RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
+} from "./response-envelope.mjs";
+import {
+  ORIGIN_BIND_METHOD,
+  ORIGIN_CLEAR_METHOD,
+  SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+  verifyOriginBinding,
+} from "./source-provenance.mjs";
+import { recoverTranscriptMessages } from "./transcript-recovery.mjs";
+
+const DELIVERY_METHOD = "smart_remarkable.deliver";
+const CHAT_HISTORY_MAX_CHARS = 500_000;
+const CHAT_HISTORY_MAX_MESSAGES = 1_000;
+const CHAT_HISTORY_POLL_INTERVAL_MS = 1_000;
+const CHAT_HISTORY_TRUNCATION_MARKERS = [
+  "\n...(truncated)...",
+  "[chat.history omitted: message too large]",
+  "[chat.history unavailable: transcript too large to display; the full history is preserved on disk]",
+];
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function deferred() {
+  let resolve;
+  let reject;
+  let settled = false;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = (value) => {
+      if (!settled) {
+        settled = true;
+        resolvePromise(value);
+      }
+    };
+    reject = (error) => {
+      if (!settled) {
+        settled = true;
+        rejectPromise(error);
+      }
+    };
+  });
+  // A Gateway error event may precede the request promise settling. Attach a
+  // handler immediately; callers still observe rejection through `promise`.
+  promise.catch(() => {});
+  return {
+    promise,
+    resolve,
+    reject,
+    get settled() {
+      return settled;
+    },
+  };
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, milliseconds);
+    timer.unref?.();
+  });
+}
+
+function extractAssistantText(message) {
+  if (typeof message === "string") {
+    return message.trim();
+  }
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+  if (typeof message.text === "string" && message.text.trim()) {
+    return message.text.trim();
+  }
+  if (typeof message.content === "string") {
+    return message.content.trim();
+  }
+  if (!Array.isArray(message.content)) {
+    return "";
+  }
+  return message.content
+    .map((part) => {
+      if (typeof part === "string") {
+        return part;
+      }
+      if (!part || typeof part !== "object") {
+        return "";
+      }
+      if (typeof part.text === "string") {
+        return part.text;
+      }
+      return typeof part.content === "string" ? part.content : "";
+    })
+    .join("")
+    .trim();
+}
+
+function normalizeGatewayError(payload) {
+  const message =
+    typeof payload?.errorMessage === "string" && payload.errorMessage.trim()
+      ? payload.errorMessage.trim()
+      : "OpenClaw run failed";
+  return new Error(message);
+}
+
+function verifyNativeSend(result, expectedRunId, expectedChannel) {
+  if (
+    result?.status !== "sent" ||
+    result?.runId !== expectedRunId ||
+    result?.channel !== expectedChannel ||
+    typeof result?.messageId !== "string" ||
+    !result.messageId.trim()
+  ) {
+    throw new Error("OpenClaw did not confirm the WhatsApp send");
+  }
+  return result;
+}
+
+function translateJournalError(error) {
+  if (!(error instanceof RequestJournalError)) {
+    return error;
+  }
+  if (error.code === "conflict") {
+    return new HttpError(
+      409,
+      "Request ID was already used for different content or response mode",
+    );
+  }
+  if (error.code === "incomplete") {
+    return new HttpError(
+      409,
+      "Request is already reserved and cannot be safely retried",
+    );
+  }
+  if (error.code === "capacity") {
+    return new HttpError(503, "Request journal capacity is exhausted");
+  }
+  return error;
+}
+
+function historyIndicatesTruncation(history, messages) {
+  if (history?.truncated === true) {
+    return true;
+  }
+  const pending = Array.isArray(messages) ? [...messages] : [];
+  const seen = new Set();
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value === "string") {
+      if (
+        CHAT_HISTORY_TRUNCATION_MARKERS.some((marker) =>
+          value.includes(marker),
+        )
+      ) {
+        return true;
+      }
+      continue;
+    }
+    if (!value || typeof value !== "object" || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    if (value.truncated === true) {
+      return true;
+    }
+    pending.push(...Object.values(value));
+  }
+  return false;
+}
+
+function messageIdempotencyKey(message) {
+  if (typeof message?.idempotencyKey === "string") {
+    return message.idempotencyKey;
+  }
+  return typeof message?.__openclaw?.idempotencyKey === "string"
+    ? message.__openclaw.idempotencyKey
+    : "";
+}
+
+function isRequestUserMessage(message, requestId) {
+  return (
+    message?.role === "user" &&
+    messageIdempotencyKey(message) === `${requestId}:user`
+  );
+}
+
+function promptWithResponseProtocol(promptText) {
+  return `${promptText}\n\n${RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION}`;
+}
+
+function requireSessionId(history) {
+  const sessionId = history?.sessionId;
+  if (
+    typeof sessionId !== "string" ||
+    !SESSION_ID_PATTERN.test(sessionId)
+  ) {
+    throw new Error(
+      "OpenClaw did not identify the canonical session transcript",
+    );
+  }
+  return sessionId;
+}
+
+export class SelectionService {
+  constructor({ gateway, config, requestJournal, logger = console }) {
+    if (!requestJournal) {
+      throw new Error("SelectionService requires a persistent request journal");
+    }
+    this.gateway = gateway;
+    this.config = config;
+    this.requestJournal = requestJournal;
+    this.logger = logger;
+    this.jobs = new Map();
+    this.unsubscribe = gateway.subscribe((event) => this.#handleEvent(event));
+  }
+
+  async close() {
+    this.unsubscribe?.();
+  }
+
+  submit({ requestId, mode, selection, onAccepted }) {
+    const existing = this.jobs.get(requestId);
+    if (existing) {
+      if (
+        existing.fingerprint !== selection.fingerprint ||
+        existing.mode !== mode
+      ) {
+        throw new HttpError(
+          409,
+          "Request ID was already used for different content or response mode",
+        );
+      }
+      this.#addAcceptedListener(existing, onAccepted);
+      return existing.promise.then((response) => markResponseReplayed(response));
+    }
+
+    const job = {
+      requestId,
+      mode,
+      fingerprint: selection.fingerprint,
+      accepted: false,
+      acceptanceError: null,
+      acceptance: deferred(),
+      acceptedListeners: new Set(),
+      ackPromise: null,
+      originBound: false,
+      runId: null,
+      terminal: deferred(),
+      replayed: false,
+      settled: false,
+    };
+    this.#addAcceptedListener(job, onAccepted);
+    this.jobs.set(requestId, job);
+    job.promise = this.#execute(job, selection).finally(() => {
+      job.settled = true;
+      const timer = setTimeout(() => {
+        if (this.jobs.get(requestId) === job) {
+          this.jobs.delete(requestId);
+        }
+      }, 24 * 60 * 60 * 1000);
+      timer.unref?.();
+    });
+    return job.promise;
+  }
+
+  #addAcceptedListener(job, listener) {
+    if (typeof listener !== "function") {
+      return;
+    }
+    if (job.accepted) {
+      queueMicrotask(listener);
+      return;
+    }
+    job.acceptedListeners.add(listener);
+  }
+
+  #markAccepted(job, payload) {
+    if (job.accepted) {
+      return true;
+    }
+    if (job.acceptanceError) {
+      return false;
+    }
+    if (payload?.runId !== job.requestId) {
+      job.acceptanceError ??= new Error(
+        "Gateway acceptance did not match the request ID",
+      );
+      return false;
+    }
+    if (
+      payload.sessionId !== undefined &&
+      payload.sessionId !== job.sessionId
+    ) {
+      job.acceptanceError ??= new Error(
+        "Gateway acceptance did not match the captured session",
+      );
+      return false;
+    }
+    job.accepted = true;
+    job.acceptedAt = Date.now();
+    job.runId = payload.runId;
+
+    const acknowledgementRunId = `${job.requestId}:ack`;
+    job.ackPromise = this.gateway
+      .request(
+        DELIVERY_METHOD,
+        {
+          requestId: job.requestId,
+          kind: "ack",
+          text: "I’m reading your reMarkable selection now.",
+        },
+        { timeoutMs: this.config.sendTimeoutMs },
+      )
+      .then((result) => {
+        verifyNativeSend(
+          result,
+          acknowledgementRunId,
+          this.config.channel,
+        );
+        return { ok: true };
+      })
+      .catch((error) => {
+        this.logger.error?.(
+          `WhatsApp acknowledgement failed for ${job.requestId}`,
+        );
+        return { ok: false, error };
+      });
+
+    job.acceptance.resolve(payload);
+    this.#notifyAccepted(job);
+    return true;
+  }
+
+  #notifyAccepted(job) {
+    for (const listener of job.acceptedListeners) {
+      try {
+        listener();
+      } catch {
+        this.logger.error?.(
+          `Acceptance listener failed for ${job.requestId}`,
+        );
+      }
+    }
+    job.acceptedListeners.clear();
+  }
+
+  #markCachedAccepted(job) {
+    job.accepted = true;
+    job.acceptedAt = Date.now();
+    job.runId = job.requestId;
+    job.acceptance.resolve({
+      status: "ok",
+      runId: job.requestId,
+    });
+    this.#notifyAccepted(job);
+  }
+
+  #handleEvent(event) {
+    if (event?.event !== "chat" || !event.payload) {
+      return;
+    }
+    const payload = event.payload;
+    if (payload.sessionKey !== this.config.sessionKey) {
+      return;
+    }
+    const job = [...this.jobs.values()].find(
+      (candidate) =>
+        candidate.runId &&
+        candidate.runId === payload.runId &&
+        !candidate.settled,
+    );
+    if (!job) {
+      return;
+    }
+
+    if (payload.state === "final") {
+      const text = extractAssistantText(payload.message);
+      if (!text) {
+        return;
+      }
+      try {
+        job.terminal.resolve({
+          text,
+          envelope: parseResponseEnvelope(text),
+        });
+      } catch {
+        // A live event may expose an intermediate assistant record while the
+        // durable transcript later contains the protocol-compliant final.
+        // Ignore malformed/partial live output and keep polling canonical
+        // history rather than delivering or attributing it.
+      }
+      return;
+    }
+    if (payload.state === "error" || payload.state === "aborted") {
+      job.terminal.reject(normalizeGatewayError(payload));
+    }
+  }
+
+  async #recoverCompletedText(
+    job,
+    {
+      allowPending = false,
+      timeoutMs = this.config.sendTimeoutMs,
+      liveCandidate = null,
+    } = {},
+  ) {
+    let history;
+    let historyError = null;
+    try {
+      history = await this.#readCanonicalHistory(timeoutMs);
+      const currentSessionId = requireSessionId(history);
+      if (currentSessionId !== job.sessionId) {
+        historyError = new Error(
+          "OpenClaw canonical session changed during the request",
+        );
+      } else {
+        const recovered = this.#extractCompletedText(job, history, {
+          allowPending,
+          liveCandidate,
+        });
+        if (recovered) {
+          return recovered;
+        }
+      }
+    } catch (error) {
+      historyError = error;
+    }
+
+    if (job.sessionId && this.config.openclawSessionsPath) {
+      try {
+        const transcript = await recoverTranscriptMessages({
+          sessionsPath: this.config.openclawSessionsPath,
+          sessionId: job.sessionId,
+          requestId: job.requestId,
+        });
+        if (transcript) {
+          const recovered = this.#extractCompletedText(job, transcript, {
+            allowPending,
+            liveCandidate,
+          });
+          if (recovered) {
+            return recovered;
+          }
+        }
+      } catch (error) {
+        historyError ??= error;
+      }
+    }
+
+    if (allowPending) {
+      return null;
+    }
+    throw (
+      historyError ??
+      new Error("Completed OpenClaw request was absent from chat history")
+    );
+  }
+
+  async #readCanonicalHistory(timeoutMs) {
+    return this.gateway.request(
+      "chat.history",
+      {
+        sessionKey: this.config.sessionKey,
+        agentId: this.config.agentId,
+        limit: CHAT_HISTORY_MAX_MESSAGES,
+        maxChars: CHAT_HISTORY_MAX_CHARS,
+      },
+      { timeoutMs },
+    );
+  }
+
+  #extractCompletedText(
+    job,
+    history,
+    { allowPending, liveCandidate = null },
+  ) {
+    const messages = Array.isArray(history?.messages) ? history.messages : [];
+    if (history?.truncated === true) {
+      throw new Error(
+        "Completed OpenClaw response history was truncated or incomplete",
+      );
+    }
+    const requestIndexes = [];
+    for (let index = 0; index < messages.length; index += 1) {
+      if (isRequestUserMessage(messages[index], job.requestId)) {
+        requestIndexes.push(index);
+      }
+    }
+    if (requestIndexes.length === 0) {
+      if (allowPending) {
+        return null;
+      }
+      throw new Error(
+        "Completed OpenClaw request was absent from chat history",
+      );
+    }
+    if (requestIndexes.length !== 1) {
+      throw new Error(
+        "Completed OpenClaw request appeared more than once in chat history",
+      );
+    }
+    const requestIndex = requestIndexes[0];
+    if (
+      historyIndicatesTruncation(
+        history,
+        messages.slice(requestIndex + 1),
+      )
+    ) {
+      throw new Error(
+        "Completed OpenClaw response history was truncated or incomplete",
+      );
+    }
+    let candidateError = null;
+
+    for (let index = requestIndex + 1; index < messages.length; index += 1) {
+      const message = messages[index];
+      if (message?.role === "user") {
+        throw new Error(
+          "OpenClaw response attribution crossed another user message",
+        );
+      }
+      if (message?.role !== "assistant") {
+        continue;
+      }
+      const text = extractAssistantText(message);
+      if (text) {
+        try {
+          return {
+            text,
+            envelope: parseResponseEnvelope(text),
+          };
+        } catch (error) {
+          candidateError = error;
+        }
+      }
+    }
+    if (liveCandidate) {
+      return liveCandidate;
+    }
+    if (allowPending) {
+      return null;
+    }
+    if (candidateError) {
+      throw new Error(
+        "Completed OpenClaw response did not follow the response protocol",
+        { cause: candidateError },
+      );
+    }
+    throw new Error("Completed OpenClaw response was absent from chat history");
+  }
+
+  async #clearOriginBinding(job) {
+    if (!job.originBound) {
+      return;
+    }
+    job.originBound = false;
+    try {
+      await this.gateway.request(
+        ORIGIN_CLEAR_METHOD,
+        { requestId: job.requestId },
+        { timeoutMs: this.config.sendTimeoutMs },
+      );
+    } catch {
+      this.logger.error?.(
+        `OpenClaw origin binding cleanup failed for ${job.requestId}`,
+      );
+    }
+  }
+
+  async #waitForCompletedText(job) {
+    const deadline =
+      (job.acceptedAt ?? Date.now()) + this.config.runTimeoutMs;
+    let terminalOutcome = job.terminal.promise.then(
+      (value) => ({ kind: "final", value }),
+      (error) => ({ kind: "error", error }),
+    );
+    let terminalError = null;
+    let historyError = null;
+    let liveCandidate = null;
+
+    while (Date.now() < deadline) {
+      try {
+        const remaining = Math.max(1, deadline - Date.now());
+        const recovered = await this.#recoverCompletedText(job, {
+          allowPending: true,
+          timeoutMs: Math.min(this.config.sendTimeoutMs, remaining),
+          liveCandidate,
+        });
+        if (recovered) {
+          return recovered;
+        }
+        historyError = null;
+      } catch (error) {
+        historyError = error;
+      }
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        break;
+      }
+      const outcome = await Promise.race([
+        terminalOutcome,
+        wait(
+          Math.min(
+            this.config.historyPollIntervalMs ??
+              CHAT_HISTORY_POLL_INTERVAL_MS,
+            remaining,
+          ),
+        ).then(() => ({ kind: "poll" })),
+      ]);
+      if (outcome.kind === "final") {
+        liveCandidate = outcome.value;
+        terminalOutcome = new Promise(() => {});
+        continue;
+      }
+      if (outcome.kind === "error") {
+        terminalError = outcome.error;
+        terminalOutcome = new Promise(() => {});
+      }
+    }
+
+    try {
+      const recovered = await this.#recoverCompletedText(job, {
+        timeoutMs: Math.min(this.config.sendTimeoutMs, 5_000),
+        liveCandidate,
+      });
+      if (recovered) {
+        return recovered;
+      }
+    } catch (error) {
+      historyError = error;
+    }
+    throw (
+      terminalError ??
+      historyError ??
+      new Error("Timed out waiting for OpenClaw's final response")
+    );
+  }
+
+  async #execute(job, selection) {
+    let requestResult;
+    try {
+      let reservation;
+      try {
+        reservation = await this.requestJournal.reserve({
+          requestId: job.requestId,
+          fingerprint: job.fingerprint,
+          mode: job.mode,
+        });
+      } catch (error) {
+        throw translateJournalError(error);
+      }
+      if (reservation.kind === "completed") {
+        job.replayed = true;
+        this.#markCachedAccepted(job);
+        return reservation.response;
+      }
+
+      const routingSnapshot = await this.#readCanonicalHistory(
+        this.config.sendTimeoutMs,
+      );
+      job.sessionId = requireSessionId(routingSnapshot);
+
+      const binding = await this.gateway.request(
+        ORIGIN_BIND_METHOD,
+        {
+          requestId: job.requestId,
+          mode: job.mode,
+          expectedSessionId: job.sessionId,
+        },
+        { timeoutMs: this.config.sendTimeoutMs },
+      );
+      verifyOriginBinding(
+        binding,
+        job.requestId,
+        job.mode,
+        job.sessionId,
+      );
+      job.originBound = true;
+
+      const requestPromise = this.gateway.request(
+        "chat.send",
+        {
+          sessionKey: this.config.sessionKey,
+          agentId: this.config.agentId,
+          expectedSessionRoutingContract:
+            this.config.expectedSessionRoutingContract,
+          message: promptWithResponseProtocol(selection.promptText),
+          deliver: false,
+          suppressCommandInterpretation: true,
+          originatingChannel: this.config.channel,
+          originatingTo: this.config.whatsappTo,
+          originatingAccountId: this.config.whatsappAccountId,
+          systemInputProvenance:
+            SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+          attachments: [
+            {
+              type: "image",
+              mimeType: "image/png",
+              fileName: "remarkable-selection.png",
+              content: selection.imageBase64,
+            },
+          ],
+          timeoutMs: this.config.runTimeoutMs,
+          idempotencyKey: job.requestId,
+        },
+        {
+          expectFinal: true,
+          timeoutMs: this.config.runTimeoutMs,
+          onAccepted: (payload) => this.#markAccepted(job, payload),
+        },
+      );
+      const requestOutcome = requestPromise.then(
+        (result) => ({ kind: "result", result }),
+        (error) => ({ kind: "error", error }),
+      );
+      const firstOutcome = await Promise.race([
+        requestOutcome,
+        job.acceptance.promise.then(() => ({ kind: "accepted" })),
+      ]);
+      if (firstOutcome.kind === "error") {
+        throw firstOutcome.error;
+      }
+      if (firstOutcome.kind === "result") {
+        requestResult = firstOutcome.result;
+      } else {
+        // The exact onAccepted callback is sufficient to close the stock
+        // marquee and begin durable history reconciliation. The request RPC
+        // may later fail or resolve without the final text in OpenClaw
+        // 2026.7.1; requestOutcome already owns either settlement, so it
+        // cannot become an unhandled rejection.
+        requestOutcome.then((outcome) => {
+          if (outcome.kind === "error") {
+            this.logger.error?.(
+              `Accepted OpenClaw request callback failed for ${job.requestId}`,
+            );
+          }
+        });
+      }
+
+      if (job.acceptanceError && !job.accepted) {
+        throw job.acceptanceError;
+      }
+
+      let terminal;
+      const status = requestResult?.status;
+      if (
+        status === "started" ||
+        status === "accepted" ||
+        status === "in_flight"
+      ) {
+        if (!this.#markAccepted(job, requestResult)) {
+          throw job.acceptanceError;
+        }
+        if (status === "in_flight") {
+          job.replayed = true;
+        }
+      } else if (status === "ok" && !job.accepted) {
+        // A completed Gateway idempotency replay does not emit the old final
+        // event to this new bridge process. Completion is a valid acceptance
+        // boundary only with the exact run ID; recover the attributable
+        // assistant message from canonical history.
+        if (!this.#markAccepted(job, requestResult)) {
+          throw job.acceptanceError;
+        }
+        job.replayed = true;
+        terminal = await this.#recoverCompletedText(job);
+      } else if (status === "error" && !job.accepted) {
+        throw new Error("OpenClaw rejected the run");
+      } else if (requestResult && !job.accepted) {
+        throw new Error("OpenClaw returned an unsupported request status");
+      }
+
+      if (!job.accepted) {
+        throw new Error("OpenClaw did not acknowledge the run");
+      }
+
+      terminal ??= await this.#waitForCompletedText(job);
+      const envelope =
+        terminal.envelope ?? parseResponseEnvelope(terminal.text);
+      const whatsappFinal = renderResponseEnvelope(envelope);
+      // Preserve visible WhatsApp ordering: finish the acknowledgement
+      // attempt before submitting the final, even when the ack failed.
+      const ack = await job.ackPromise;
+      const finalRunId = `${job.requestId}:final`;
+      const finalDelivery = await this.gateway
+        .request(
+          DELIVERY_METHOD,
+          {
+            requestId: job.requestId,
+            kind: "final",
+            text: whatsappFinal,
+          },
+          { timeoutMs: this.config.sendTimeoutMs },
+        )
+        .then((result) => {
+          verifyNativeSend(result, finalRunId, this.config.channel);
+          return { ok: true };
+        })
+        .catch((error) => {
+          this.logger.error?.(
+            `Final WhatsApp delivery failed for ${job.requestId}`,
+          );
+          return { ok: false, error };
+        });
+      const response = buildSuccessResponse({
+        requestId: job.requestId,
+        mode: job.mode,
+        text: envelope.response_text,
+        ack,
+        finalDelivery,
+        replayed: job.replayed,
+      });
+      try {
+        await this.requestJournal.complete({
+          requestId: job.requestId,
+          fingerprint: job.fingerprint,
+          mode: job.mode,
+          response,
+        });
+        return response;
+      } catch {
+        this.logger.error?.(
+          `Request journal completion failed for ${job.requestId}`,
+        );
+        return buildPostAcceptanceErrorResponse({
+          requestId: job.requestId,
+          mode: job.mode,
+          ack,
+          replayed: job.replayed,
+        });
+      }
+    } catch (error) {
+      if (!job.accepted) {
+        await this.#clearOriginBinding(job);
+        this.jobs.delete(job.requestId);
+        throw error;
+      }
+      const ack = job.ackPromise
+        ? await job.ackPromise
+        : { ok: false, error: new Error("Acknowledgement was not attempted") };
+      const response = buildPostAcceptanceErrorResponse({
+        requestId: job.requestId,
+        mode: job.mode,
+        ack,
+        replayed: job.replayed,
+      });
+      try {
+        await this.requestJournal.complete({
+          requestId: job.requestId,
+          fingerprint: job.fingerprint,
+          mode: job.mode,
+          response,
+        });
+      } catch {
+        this.logger.error?.(
+          `Request journal failure record could not be committed for ${job.requestId}`,
+        );
+      }
+      return response;
+    }
+  }
+}

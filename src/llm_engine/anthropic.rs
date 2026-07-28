@@ -120,7 +120,12 @@ impl LLMEngine for Anthropic {
             });
         }
 
-        debug!("Request: {}", body);
+        debug!(
+            "Anthropic request prepared (model={}, content_items={}, tool_count={})",
+            self.model,
+            self.content.len(),
+            self.tools.len()
+        );
 
         // Notify that we're processing with LLM
         status_update!(status_callback, super::ModelExecutionStatus::LlmProcessing);
@@ -147,7 +152,7 @@ impl LLMEngine for Anthropic {
         };
 
         let json: json = with_cancellation(request_future, cancellation).await?;
-        debug!("Response: {}", json);
+        debug!("Anthropic response received and parsed");
 
         // Notify that we're processing the response
         status_update!(status_callback, super::ModelExecutionStatus::ProcessingResponse);
@@ -186,12 +191,18 @@ impl LLMEngine for Anthropic {
                 }
                 "thinking" => {
                     if let Some(thinking) = content_item.get("thinking") {
-                        debug!("Thinking: {}", thinking);
+                        debug!(
+                            "Anthropic thinking block received ({} bytes)",
+                            thinking.as_str().map(str::len).unwrap_or(0)
+                        );
                     }
                 }
                 "text" => {
                     if let Some(text) = content_item.get("text") {
-                        debug!("Text: {}", text);
+                        debug!(
+                            "Anthropic text block received ({} bytes)",
+                            text.as_str().map(str::len).unwrap_or(0)
+                        );
                     }
                 }
                 _ => {

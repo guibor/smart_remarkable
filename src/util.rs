@@ -149,47 +149,56 @@ pub fn image_to_ink_bitmap(image_bytes: &[u8], max_dim: u32) -> Result<Vec<Vec<b
     Ok(bitmap)
 }
 
-/// Upscale a small base64 PNG (e.g. a cropped lasso selection of a few
-/// hundred pixels) so the image-generation model gets enough resolution to
-/// read the sketch. Returns the input unchanged if it is already at least
-/// `min_dim` on its longest side, or on any decode error.
-pub fn upscale_png_b64(b64: &str, min_dim: u32) -> String {
+/// Normalize a selected base64 PNG for vision and enlarge small lasso crops.
+///
+/// The stock selection overlay turns the page background gray, so values
+/// above the dark-ink range are restored to white before an aspect-preserving
+/// Lanczos resize. Invalid input is a hard error: a selection must never fall
+/// back to silently sending unprepared or malformed bytes.
+pub fn prepare_selection_png_b64(b64: &str, min_long_edge: u32) -> Result<String> {
     use base64::prelude::*;
-    let upscaled = || -> Result<String> {
-        let bytes = BASE64_STANDARD.decode(b64)?;
-        let img = image::load_from_memory(&bytes)?;
-        let (w, h) = (img.width(), img.height());
+    if min_long_edge == 0 {
+        anyhow::bail!("selection minimum dimension must be positive");
+    }
+    let bytes = BASE64_STANDARD.decode(b64)?;
+    let img = image::load_from_memory(&bytes)?;
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 {
+        anyhow::bail!("selection image is empty");
+    }
 
-        // Whiten the background: the crop of a lassoed region carries the
-        // marquee's gray fill (~rgb 194); the image model reads the sketch
-        // better as black ink on clean white.
-        let mut gray = img.to_luma8();
-        for p in gray.pixels_mut() {
-            if p.0[0] > 150 {
-                p.0[0] = 255;
-            }
+    // The native marquee shades the selected paper around rgb(194). Preserve
+    // dark/anti-aliased ink while restoring that overlay and paper to white.
+    let mut gray = img.to_luma8();
+    for pixel in gray.pixels_mut() {
+        if pixel.0[0] > 150 {
+            pixel.0[0] = 255;
         }
-        let img = image::DynamicImage::ImageLuma8(gray);
+    }
+    let img = image::DynamicImage::ImageLuma8(gray);
 
-        let resized = if w.max(h) >= min_dim {
-            img
-        } else {
-            let scale = min_dim as f32 / w.max(h) as f32;
-            img.resize(
-                (w as f32 * scale) as u32,
-                (h as f32 * scale) as u32,
-                image::imageops::FilterType::Lanczos3,
-            )
-        };
-        let mut png = std::io::Cursor::new(Vec::new());
-        resized.write_to(&mut png, image::ImageFormat::Png)?;
-        debug!("upscale_png_b64: {}x{} -> {}x{}", w, h, resized.width(), resized.height());
-        Ok(BASE64_STANDARD.encode(png.into_inner()))
+    let prepared = if w.max(h) >= min_long_edge {
+        img
+    } else {
+        let scale = min_long_edge as f64 / w.max(h) as f64;
+        let target_width = ((w as f64 * scale).round() as u32).max(1);
+        let target_height = ((h as f64 * scale).round() as u32).max(1);
+        img.resize_exact(
+            target_width,
+            target_height,
+            image::imageops::FilterType::Lanczos3,
+        )
     };
-    upscaled().unwrap_or_else(|e| {
-        info!("upscale_png_b64 failed ({}), sending original", e);
-        b64.to_string()
-    })
+    let mut png = std::io::Cursor::new(Vec::new());
+    prepared.write_to(&mut png, image::ImageFormat::Png)?;
+    debug!(
+        "prepare_selection_png_b64: {}x{} -> {}x{}",
+        w,
+        h,
+        prepared.width(),
+        prepared.height()
+    );
+    Ok(BASE64_STANDARD.encode(png.into_inner()))
 }
 
 /// Same as svg_to_bitmap but returns alpha values (0-255) instead of boolean.
@@ -492,6 +501,74 @@ mod tests {
     use super::*;
     use crate::touch::Rect;
 
+    fn encode_gray_png(image: image::GrayImage) -> String {
+        use base64::prelude::*;
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageLuma8(image)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        BASE64_STANDARD.encode(png.into_inner())
+    }
+
+    #[test]
+    fn prepares_small_gray_selection_deterministically() {
+        let mut image =
+            image::GrayImage::from_pixel(300, 52, image::Luma([194]));
+        for x in 40..260 {
+            image.put_pixel(x, 26, image::Luma([0]));
+        }
+        let encoded = encode_gray_png(image);
+
+        let first = prepare_selection_png_b64(&encoded, 768).unwrap();
+        let second = prepare_selection_png_b64(&encoded, 768).unwrap();
+        assert_eq!(first, second);
+
+        use base64::prelude::*;
+        let prepared =
+            image::load_from_memory(&BASE64_STANDARD.decode(first).unwrap())
+                .unwrap()
+                .to_luma8();
+        assert_eq!(prepared.dimensions(), (768, 133));
+        assert_eq!(prepared.get_pixel(0, 0).0[0], 255);
+        assert!(
+            prepared.pixels().any(|pixel| pixel.0[0] < 64),
+            "dark handwriting must survive normalization and scaling"
+        );
+    }
+
+    #[test]
+    fn normalizes_large_selection_without_resizing() {
+        let mut image =
+            image::GrayImage::from_pixel(800, 200, image::Luma([194]));
+        image.put_pixel(400, 100, image::Luma([0]));
+        let prepared =
+            prepare_selection_png_b64(&encode_gray_png(image), 768).unwrap();
+
+        use base64::prelude::*;
+        let decoded = image::load_from_memory(
+            &BASE64_STANDARD.decode(prepared).unwrap(),
+        )
+        .unwrap()
+        .to_luma8();
+        assert_eq!(decoded.dimensions(), (800, 200));
+        assert_eq!(decoded.get_pixel(0, 0).0[0], 255);
+        assert_eq!(decoded.get_pixel(400, 100).0[0], 0);
+    }
+
+    #[test]
+    fn rejects_invalid_selection_image_instead_of_falling_back() {
+        assert!(prepare_selection_png_b64("not-base64", 768).is_err());
+        use base64::prelude::*;
+        let not_an_image = BASE64_STANDARD.encode(b"not a png");
+        assert!(prepare_selection_png_b64(&not_an_image, 768).is_err());
+        assert!(
+            prepare_selection_png_b64(&encode_gray_png(
+                image::GrayImage::new(1, 1),
+            ), 0)
+            .is_err()
+        );
+    }
+
     #[test]
     fn build_svg_from_lines_never_overlaps_regardless_of_model_input() {
         // Regression test for the garbled-answer bug: previously the LLM
@@ -634,6 +711,10 @@ mod tests {
     }
 }
 
+fn uinput_module_loading_allowed(value: Option<&str>) -> bool {
+    matches!(value, Some("1"))
+}
+
 pub fn setup_uinput() -> Result<()> {
     debug!("Checking for uinput module");
 
@@ -650,6 +731,16 @@ pub fn setup_uinput() -> Result<()> {
     if std::path::Path::new("/dev/uinput").exists() {
         info!("/dev/uinput exists, kernel has uinput built in, skipping module loading");
         return Ok(());
+    }
+
+    // Loading a kernel module is an explicit opt-in. In particular, never
+    // guess that a module bundled for an older Paper Pro firmware is safe on
+    // the current kernel.
+    let allow_module_load = std::env::var("SMART_REMARKABLE_ALLOW_UINPUT_MODULE_LOAD").ok();
+    if !uinput_module_loading_allowed(allow_module_load.as_deref()) {
+        return Err(anyhow::anyhow!(
+            "/dev/uinput is unavailable and automatic kernel-module loading is disabled"
+        ));
     }
 
     // Check if uinput module is loaded by looking at the lsmod output
@@ -688,6 +779,14 @@ pub fn setup_uinput() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[test]
+fn uinput_module_loading_is_fail_closed() {
+    assert!(!uinput_module_loading_allowed(None));
+    assert!(!uinput_module_loading_allowed(Some("0")));
+    assert!(!uinput_module_loading_allowed(Some("true")));
+    assert!(uinput_module_loading_allowed(Some("1")));
 }
 
 #[test]

@@ -3,7 +3,7 @@ use image::GrayImage;
 use log::{debug, info};
 use std::fs::File;
 use std::io::Write;
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, SeekFrom};
 use std::process;
 
 use base64::{engine::general_purpose, Engine as _};
@@ -14,6 +14,26 @@ use crate::simulation::{ScreenshotSimulator, SimulationConfig};
 
 const VIRTUAL_WIDTH: u32 = 768;
 const VIRTUAL_HEIGHT: u32 = 1024;
+const RMPP_FRAME_CHAIN_MAX_HOPS: usize = 64;
+const RMPP_PAGE_BYTES: u64 = 4096;
+const RMPP_TERMINAL_ADVANCE_BYTES: u64 = 0x00d73000;
+const RMPP_TERMINAL_HEADER_LENGTH: u64 = RMPP_TERMINAL_ADVANCE_BYTES + 2;
+const FRAMEBUFFER_PROBE_CHUNK_BYTES: usize = 64 * 1024;
+
+#[derive(Clone, Copy, Debug)]
+struct ProcMapEntry {
+    start: u64,
+    end: u64,
+    readable: bool,
+    is_card0: bool,
+    is_anonymous: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RmppFramebufferCandidate {
+    base: u64,
+    readable_end: u64,
+}
 
 pub enum ScreenshotMode {
     Real { data: Vec<u8>, device_model: DeviceModel },
@@ -164,10 +184,68 @@ impl Screenshot {
         };
         match device_model {
             DeviceModel::RemarkablePaperPro => {
-                // For RMPP (arm64), we need to use the approach from pointer_arm64.go
-                let start_address = self.get_memory_range(pid)?;
-                let frame_pointer = self.calculate_frame_pointer(pid, start_address)?;
-                Ok(frame_pointer)
+                // xochitl can have several separate card0 allocation groups.
+                // Their order changes across restarts, so probe every group
+                // instead of assuming the final mapping is the framebuffer.
+                let screen_size_bytes = (self.screen_width() as u64)
+                    .checked_mul(self.screen_height() as u64)
+                    .and_then(|pixels| pixels.checked_mul(self.bytes_per_pixel() as u64))
+                    .ok_or_else(|| anyhow::anyhow!("Framebuffer size overflow"))?;
+                let candidates = self.get_framebuffer_candidates(pid)?;
+                let mem_file_path = format!("/proc/{}/mem", pid);
+                let mut file = File::open(&mem_file_path)?;
+
+                for candidate in candidates.iter().rev() {
+                    let readable_bytes = candidate
+                        .readable_end
+                        .checked_sub(candidate.base)
+                        .unwrap_or(0);
+                    if readable_bytes < screen_size_bytes {
+                        debug!(
+                            "RMPP framebuffer candidate {:#x} rejected: readable span is too small",
+                            candidate.base
+                        );
+                        continue;
+                    }
+
+                    let frame_pointer =
+                        match Self::calculate_frame_pointer_from(
+                            &mut file,
+                            candidate.base,
+                            candidate.readable_end,
+                            screen_size_bytes,
+                        ) {
+                            Ok(pointer) => pointer,
+                            Err(error) => {
+                                debug!(
+                                    "RMPP framebuffer candidate {:#x} rejected: {}",
+                                    candidate.base, error
+                                );
+                                continue;
+                            }
+                        };
+
+                    if let Err(error) =
+                        Self::probe_framebuffer_range(&mut file, frame_pointer, screen_size_bytes)
+                    {
+                        debug!(
+                            "RMPP framebuffer candidate {:#x} has an unreadable frame: {}",
+                            candidate.base, error
+                        );
+                        continue;
+                    }
+
+                    debug!(
+                        "RMPP framebuffer candidate {:#x} resolved to {:#x}",
+                        candidate.base, frame_pointer
+                    );
+                    return Ok(frame_pointer);
+                }
+
+                anyhow::bail!(
+                    "No usable Paper Pro framebuffer found across {} allocation candidate(s)",
+                    candidates.len()
+                )
             }
             _ => {
                 // RM2: find the mapping after /dev/fb0 in /proc/pid/maps, then apply firmware offset.
@@ -185,67 +263,201 @@ impl Screenshot {
         }
     }
 
-    // Get memory range for RMPP based on goMarkableStream/pointer_arm64.go
-    fn get_memory_range(&self, pid: &str) -> Result<u64> {
+    // Get every contiguous card0 mapping group's end address plus large,
+    // anonymous allocations that may hold a detached terminal framebuffer.
+    // Qt's allocator can either keep the final frame contiguous with the
+    // card0-linked chain or place it in a standalone anonymous mapping.
+    fn get_framebuffer_candidates(&self, pid: &str) -> Result<Vec<RmppFramebufferCandidate>> {
         let maps_file_path = format!("/proc/{}/maps", pid);
-        debug!("screenshot: reading memory range from {}", maps_file_path);
+        debug!("screenshot: reading memory ranges from {}", maps_file_path);
         let maps_content = std::fs::read_to_string(&maps_file_path)?;
+        Self::parse_framebuffer_candidates(&maps_content)
+    }
 
-        let mut memory_range = String::new();
-        debug!("Scanning for '/dev/dri/card0' in memory");
+    fn parse_framebuffer_candidates(
+        maps_content: &str,
+    ) -> Result<Vec<RmppFramebufferCandidate>> {
+        let mut entries = Vec::new();
         for line in maps_content.lines() {
-            if line.contains("/dev/dri/card0") {
-                memory_range = line.to_string();
-                debug!("Found memory range: {}", memory_range);
+            let mut fields = line.split_whitespace();
+            let range_field = fields
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Missing card0 memory range"))?;
+            let permissions = fields
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Missing memory permissions"))?;
+            let (start_hex, end_hex) = range_field
+                .split_once('-')
+                .ok_or_else(|| anyhow::anyhow!("Invalid memory range format"))?;
+            let start = u64::from_str_radix(start_hex, 16)?;
+            let end = u64::from_str_radix(end_hex, 16)?;
+
+            if start >= end {
+                anyhow::bail!("Invalid memory range");
+            }
+
+            // Skip offset, device, and inode. The path is optional.
+            let path = fields.nth(3);
+            entries.push(ProcMapEntry {
+                start,
+                end,
+                readable: permissions.starts_with('r'),
+                is_card0: path == Some("/dev/dri/card0"),
+                is_anonymous: path.is_none(),
+            });
+        }
+
+        let mut candidates = Vec::new();
+        let mut index = 0;
+        while index < entries.len() {
+            if !entries[index].is_card0 {
+                index += 1;
+                continue;
+            }
+
+            let mut group_end = entries[index].end;
+            index += 1;
+            while index < entries.len()
+                && entries[index].is_card0
+                && entries[index].start == group_end
+            {
+                group_end = entries[index].end;
+                index += 1;
+            }
+
+            let mut readable_end = group_end;
+            let mut successor = index;
+            while successor < entries.len()
+                && !entries[successor].is_card0
+                && entries[successor].readable
+                && entries[successor].start == readable_end
+            {
+                readable_end = entries[successor].end;
+                successor += 1;
+            }
+
+            candidates.push(RmppFramebufferCandidate {
+                base: group_end,
+                readable_end,
+            });
+        }
+
+        // On some xochitl allocation layouts, the card0-linked chain ends in
+        // an empty slot and its terminal frame is a separate anonymous
+        // allocation. Such a mapping begins with the same terminal length
+        // header at +8, so it can use the normal checked chain validator.
+        for entry in &entries {
+            if entry.is_anonymous
+                && entry.readable
+                && entry.end.saturating_sub(entry.start)
+                    == RMPP_TERMINAL_ADVANCE_BYTES
+            {
+                candidates.push(RmppFramebufferCandidate {
+                    base: entry.start,
+                    readable_end: entry.end,
+                });
             }
         }
 
-        if memory_range.is_empty() {
-            anyhow::bail!("No mapping found for /dev/dri/card0");
+        if candidates.is_empty() {
+            anyhow::bail!("No Paper Pro framebuffer allocation candidates found");
         }
 
-        debug!("Final memory range: {}", memory_range);
-        let fields: Vec<&str> = memory_range.split_whitespace().collect();
-        let range_field = fields[0];
-        let start_end: Vec<&str> = range_field.split('-').collect();
-
-        if start_end.len() != 2 {
-            anyhow::bail!("Invalid memory range format");
-        }
-
-        let end = u64::from_str_radix(start_end[1], 16)?;
-        debug!("range_field: {}\nstart_end: {}\nend: {}", range_field, start_end[1], end);
-        Ok(end)
+        candidates.sort_unstable_by_key(|candidate| (candidate.base, candidate.readable_end));
+        candidates.dedup();
+        debug!("Found {} Paper Pro framebuffer candidate(s)", candidates.len());
+        Ok(candidates)
     }
 
     // Calculate frame pointer for RMPP based on goMarkableStream/pointer_arm64.go
-    fn calculate_frame_pointer(&self, pid: &str, start_address: u64) -> Result<u64> {
-        let mem_file_path = format!("/proc/{}/mem", pid);
-        let mut file = std::fs::File::open(mem_file_path)?;
-
-        let screen_size_bytes = self.screen_width() as u64 * self.screen_height() as u64 * self.bytes_per_pixel() as u64;
-
+    fn calculate_frame_pointer_from<R: Read + Seek>(
+        reader: &mut R,
+        start_address: u64,
+        readable_end: u64,
+        screen_size_bytes: u64,
+    ) -> Result<u64> {
         let mut offset: u64 = 0;
         let mut length: u64 = 2;
 
-        while length < screen_size_bytes {
-            // debug!("looping while {} < {}", length, screen_size_bytes);
-            offset += length - 2;
+        for _ in 0..RMPP_FRAME_CHAIN_MAX_HOPS {
+            let advance = length
+                .checked_sub(2)
+                .ok_or_else(|| anyhow::anyhow!("Invalid header length"))?;
+            offset = offset
+                .checked_add(advance)
+                .ok_or_else(|| anyhow::anyhow!("Framebuffer chain offset overflow"))?;
+            let header_address = start_address
+                .checked_add(offset)
+                .and_then(|address| address.checked_add(8))
+                .ok_or_else(|| anyhow::anyhow!("Framebuffer header address overflow"))?;
+            let header_end = header_address
+                .checked_add(4)
+                .ok_or_else(|| anyhow::anyhow!("Framebuffer header range overflow"))?;
+            if header_end > readable_end {
+                anyhow::bail!("Framebuffer header exceeds readable mapping");
+            }
 
-            // debug!("  ... trying {}", start_address + offset + 8);
-            file.seek(std::io::SeekFrom::Start(start_address + offset + 8))?;
-            let mut header = [0u8; 8];
-            file.read_exact(&mut header)?;
-            debug!("  ... header: {:?}", &header);
+            reader.seek(SeekFrom::Start(header_address))?;
+            let mut header = [0u8; 4];
+            reader.read_exact(&mut header)?;
+            length = u32::from_le_bytes(header) as u64;
 
-            length = (header[0] as u64) | ((header[1] as u64) << 8) | ((header[2] as u64) << 16) | ((header[3] as u64) << 24);
-            debug!("  ... length: {}", length);
             if length < 2 {
                 anyhow::bail!("Invalid header length");
             }
+            if length >= screen_size_bytes {
+                if length != RMPP_TERMINAL_HEADER_LENGTH {
+                    anyhow::bail!("Unexpected terminal framebuffer header");
+                }
+                let frame_pointer = start_address
+                    .checked_add(offset)
+                    .ok_or_else(|| anyhow::anyhow!("Framebuffer address overflow"))?;
+                let frame_end = frame_pointer
+                    .checked_add(screen_size_bytes)
+                    .ok_or_else(|| anyhow::anyhow!("Framebuffer range overflow"))?;
+                if frame_end > readable_end {
+                    anyhow::bail!("Framebuffer exceeds readable mapping");
+                }
+                return Ok(frame_pointer);
+            }
+            if length == 2 {
+                anyhow::bail!("Framebuffer chain made no progress");
+            }
+            let next_advance = length - 2;
+            if next_advance % RMPP_PAGE_BYTES != 0
+                || next_advance >= RMPP_TERMINAL_ADVANCE_BYTES
+            {
+                anyhow::bail!("Invalid intermediate framebuffer header");
+            }
         }
 
-        Ok(start_address + offset)
+        anyhow::bail!(
+            "Framebuffer chain exceeded {} hops",
+            RMPP_FRAME_CHAIN_MAX_HOPS
+        )
+    }
+
+    // Read the complete candidate range before accepting it. /proc/<pid>/mem
+    // permits seeking to an address that is not fully backed; a complete
+    // bounded read prevents selecting a chain that ends in a partial mapping.
+    fn probe_framebuffer_range<R: Read + Seek>(
+        reader: &mut R,
+        frame_pointer: u64,
+        screen_size_bytes: u64,
+    ) -> Result<()> {
+        frame_pointer
+            .checked_add(screen_size_bytes)
+            .ok_or_else(|| anyhow::anyhow!("Framebuffer range overflow"))?;
+        reader.seek(SeekFrom::Start(frame_pointer))?;
+
+        let mut remaining = screen_size_bytes;
+        let mut buffer = [0u8; FRAMEBUFFER_PROBE_CHUNK_BYTES];
+        while remaining > 0 {
+            let chunk_size = remaining.min(buffer.len() as u64) as usize;
+            reader.read_exact(&mut buffer[..chunk_size])?;
+            remaining -= chunk_size as u64;
+        }
+        Ok(())
     }
 
     fn read_framebuffer(&self, pid: &str, skip_bytes: u64) -> Result<Vec<u8>> {
@@ -699,6 +911,233 @@ impl Screenshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn groups_contiguous_card0_mappings_and_preserves_separate_candidates() {
+        let maps = "\
+ffff8e88a000-ffff8ea37000 rw-s 00000000 00:06 273 /dev/dri/card0
+ffff8ea37000-ffff8ebe4000 rw-s 00000000 00:06 273 /dev/dri/card0
+ffff8ebe4000-ffff90000000 rw-s 00000000 00:06 273 /dev/dri/card0
+ffff90000000-ffff90d16000 rw-p 00000000 00:00 0
+ffff94006000-ffff941b3000 rw-s 00000000 00:06 273 /dev/dri/card0
+ffff941b3000-ffff955e0000 rw-p 00000000 00:00 0
+ffffa0180000-ffffa032d000 rw-s 00000000 00:06 273 /dev/dri/card0
+";
+
+        assert_eq!(
+            Screenshot::parse_framebuffer_candidates(maps).unwrap(),
+            vec![
+                RmppFramebufferCandidate {
+                    base: 0xffff90000000,
+                    readable_end: 0xffff90d16000,
+                },
+                RmppFramebufferCandidate {
+                    base: 0xffff941b3000,
+                    readable_end: 0xffff955e0000,
+                },
+                RmppFramebufferCandidate {
+                    base: 0xffffa032d000,
+                    readable_end: 0xffffa032d000,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn requires_an_exact_card0_path_and_a_contiguous_readable_successor() {
+        let maps = "\
+1000-2000 rw-s 00000000 00:06 273 /dev/dri/card00
+2000-3000 rw-p 00000000 00:00 0
+4000-5000 rw-s 00000000 00:06 273 /dev/dri/card0
+5000-6000 ---p 00000000 00:00 0
+6000-7000 rw-p 00000000 00:00 0
+";
+
+        assert_eq!(
+            Screenshot::parse_framebuffer_candidates(maps).unwrap(),
+            vec![RmppFramebufferCandidate {
+                base: 0x5000,
+                readable_end: 0x5000,
+            }]
+        );
+    }
+
+    #[test]
+    fn includes_a_detached_terminal_frame_allocation() {
+        let maps = "\
+1000-2000 rw-s 00000000 00:06 273 /dev/dri/card0
+2000-3000 ---p 00000000 00:00 0
+4000-d77000 rw-p 00000000 00:00 0
+";
+
+        assert_eq!(
+            Screenshot::parse_framebuffer_candidates(maps).unwrap(),
+            vec![
+                RmppFramebufferCandidate {
+                    base: 0x2000,
+                    readable_end: 0x2000,
+                },
+                RmppFramebufferCandidate {
+                    base: 0x4000,
+                    readable_end: 0xd77000,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn follows_a_valid_rmpp_framebuffer_header_chain() {
+        let start = 16u64;
+        let intermediate_advance = 0x35d000u64;
+        let pointer = start + 2 * intermediate_advance;
+        let readable_end = pointer + RMPP_TERMINAL_ADVANCE_BYTES;
+        let mut memory = vec![0u8; (pointer + 12) as usize];
+        memory[(start + 8) as usize..(start + 12) as usize]
+            .copy_from_slice(&((intermediate_advance + 2) as u32).to_le_bytes());
+        let second_header = start + intermediate_advance + 8;
+        memory[second_header as usize..(second_header + 4) as usize]
+            .copy_from_slice(&((intermediate_advance + 2) as u32).to_le_bytes());
+        let terminal_header = pointer + 8;
+        memory[terminal_header as usize..(terminal_header + 4) as usize]
+            .copy_from_slice(&(RMPP_TERMINAL_HEADER_LENGTH as u32).to_le_bytes());
+        let mut reader = Cursor::new(memory);
+
+        assert_eq!(
+            Screenshot::calculate_frame_pointer_from(
+                &mut reader,
+                start,
+                readable_end,
+                14_061_312,
+            )
+            .unwrap(),
+            pointer
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_and_nonadvancing_rmpp_header_chains() {
+        let start = 16u64;
+
+        let mut invalid = Cursor::new(vec![0u8; 64]);
+        let error =
+            Screenshot::calculate_frame_pointer_from(&mut invalid, start, 64, 14_061_312)
+                .unwrap_err();
+        assert!(error.to_string().contains("Invalid header length"));
+
+        let mut memory = vec![0u8; 64];
+        memory[(start + 8) as usize..(start + 12) as usize]
+            .copy_from_slice(&2u32.to_le_bytes());
+        let mut nonadvancing = Cursor::new(memory);
+        let error =
+            Screenshot::calculate_frame_pointer_from(
+                &mut nonadvancing,
+                start,
+                64,
+                14_061_312,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("made no progress"));
+    }
+
+    #[test]
+    fn rejects_false_terminal_and_unaligned_intermediate_headers() {
+        let start = 16u64;
+
+        let mut false_terminal_memory = vec![0u8; 64];
+        false_terminal_memory[(start + 8) as usize..(start + 12) as usize]
+            .copy_from_slice(&((RMPP_TERMINAL_HEADER_LENGTH + 1) as u32).to_le_bytes());
+        let mut false_terminal = Cursor::new(false_terminal_memory);
+        let error = Screenshot::calculate_frame_pointer_from(
+            &mut false_terminal,
+            start,
+            start + RMPP_TERMINAL_ADVANCE_BYTES + 1,
+            14_061_312,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Unexpected terminal"));
+
+        let mut unaligned_memory = vec![0u8; 64];
+        unaligned_memory[(start + 8) as usize..(start + 12) as usize]
+            .copy_from_slice(&0x1003u32.to_le_bytes());
+        let mut unaligned = Cursor::new(unaligned_memory);
+        let error = Screenshot::calculate_frame_pointer_from(
+            &mut unaligned,
+            start,
+            start + RMPP_TERMINAL_ADVANCE_BYTES,
+            14_061_312,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Invalid intermediate"));
+    }
+
+    #[test]
+    fn rejects_a_frame_that_would_cross_the_readable_mapping() {
+        let start = 16u64;
+        let mut memory = vec![0u8; 64];
+        memory[(start + 8) as usize..(start + 12) as usize]
+            .copy_from_slice(&(RMPP_TERMINAL_HEADER_LENGTH as u32).to_le_bytes());
+        let mut reader = Cursor::new(memory);
+
+        let error = Screenshot::calculate_frame_pointer_from(
+            &mut reader,
+            start,
+            start + 14_061_311,
+            14_061_312,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeds readable mapping"));
+    }
+
+    #[test]
+    fn bounds_rmpp_header_hops_and_address_arithmetic() {
+        let start = 16u64;
+        let intermediate_advance = RMPP_PAGE_BYTES;
+        let mut memory =
+            vec![0u8; (start + 8 + (RMPP_FRAME_CHAIN_MAX_HOPS as u64 + 1) * intermediate_advance) as usize];
+        for hop in 0..RMPP_FRAME_CHAIN_MAX_HOPS {
+            let header =
+                (start + 8 + hop as u64 * intermediate_advance) as usize;
+            memory[header..header + 4]
+                .copy_from_slice(&((intermediate_advance + 2) as u32).to_le_bytes());
+        }
+        let readable_end = memory.len() as u64;
+        let mut reader = Cursor::new(memory);
+        let error =
+            Screenshot::calculate_frame_pointer_from(
+                &mut reader,
+                start,
+                readable_end,
+                14_061_312,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeded 64 hops"));
+
+        let mut empty = Cursor::new(Vec::<u8>::new());
+        let error =
+            Screenshot::calculate_frame_pointer_from(
+                &mut empty,
+                u64::MAX - 4,
+                u64::MAX,
+                14_061_312,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("address overflow"));
+    }
+
+    #[test]
+    fn probes_the_complete_framebuffer_range() {
+        let mut reader = Cursor::new(vec![0x7f; FRAMEBUFFER_PROBE_CHUNK_BYTES + 7]);
+        Screenshot::probe_framebuffer_range(
+            &mut reader,
+            0,
+            (FRAMEBUFFER_PROBE_CHUNK_BYTES + 7) as u64,
+        )
+        .unwrap();
+
+        let mut short_reader = Cursor::new(vec![0x7f; 7]);
+        assert!(Screenshot::probe_framebuffer_range(&mut short_reader, 0, 8).is_err());
+    }
 
     #[test]
     fn detects_selection_marquee_in_real_capture() {
@@ -710,6 +1149,30 @@ mod tests {
         assert!((rect.y - 222).abs() < 15, "y = {}", rect.y);
         assert!((rect.w - 300).abs() < 30, "w = {}", rect.w);
         assert!((rect.h - 52).abs() < 20, "h = {}", rect.h);
+    }
+
+    #[test]
+    fn real_marquee_crop_prepares_for_vision_without_persistence() {
+        let data =
+            std::fs::read("tests/fixtures/rmpp_selection.png").unwrap();
+        let ss = Screenshot::from_png_data(data);
+        let rect = ss.detect_selection_rect().expect("marquee should be detected");
+        let crop = ss.base64_cropped(rect).unwrap();
+        let prepared =
+            crate::util::prepare_selection_png_b64(&crop, 768).unwrap();
+
+        let bytes = general_purpose::STANDARD.decode(prepared).unwrap();
+        assert!(bytes.len() < 6 * 1024 * 1024);
+        let image = image::load_from_memory(&bytes).unwrap().to_luma8();
+        assert_eq!(image.width().max(image.height()), 768);
+        assert!(
+            image.pixels().any(|pixel| pixel.0[0] < 64),
+            "handwriting must remain visible"
+        );
+        assert!(
+            image.pixels().any(|pixel| pixel.0[0] == 255),
+            "selection-gray background must become white"
+        );
     }
 
     #[test]

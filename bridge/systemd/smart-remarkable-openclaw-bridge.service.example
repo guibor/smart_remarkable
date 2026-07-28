@@ -1,0 +1,30 @@
+[Unit]
+Description=Smart Remarkable OpenClaw loopback bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mdf
+Group=mdf
+WorkingDirectory=/home/mdf/.local/share/smart-remarkable-openclaw-bridge
+ExecStart=/usr/bin/node /home/mdf/.local/share/smart-remarkable-openclaw-bridge/src/main.mjs
+Restart=on-failure
+RestartSec=3
+UMask=0077
+Environment=NODE_ENV=production
+Environment=HOME=/home/mdf
+Environment=SMART_REMARKABLE_BRIDGE_HOST=127.0.0.1
+Environment=SMART_REMARKABLE_BRIDGE_PORT=18792
+Environment=OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789
+Environment=SMART_REMARKABLE_REQUEST_JOURNAL_DIR=%S/smart-remarkable-openclaw-bridge/request-journal-v1
+StateDirectory=smart-remarkable-openclaw-bridge
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

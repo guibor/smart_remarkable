@@ -1,7 +1,11 @@
 use anyhow::Result;
 use base64::prelude::*;
 use log::{debug, info};
-use std::sync::{Arc, Mutex};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use tokio::sync::{mpsc, watch, Mutex as TokioMutex};
 use tokio::time::{sleep, Duration};
 
@@ -9,11 +13,14 @@ use crate::cancellation::SmartRemarkableCancellation;
 use crate::config::Config;
 use crate::embedded_assets::load_config;
 use crate::keyboard::Keyboard;
-use crate::llm_engine::{LLMEngine, ModelExecutionStatus};
+use crate::llm_engine::{LLMEngine, ModelExecutionStatus, ResponseMode};
 use crate::screenshot::Screenshot;
 use crate::segmenter::ImageAnalyzer;
 use crate::simulation::SimulationConfig;
 use crate::touch::{Rect, Touch, TriggerSource};
+use crate::util::prepare_selection_png_b64;
+
+const SELECTION_VISION_MIN_LONG_EDGE: u32 = 768;
 
 /// Events that can trigger AI processing
 #[derive(Debug, Clone)]
@@ -54,6 +61,16 @@ pub struct ProcessingRequest {
     pub trigger: TriggerEvent,
 }
 
+/// Whether a trigger reached a real processing attempt. An armed pen tap can
+/// arrive before the user completes a native lasso; that is not a completed
+/// one-shot request and the worker must remain armed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessingOutcome {
+    Completed,
+    NoSelection,
+    DuplicateSelection,
+}
+
 /// Communication channels for the coordinator
 pub struct CoordinatorChannels {
     /// Send trigger events to coordinator
@@ -75,9 +92,60 @@ fn should_collect_selection_taps(collect_taps: bool, is_real: bool, source: Trig
     collect_taps && is_real && source == TriggerSource::Touch
 }
 
+fn try_admit(admission: &AtomicBool) -> bool {
+    admission
+        .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+fn selection_fingerprint(base64_image: &str, selection: Rect) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    selection.x.hash(&mut hasher);
+    selection.y.hash(&mut hasher);
+    selection.w.hash(&mut hasher);
+    selection.h.hash(&mut hasher);
+    base64_image.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn should_suppress_duplicate(
+    source: TriggerSource,
+    current: Option<u64>,
+    last_completed: Option<u64>,
+) -> bool {
+    source == TriggerSource::PenLasso && current.is_some() && current == last_completed
+}
+
+/// Map a physical trigger onto the response destination used by this request.
+/// Existing gesture and Draw behavior remains write-back; only the explicit
+/// Send button suppresses notebook output.
+fn response_mode_for_trigger(source: TriggerSource) -> ResponseMode {
+    match source {
+        TriggerSource::SendButton => ResponseMode::WhatsappOnly,
+        _ => ResponseMode::WriteBack,
+    }
+}
+
+/// Only a successful remote acceptance may clear a selection initiated by
+/// either explicit menu button. Crop, startup, HTTP, and cancellation failures
+/// therefore leave the marquee visible.
+fn should_dismiss_accepted_selection(
+    source: TriggerSource,
+    has_selection: bool,
+    status: &ModelExecutionStatus,
+) -> bool {
+    matches!(
+        source,
+        TriggerSource::LlmButton | TriggerSource::SendButton
+    ) && has_selection
+        && *status == ModelExecutionStatus::RemoteAccepted
+}
+
 impl CoordinatorChannels {
     pub fn new() -> Self {
-        let (trigger_tx, trigger_rx) = mpsc::channel(10);
+        // A trigger is never a backlog: one request may be admitted and any
+        // gesture/button press while it is active is discarded.
+        let (trigger_tx, trigger_rx) = mpsc::channel(1);
         let (progress_tx, progress_rx) = watch::channel(ProgressState::Idle);
 
         Self {
@@ -102,6 +170,7 @@ pub async fn trigger_task(
     cancellation: Arc<SmartRemarkableCancellation>,
     no_trigger: bool,
     collect_taps: bool,
+    admission: Arc<AtomicBool>,
 ) -> Result<()> {
     info!("Trigger task starting");
 
@@ -110,6 +179,10 @@ pub async fn trigger_task(
 
         if no_trigger {
             debug!("No-trigger mode: auto-triggering");
+            if !try_admit(&admission) {
+                sleep(Duration::from_millis(25)).await;
+                continue;
+            }
             if trigger_tx
                 .send(TriggerEvent::UserTouch {
                     source: TriggerSource::Touch,
@@ -117,6 +190,7 @@ pub async fn trigger_task(
                 .await
                 .is_err()
             {
+                admission.store(true, Ordering::Release);
                 info!("Trigger receiver dropped, exiting trigger task");
                 break;
             }
@@ -146,12 +220,20 @@ pub async fn trigger_task(
         let mut touch_guard = touch.write().await;
         debug!("Trigger task: acquired touch write lock, calling wait_for_trigger");
 
-        match touch_guard.wait_for_trigger(&cancellation).await {
+        match touch_guard
+            .wait_for_trigger_admitted(&cancellation, &admission)
+            .await
+        {
             Ok(()) => {
                 debug!("Trigger task: wait_for_trigger returned Ok, touch detected");
                 info!("Trigger task: touch detected");
 
                 let source = touch_guard.last_trigger_source();
+
+                if !try_admit(&admission) {
+                    info!("Ignoring trigger while another request is active");
+                    continue;
+                }
 
                 // In select mode, collect the selection and placement box corners
                 // while we still hold the touch event stream
@@ -159,6 +241,7 @@ pub async fn trigger_task(
                     match collect_selection(&mut touch_guard, &cancellation, source).await {
                         Ok(event) => event,
                         Err(e) => {
+                            admission.store(true, Ordering::Release);
                             if e.to_string().contains("cancelled") {
                                 info!("Trigger task: cancelled during selection");
                                 return Ok(());
@@ -176,6 +259,7 @@ pub async fn trigger_task(
                 debug!("Trigger task: dropped touch write lock");
 
                 if trigger_tx.send(event).await.is_err() {
+                    admission.store(true, Ordering::Release);
                     info!("Trigger receiver dropped, exiting trigger task");
                     break;
                 }
@@ -204,8 +288,14 @@ pub async fn trigger_task(
 
 #[cfg(test)]
 mod tests {
-    use super::should_collect_selection_taps;
-    use crate::touch::TriggerSource;
+    use super::{
+        response_mode_for_trigger, selection_fingerprint,
+        should_collect_selection_taps, should_dismiss_accepted_selection,
+        should_suppress_duplicate, try_admit,
+    };
+    use crate::llm_engine::{ModelExecutionStatus, ResponseMode};
+    use crate::touch::{Rect, TriggerSource};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     fn physical_touch_collects_select_mode_rectangles() {
@@ -215,13 +305,106 @@ mod tests {
     #[test]
     fn native_button_triggers_use_the_active_marquee() {
         assert!(!should_collect_selection_taps(true, true, TriggerSource::LlmButton));
+        assert!(!should_collect_selection_taps(true, true, TriggerSource::SendButton));
         assert!(!should_collect_selection_taps(true, true, TriggerSource::DrawButton));
+        assert!(!should_collect_selection_taps(true, true, TriggerSource::PenLasso));
     }
 
     #[test]
     fn simulation_and_non_select_modes_skip_manual_rectangles() {
         assert!(!should_collect_selection_taps(true, false, TriggerSource::Touch));
         assert!(!should_collect_selection_taps(false, true, TriggerSource::Touch));
+    }
+
+    #[test]
+    fn admission_is_single_owner_until_released() {
+        let admission = AtomicBool::new(true);
+        assert!(try_admit(&admission));
+        assert!(!try_admit(&admission));
+        admission.store(true, Ordering::Release);
+        assert!(try_admit(&admission));
+    }
+
+    #[test]
+    fn pen_duplicate_is_suppressed_but_explicit_button_is_not() {
+        let rect = Rect {
+            x: 10,
+            y: 20,
+            w: 100,
+            h: 50,
+        };
+        let first = selection_fingerprint("image-a", rect);
+        let changed = selection_fingerprint("image-b", rect);
+        assert!(should_suppress_duplicate(
+            TriggerSource::PenLasso,
+            Some(first),
+            Some(first)
+        ));
+        assert!(!should_suppress_duplicate(
+            TriggerSource::LlmButton,
+            Some(first),
+            Some(first)
+        ));
+        assert!(!should_suppress_duplicate(
+            TriggerSource::PenLasso,
+            Some(changed),
+            Some(first)
+        ));
+    }
+
+    #[test]
+    fn explicit_button_selection_is_dismissed_only_after_remote_acceptance() {
+        assert!(should_dismiss_accepted_selection(
+            TriggerSource::LlmButton,
+            true,
+            &ModelExecutionStatus::RemoteAccepted,
+        ));
+        assert!(should_dismiss_accepted_selection(
+            TriggerSource::SendButton,
+            true,
+            &ModelExecutionStatus::RemoteAccepted,
+        ));
+        assert!(!should_dismiss_accepted_selection(
+            TriggerSource::LlmButton,
+            true,
+            &ModelExecutionStatus::LlmProcessing,
+        ));
+        assert!(!should_dismiss_accepted_selection(
+            TriggerSource::SendButton,
+            true,
+            &ModelExecutionStatus::Error("connection failed".to_string()),
+        ));
+        assert!(!should_dismiss_accepted_selection(
+            TriggerSource::LlmButton,
+            false,
+            &ModelExecutionStatus::RemoteAccepted,
+        ));
+        assert!(!should_dismiss_accepted_selection(
+            TriggerSource::DrawButton,
+            true,
+            &ModelExecutionStatus::RemoteAccepted,
+        ));
+        assert!(!should_dismiss_accepted_selection(
+            TriggerSource::PenLasso,
+            true,
+            &ModelExecutionStatus::RemoteAccepted,
+        ));
+    }
+
+    #[test]
+    fn button_sources_map_to_explicit_response_destinations() {
+        assert_eq!(
+            response_mode_for_trigger(TriggerSource::LlmButton),
+            ResponseMode::WriteBack
+        );
+        assert_eq!(
+            response_mode_for_trigger(TriggerSource::SendButton),
+            ResponseMode::WhatsappOnly
+        );
+        assert_eq!(
+            response_mode_for_trigger(TriggerSource::PenLasso),
+            ResponseMode::WriteBack
+        );
     }
 }
 
@@ -329,6 +512,9 @@ pub async fn progress_task(
                         ProgressState::LlmState(ModelExecutionStatus::LlmProcessing) => {
                             info!("Progress: Thinking...");
                         }
+                        ProgressState::LlmState(ModelExecutionStatus::RemoteAccepted) => {
+                            info!("Progress: OpenClaw accepted request");
+                        }
                         ProgressState::LlmState(ModelExecutionStatus::ProcessingResponse) => {
                             info!("Progress: Processing response...");
                         }
@@ -397,14 +583,23 @@ pub async fn processing_task(
     engine: Arc<TokioMutex<Box<dyn LLMEngine>>>,
     progress_tx: watch::Sender<ProgressState>,
     cancellation: Arc<SmartRemarkableCancellation>,
+    keyboard: Arc<Mutex<Keyboard>>,
     touch: Arc<tokio::sync::RwLock<Touch>>,
     selection: Option<(Rect, Rect)>,
     placement_slot: Arc<Mutex<Option<Rect>>>,
     selection_slot: Arc<Mutex<Option<Rect>>>,
     input_image_slot: Arc<Mutex<Option<String>>>,
     trigger_source: TriggerSource,
-) -> Result<()> {
+    last_selection_fingerprint: Arc<Mutex<Option<u64>>>,
+) -> Result<ProcessingOutcome> {
     info!("Processing task: starting");
+
+    // The pen-up event reaches evdev just before xochitl finishes painting
+    // the gray native-selection marquee. Give the stock UI a short head
+    // start; unlike a follow-up finger gesture, this does not dismiss it.
+    if trigger_source == TriggerSource::PenLasso {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
 
     // Update progress: taking screenshot
     info!("Setting ProgressState::TakingScreenshot");
@@ -414,7 +609,7 @@ pub async fn processing_task(
     // Take screenshot
     let screenshot_path = config.save_screenshot.clone();
     let mut selection = selection;
-    let base64_image = if let Some(input_png) = &config.input_png {
+    let captured_image = if let Some(input_png) = &config.input_png {
         BASE64_STANDARD.encode(std::fs::read(input_png)?)
     } else {
         let mut screenshot = if config.is_test_mode() {
@@ -429,10 +624,23 @@ pub async fn processing_task(
             screenshot.save_image(save_screenshot)?;
         }
 
-        // Select mode without tapped boxes (four-finger trigger): look for the
-        // native selection-tool marquee in the screenshot and answer below it
+        // Select mode without tapped boxes: look for the native selection-tool
+        // marquee in the screenshot and answer below it. Pen-up can precede
+        // the final xochitl repaint, so retry a few read-only captures before
+        // treating this candidate as an unrelated pen tap.
         if selection.is_none() && config.select_mode {
-            match screenshot.detect_selection_rect() {
+            let mut marquee = screenshot.detect_selection_rect();
+            if trigger_source == TriggerSource::PenLasso {
+                for _ in 0..4 {
+                    if marquee.is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    screenshot.take_screenshot()?;
+                    marquee = screenshot.detect_selection_rect();
+                }
+            }
+            match marquee {
                 Some(marquee) => {
                     let placement = auto_placement(marquee);
                     info!("Detected selection marquee {:?}, answering into {:?}", marquee, placement);
@@ -440,8 +648,11 @@ pub async fn processing_task(
                 }
                 None => {
                     info!("No selection marquee found; ignoring trigger (select something first)");
+                    if let Ok(mut fingerprint) = last_selection_fingerprint.lock() {
+                        fingerprint.take();
+                    }
                     let _ = progress_tx.send(ProgressState::Done);
-                    return Ok(());
+                    return Ok(ProcessingOutcome::NoSelection);
                 }
             }
         }
@@ -452,29 +663,40 @@ pub async fn processing_task(
             screenshot.base64()?
         }
     };
+    let base64_image = if selection.is_some() {
+        prepare_selection_png_b64(
+            &captured_image,
+            SELECTION_VISION_MIN_LONG_EDGE,
+        )?
+    } else {
+        captured_image
+    };
 
-    // Arm the placement slot so the draw_svg tool scales the answer into
-    // the box the user chose, and the selection slot so the Draw button's
-    // draw_sketch tool can redraw into the ORIGINAL lassoed box instead
-    // (when the model reports the selection was already a drawing).
-    if let Some((selection_rect, placement_rect)) = &selection {
-        if let Ok(mut slot) = placement_slot.lock() {
-            *slot = Some(*placement_rect);
-        }
-        if let Ok(mut slot) = selection_slot.lock() {
-            *slot = Some(*selection_rect);
-        }
-    }
-    // Arm the input-image slot so the image-generation draw tool can attach
-    // the cropped selection to its request (sketch-enhancement mode)
-    if let Ok(mut slot) = input_image_slot.lock() {
-        *slot = Some(base64_image.clone());
+    let request_fingerprint =
+        selection.map(|(selection_rect, _)| selection_fingerprint(&base64_image, selection_rect));
+    let last_completed = last_selection_fingerprint
+        .lock()
+        .ok()
+        .and_then(|last| *last);
+    if should_suppress_duplicate(
+        trigger_source,
+        request_fingerprint,
+        last_completed,
+    ) {
+        info!("Ignoring duplicate pen trigger for the still-active selection");
+        let _ = progress_tx.send(ProgressState::Done);
+        return Ok(ProcessingOutcome::DuplicateSelection);
     }
 
     if config.no_submit {
         info!("Skipping LLM submission (no_submit mode)");
+        if let Some(fingerprint) = request_fingerprint {
+            if let Ok(mut last) = last_selection_fingerprint.lock() {
+                *last = Some(fingerprint);
+            }
+        }
         let _ = progress_tx.send(ProgressState::Done);
-        return Ok(());
+        return Ok(ProcessingOutcome::Completed);
     }
 
     // Tap middle bottom to position cursor for text input (before showing
@@ -519,6 +741,7 @@ pub async fn processing_task(
     // Load prompt. The Draw button overrides the normal select-mode prompt
     // with prompts/draw.json regardless of --prompt/config.prompt, since it's
     // a distinct action (sketch/refine) from the LLM button's Q&A behavior.
+    let response_mode = response_mode_for_trigger(trigger_source);
     let prompt_name = if config.select_mode && trigger_source == TriggerSource::DrawButton {
         // With an image-generation model configured, the LLM plans the
         // drawing (prompt-writing) instead of authoring SVG itself
@@ -527,6 +750,8 @@ pub async fn processing_task(
         } else {
             "draw.json".to_string()
         }
+    } else if config.select_mode && response_mode == ResponseMode::WhatsappOnly {
+        "selection_openclaw_whatsapp.json".to_string()
     } else {
         config.prompt.clone()
     };
@@ -543,21 +768,71 @@ pub async fn processing_task(
         prompt.push_str(&seg_desc);
     }
 
+    // Arm request-scoped tool slots only after every fallible preprocessing
+    // step and immediately before model execution. This prevents no-submit
+    // and prompt/configuration errors from retaining a cropped page image.
+    if response_mode.writes_to_tablet() {
+        if let Some((selection_rect, placement_rect)) = &selection {
+            if let Ok(mut slot) = placement_slot.lock() {
+                *slot = Some(*placement_rect);
+            }
+            if let Ok(mut slot) = selection_slot.lock() {
+                *slot = Some(*selection_rect);
+            }
+        }
+    }
+    if trigger_source == TriggerSource::DrawButton {
+        if let Ok(mut slot) = input_image_slot.lock() {
+            *slot = Some(base64_image.clone());
+        }
+    }
+
     // Prepare engine
     let mut engine_guard = engine.lock().await;
+    engine_guard.set_response_mode(response_mode);
     engine_guard.clear_content();
     engine_guard.add_image_content(&base64_image);
     engine_guard.add_text_content(&prompt);
 
     // Create status callback that wraps model execution status in LlmState
     let progress_tx_clone = progress_tx.clone();
+    let keyboard_for_acceptance = Arc::clone(&keyboard);
+    let has_selection = selection.is_some();
+    let is_test_mode = config.is_test_mode();
+    let mut selection_dismissed = false;
     let status_callback = Some(Box::new(move |status: ModelExecutionStatus| {
+        if !is_test_mode
+            && !selection_dismissed
+            && should_dismiss_accepted_selection(trigger_source, has_selection, &status)
+        {
+            match keyboard_for_acceptance.lock() {
+                Ok(mut keyboard) => {
+                    if let Err(error) = keyboard.dismiss_captured_selection() {
+                        info!(
+                            "Unable to dismiss remotely accepted native selection: {}",
+                            error
+                        );
+                    } else {
+                        selection_dismissed = true;
+                    }
+                }
+                Err(_) => {
+                    info!(
+                        "Unable to dismiss remotely accepted native selection: keyboard lock poisoned"
+                    );
+                }
+            }
+        }
         let _ = progress_tx_clone.send(ProgressState::LlmState(status));
     }) as Box<dyn FnMut(ModelExecutionStatus) + Send>);
 
     // Execute LLM with proper error handling
     info!("Processing task: calling LLM");
     let execution_result = engine_guard.execute(&cancellation, status_callback).await;
+    // Model content includes the selected image; release it immediately after
+    // every execution instead of retaining it until the next request.
+    engine_guard.clear_content();
+    drop(engine_guard);
 
     // Write model output if configured
     if let Some(model_output_file) = &config.model_output_file {
@@ -580,9 +855,14 @@ pub async fn processing_task(
     // Handle execution result
     match execution_result {
         Ok(_) => {
+            if let Some(fingerprint) = request_fingerprint {
+                if let Ok(mut last) = last_selection_fingerprint.lock() {
+                    *last = Some(fingerprint);
+                }
+            }
             let _ = progress_tx.send(ProgressState::Done);
             info!("Processing task: completed successfully");
-            Ok(())
+            Ok(ProcessingOutcome::Completed)
         }
         Err(e) => {
             let error_msg = e.to_string();

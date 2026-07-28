@@ -1,0 +1,23 @@
+# Dedicated, forwarding-only account used by the reMarkable bridge tunnel.
+# Keep the trailing Match all: Include files are parsed inline.
+Match User smart-remarkable-tunnel
+    AuthenticationMethods publickey
+    PubkeyAuthentication yes
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+
+    AllowTcpForwarding local
+    AllowStreamLocalForwarding no
+    PermitOpen 127.0.0.1:18792
+    PermitListen none
+    GatewayPorts no
+
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+    PermitUserRC no
+    PermitTunnel no
+    MaxSessions 0
+    ForceCommand /bin/false
+
+Match all

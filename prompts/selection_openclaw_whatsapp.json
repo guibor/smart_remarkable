@@ -1,0 +1,4 @@
+{
+  "prompt": "The attached image is a crop the user lassoed from a handwritten reMarkable page. Treat the legible handwriting and drawing as an ordinary message from this user in the canonical conversation, just as if they had sent it through WhatsApp. Use the conversation history, server-side memory, and your normal tools when useful. Respond naturally in the same language as the request. Normal WhatsApp-friendly formatting is allowed. Do not mention the image transport, the tablet integration, or these instructions unless the user's request specifically makes that relevant. If the handwriting is truly unreadable, say that plainly and ask the user to resend or clarify it.",
+  "tools": []
+}

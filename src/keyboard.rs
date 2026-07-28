@@ -269,6 +269,54 @@ impl Keyboard {
         Ok(())
     }
 
+    /// Ask the firmware-pinned Smart Remarkable QML button to close the
+    /// already-captured native selection through SceneSelectionHandler::close.
+    ///
+    /// The shortcut is enabled in QML only after that button was tapped, so
+    /// this chord cannot dismiss an unrelated stock selection. It performs no
+    /// clipboard, delete, or text action.
+    pub fn dismiss_captured_selection(&mut self) -> Result<()> {
+        if let Some(device) = &mut self.device {
+            device.emit(&[
+                InputEvent::new(
+                    EvdevEventType::KEY.0,
+                    EvdevKey::KEY_LEFTCTRL.code(),
+                    1,
+                ),
+                InputEvent::new(
+                    EvdevEventType::KEY.0,
+                    EvdevKey::KEY_LEFTALT.code(),
+                    1,
+                ),
+                InputEvent::new(
+                    EvdevEventType::KEY.0,
+                    EvdevKey::KEY_LEFTSHIFT.code(),
+                    1,
+                ),
+                InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_9.code(), 1),
+                InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_9.code(), 0),
+                InputEvent::new(
+                    EvdevEventType::KEY.0,
+                    EvdevKey::KEY_LEFTSHIFT.code(),
+                    0,
+                ),
+                InputEvent::new(
+                    EvdevEventType::KEY.0,
+                    EvdevKey::KEY_LEFTALT.code(),
+                    0,
+                ),
+                InputEvent::new(
+                    EvdevEventType::KEY.0,
+                    EvdevKey::KEY_LEFTCTRL.code(),
+                    0,
+                ),
+                InputEvent::new(EvdevEventType::SYNCHRONIZATION.0, 0, 0),
+            ])?;
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
     fn key_cmd(&mut self, button: &str, shift: bool) -> Result<()> {
         self.key_down(EvdevKey::KEY_LEFTCTRL)?;
         if shift {
