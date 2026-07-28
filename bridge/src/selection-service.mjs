@@ -15,8 +15,11 @@ import {
 import {
   ORIGIN_BIND_METHOD,
   ORIGIN_CLEAR_METHOD,
+  SOURCE_PROVENANCE_PROTOCOL_VERSION,
   SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+  SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
   verifyOriginBinding,
+  verifyOriginClearing,
 } from "./source-provenance.mjs";
 import { recoverTranscriptMessages } from "./transcript-recovery.mjs";
 
@@ -192,7 +195,11 @@ function isRequestUserMessage(message, requestId) {
 }
 
 function promptWithResponseProtocol(promptText) {
-  return `${promptText}\n\n${RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION}`;
+  return [
+    promptText,
+    SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
+    RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
+  ].join("\n\n");
 }
 
 function requireSessionId(history) {
@@ -251,6 +258,7 @@ export class SelectionService {
       acceptedListeners: new Set(),
       ackPromise: null,
       originBound: false,
+      originBindingHandle: null,
       runId: null,
       terminal: deferred(),
       replayed: false,
@@ -561,12 +569,24 @@ export class SelectionService {
       return;
     }
     job.originBound = false;
+    const bindingHandle = job.originBindingHandle;
+    job.originBindingHandle = null;
+    if (typeof bindingHandle !== "string") {
+      this.logger.error?.(
+        `OpenClaw origin binding cleanup lacked a handle for ${job.requestId}`,
+      );
+      return;
+    }
     try {
-      await this.gateway.request(
+      const result = await this.gateway.request(
         ORIGIN_CLEAR_METHOD,
-        { requestId: job.requestId },
+        {
+          requestId: job.requestId,
+          bindingHandle,
+        },
         { timeoutMs: this.config.sendTimeoutMs },
       );
+      verifyOriginClearing(result, job.requestId);
     } catch {
       this.logger.error?.(
         `OpenClaw origin binding cleanup failed for ${job.requestId}`,
@@ -671,13 +691,14 @@ export class SelectionService {
       const binding = await this.gateway.request(
         ORIGIN_BIND_METHOD,
         {
+          protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
           requestId: job.requestId,
           mode: job.mode,
           expectedSessionId: job.sessionId,
         },
         { timeoutMs: this.config.sendTimeoutMs },
       );
-      verifyOriginBinding(
+      job.originBindingHandle = verifyOriginBinding(
         binding,
         job.requestId,
         job.mode,
@@ -865,6 +886,8 @@ export class SelectionService {
         );
       }
       return response;
+    } finally {
+      await this.#clearOriginBinding(job);
     }
   }
 }

@@ -147,14 +147,23 @@ to native Gateway `chat.send` with the cropped PNG as an attachment,
 `sessionKey=agent:main:main`, explicit server-owned WhatsApp routing,
 `deliver=false`, disabled command interpretation, and the request id as its
 idempotency key. Before that call, the bridge invokes
-`smart_remarkable.bind_origin` with the same request id and response mode.
-The plugin stores trusted run-scoped context under a private namespace.
+`smart_remarkable.bind_origin` with the protocol version, same request id,
+response mode, and captured transcript. The plugin stores one immutable
+pending admission as a realm-neutral JSON string in OpenClaw's host run
+context and activates it only when the prompt hook sees the exact request run,
+canonical route, and preflight-captured transcript. This host-owned scalar is
+visible across OpenClaw's separate startup, active-hook, and pinned-tool
+registries. Before every new bind, the startup-side bounded index reconciles
+each of its reservations against that shared host scalar. A still-live active
+record keeps its capacity slot even after the original pending deadline;
+expired, missing, or malformed host records are cleared before their slots are
+released.
 `systemInputProvenance={kind:"external_user",sourceChannel:"remarkable",
 sourceTool:"smart_remarkable"}` is also persisted for audit, while
 `originatingChannel` stays `whatsapp` so later WhatsApp continuity and
 delivery routing are unchanged. A handwritten lookalike marker has no
 authority: prompt guidance and reMarkable-only tool execution both require
-the plugin-owned context whose run id exactly matches the active run.
+the plugin-owned active admission whose run id exactly matches the active run.
 
 Immediately before binding, the bridge reads canonical history and captures
 its current `sessionId`. It deliberately does not send that value in
@@ -310,7 +319,7 @@ canonical server session.
 
 The current two-button client passes 48 native library tests with one unrelated
 upstream font-render test filtered. The bridge and no-mirror delivery plugin
-pass 118 Node tests, and the settings/runtime/protocol shell suites pass. The
+pass 122 Node tests, and the settings/runtime/protocol shell suites pass. The
 native tests include deterministic luma/background normalization, bounded
 Lanczos enlargement, malformed-image rejection, and the real marquee fixture.
 The bridge tests include strict transcription/answer envelopes, exact atomic
@@ -490,8 +499,16 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   route inside OpenClaw; coalesces exact retries; sends through the public
   durable channel outbound API without transcript-mirror metadata; and exposes
   only normalized provider receipts or fixed errors. Origin binding stores a
-  server-generated run capability before model admission. Only the exact bound
-  captured-transcript/main-agent/main-session run can upload a
+  server-generated capability and separate cleanup handle as a scalar host
+  run-context record before model admission. Pending records expire after
+  twelve minutes; the exact prompt-hook run and captured transcript activate
+  authority for at most fifteen minutes, and every bridge outcome explicitly
+  clears it with the exact handle. The bind-side 128-record cap rejects new
+  local reservations instead of evicting them. It reconciles those slots
+  against host state before each bind, retaining active records until their
+  fixed deadline and clearing expired or malformed host entries before
+  releasing capacity. Only
+  the exact active captured-transcript/main-agent/main-session run can upload a
   workspace-contained regular PDF or EPUB through the existing
   `remarkable-sync` CLI. Private snapshots, strict format/path/config checks,
   no-shell execution, bounded results, and a durable fail-closed receipt

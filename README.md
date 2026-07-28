@@ -135,7 +135,8 @@ credentials, networking, model call, Draw action, kernel code, or boot action.
 ### Implementation and deployment status
 
 The two response destinations, three trigger modes, narrow bridge protocol,
-single-request admission, per-request cleanup, guarded QMLDiff artifacts, and
+single-request admission, bounded plugin-owned origin admission, per-request
+cleanup, guarded QMLDiff artifacts, and
 exact-device coexistence policy are implemented and locally tested. The
 current stock-icon functional QMD has SHA-256
 `0fea5e9d78cb085528f0cde5af672abb9c3ca2b327127f43dc6e54605a688412`;

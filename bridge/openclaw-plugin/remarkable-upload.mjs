@@ -14,12 +14,15 @@ export const REMARKABLE_CLEAR_ORIGIN_METHOD =
 export const REMARKABLE_UPLOAD_TOOL =
   "remarkable_deliver_document";
 export const REMARKABLE_RUN_CONTEXT_NAMESPACE =
-  "smart-remarkable-origin-v1";
+  "smart-remarkable-origin-v2";
 
 export const DEFAULT_RM_SYNC_PYTHON =
   "/home/mdf/code/remarkable-sync/.venv/bin/python";
 export const DEFAULT_RM_SYNC_CONFIG =
   "/home/mdf/.config/remarkable-sync/config.json";
+export const DEFAULT_ORIGIN_PENDING_TTL_MS = 12 * 60 * 1000;
+export const DEFAULT_ORIGIN_ACTIVE_TTL_MS = 15 * 60 * 1000;
+export const DEFAULT_MAX_ORIGIN_BINDINGS = 128;
 
 const CANONICAL_AGENT_ID = "main";
 const CANONICAL_SESSION_KEY = "agent:main:main";
@@ -37,6 +40,7 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ARTIFACT_KEY_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CAPABILITY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const BINDING_HANDLE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CLOUD_DOCUMENT_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CLOUD_HASH_PATTERN = /^[0-9a-f]{64}$/i;
@@ -45,9 +49,13 @@ const SUPPORTED_EXTENSIONS = new Set([".pdf", ".epub"]);
 const BIND_PARAM_KEYS = Object.freeze([
   "expectedSessionId",
   "mode",
+  "protocol",
   "requestId",
 ]);
-const CLEAR_PARAM_KEYS = Object.freeze(["requestId"]);
+const CLEAR_PARAM_KEYS = Object.freeze([
+  "bindingHandle",
+  "requestId",
+]);
 const INTERNAL_REQUEST_ID = "__smart_remarkable_request_id";
 const INTERNAL_CAPABILITY = "__smart_remarkable_capability";
 const nodeExecFileAsync = promisify(nodeExecFile);
@@ -166,10 +174,18 @@ function requireSessionId(value) {
 function validateBindParams(params) {
   if (!hasExactKeys(params, BIND_PARAM_KEYS)) {
     throw invalidRequest(
-      "Origin binding requires only requestId, mode, and expectedSessionId",
+      "Origin binding requires only protocol, requestId, mode, and expectedSessionId",
     );
   }
   return Object.freeze({
+    protocol:
+      params.protocol === REMARKABLE_RUN_CONTEXT_NAMESPACE
+        ? params.protocol
+        : (() => {
+            throw invalidRequest(
+              "Unsupported Smart reMarkable origin protocol",
+            );
+          })(),
     requestId: requireRequestId(params.requestId),
     mode: requireMode(params.mode),
     expectedSessionId: requireSessionId(params.expectedSessionId),
@@ -179,11 +195,20 @@ function validateBindParams(params) {
 function validateClearParams(params) {
   if (!hasExactKeys(params, CLEAR_PARAM_KEYS)) {
     throw invalidRequest(
-      "Origin clearing requires only requestId",
+      "Origin clearing requires only requestId and bindingHandle",
     );
   }
   return Object.freeze({
     requestId: requireRequestId(params.requestId),
+    bindingHandle:
+      typeof params.bindingHandle === "string" &&
+      BINDING_HANDLE_PATTERN.test(params.bindingHandle)
+        ? params.bindingHandle
+        : (() => {
+            throw invalidRequest(
+              "Invalid Smart reMarkable binding handle",
+            );
+          })(),
   });
 }
 
@@ -200,22 +225,254 @@ function isBoundOrigin(value, requestId = undefined) {
     typeof value.expectedSessionId === "string" &&
     SESSION_ID_PATTERN.test(value.expectedSessionId) &&
     typeof value.capability === "string" &&
-    CAPABILITY_PATTERN.test(value.capability)
+    CAPABILITY_PATTERN.test(value.capability) &&
+    typeof value.bindingHandle === "string" &&
+    BINDING_HANDLE_PATTERN.test(value.bindingHandle) &&
+    (value.state === "pending" || value.state === "active") &&
+    Number.isSafeInteger(value.createdAt) &&
+    value.createdAt >= 0 &&
+    Number.isSafeInteger(value.expiresAt) &&
+    value.expiresAt > value.createdAt
   );
 }
 
-function readBoundOrigin(runContext, requestId) {
+function parseStoredOrigin(value, requestId) {
   if (
+    typeof value !== "string" ||
+    Buffer.byteLength(value, "utf8") > 4096
+  ) {
+    return undefined;
+  }
+  try {
+    const origin = JSON.parse(value);
+    return isBoundOrigin(origin, requestId) ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readRawStoredOrigin(runContext, requestId) {
+  if (
+    !runContext ||
+    typeof runContext.getRunContext !== "function" ||
     typeof requestId !== "string" ||
     !REQUEST_ID_PATTERN.test(requestId)
   ) {
     return undefined;
   }
-  const value = runContext.getRunContext({
+  return runContext.getRunContext({
     runId: requestId,
     namespace: REMARKABLE_RUN_CONTEXT_NAMESPACE,
   });
-  return isBoundOrigin(value, requestId) ? value : undefined;
+}
+
+function readStoredOrigin(runContext, requestId) {
+  return parseStoredOrigin(
+    readRawStoredOrigin(runContext, requestId),
+    requestId,
+  );
+}
+
+function clearStoredOrigin(runContext, requestId) {
+  runContext.clearRunContext({
+    runId: requestId,
+    namespace: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+  });
+  return readRawStoredOrigin(runContext, requestId) === undefined;
+}
+
+function storeOrigin(runContext, origin) {
+  if (
+    !runContext ||
+    typeof runContext.setRunContext !== "function" ||
+    typeof runContext.getRunContext !== "function"
+  ) {
+    return undefined;
+  }
+  const serialized = JSON.stringify(origin);
+  if (
+    Buffer.byteLength(serialized, "utf8") > 4096 ||
+    runContext.setRunContext({
+      runId: origin.requestId,
+      namespace: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+      value: serialized,
+    }) !== true
+  ) {
+    return undefined;
+  }
+  const stored = readStoredOrigin(runContext, origin.requestId);
+  if (
+    !stored ||
+    stored.state !== origin.state ||
+    stored.mode !== origin.mode ||
+    stored.expectedSessionId !== origin.expectedSessionId ||
+    stored.expiresAt !== origin.expiresAt ||
+    !constantTimeEqual(stored.capability, origin.capability) ||
+    !constantTimeEqual(
+      stored.bindingHandle,
+      origin.bindingHandle,
+    )
+  ) {
+    return undefined;
+  }
+  return stored;
+}
+
+export function createOriginAdmissionRegistry({
+  randomBytes = crypto.randomBytes,
+  now = Date.now,
+  pendingTtlMs = DEFAULT_ORIGIN_PENDING_TTL_MS,
+  maxEntries = DEFAULT_MAX_ORIGIN_BINDINGS,
+} = {}) {
+  if (
+    typeof randomBytes !== "function" ||
+    typeof now !== "function" ||
+    !Number.isSafeInteger(pendingTtlMs) ||
+    pendingTtlMs <= 0 ||
+    !Number.isSafeInteger(maxEntries) ||
+    maxEntries <= 0
+  ) {
+    throw new Error("Invalid Smart reMarkable origin registry settings");
+  }
+
+  const entries = new Map();
+
+  function currentTime() {
+    const value = now();
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw originUnavailable();
+    }
+    return value;
+  }
+
+  function sameReservation(left, right) {
+    return (
+      isBoundOrigin(left, left?.requestId) &&
+      isBoundOrigin(right, right?.requestId) &&
+      left.requestId === right.requestId &&
+      left.mode === right.mode &&
+      left.expectedSessionId === right.expectedSessionId &&
+      constantTimeEqual(left.capability, right.capability) &&
+      constantTimeEqual(left.bindingHandle, right.bindingHandle)
+    );
+  }
+
+  return Object.freeze({
+    reconcile(runContext) {
+      if (
+        !runContext ||
+        typeof runContext.getRunContext !== "function" ||
+        typeof runContext.clearRunContext !== "function"
+      ) {
+        throw originUnavailable();
+      }
+      const at = currentTime();
+      for (const [requestId, reserved] of entries) {
+        const raw = readRawStoredOrigin(runContext, requestId);
+        const stored = parseStoredOrigin(raw, requestId);
+        if (!stored || stored.expiresAt <= at) {
+          if (
+            raw !== undefined &&
+            !clearStoredOrigin(runContext, requestId)
+          ) {
+            throw originUnavailable();
+          }
+          entries.delete(requestId);
+          continue;
+        }
+        if (!sameReservation(reserved, stored)) {
+          throw originUnavailable();
+        }
+      }
+    },
+
+    reserve(origin) {
+      if (!isBoundOrigin(origin, origin?.requestId)) {
+        throw originUnavailable();
+      }
+      const existing = entries.get(origin.requestId);
+      if (existing !== undefined) {
+        if (!sameReservation(existing, origin)) {
+          throw originUnavailable();
+        }
+        return existing;
+      }
+      if (entries.size >= maxEntries) {
+        throw originUnavailable();
+      }
+      entries.set(origin.requestId, origin);
+      return origin;
+    },
+
+    bind(request) {
+      const at = currentTime();
+      const existing = entries.get(request.requestId);
+      if (existing !== undefined) {
+        if (
+          !isBoundOrigin(existing, request.requestId) ||
+          existing.mode !== request.mode ||
+          existing.expectedSessionId !== request.expectedSessionId
+        ) {
+          throw invalidRequest(
+            "Smart reMarkable request ID is already bound to different origin state",
+          );
+        }
+        return existing;
+      }
+      if (entries.size >= maxEntries) {
+        throw originUnavailable();
+      }
+      const capability = randomBytes(32).toString("base64url");
+      const bindingHandle = randomBytes(32).toString("base64url");
+      if (
+        !CAPABILITY_PATTERN.test(capability) ||
+        !BINDING_HANDLE_PATTERN.test(bindingHandle)
+      ) {
+        throw originUnavailable();
+      }
+      const origin = Object.freeze({
+        protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+        source: "remarkable",
+        requestId: request.requestId,
+        mode: request.mode,
+        expectedSessionId: request.expectedSessionId,
+        capability,
+        bindingHandle,
+        state: "pending",
+        createdAt: at,
+        expiresAt: at + pendingTtlMs,
+      });
+      if (!Number.isSafeInteger(origin.expiresAt)) {
+        throw originUnavailable();
+      }
+      entries.set(request.requestId, origin);
+      return origin;
+    },
+
+    clear({ requestId, bindingHandle }) {
+      if (
+        typeof requestId !== "string" ||
+        !REQUEST_ID_PATTERN.test(requestId) ||
+        typeof bindingHandle !== "string" ||
+        !BINDING_HANDLE_PATTERN.test(bindingHandle)
+      ) {
+        return false;
+      }
+      const existing = entries.get(requestId);
+      if (existing === undefined) {
+        return false;
+      }
+      if (
+        !isBoundOrigin(existing, requestId) ||
+        !constantTimeEqual(existing.bindingHandle, bindingHandle)
+      ) {
+        throw invalidRequest(
+          "Smart reMarkable binding handle does not match the active admission",
+        );
+      }
+      return entries.delete(requestId);
+    },
+  });
 }
 
 function respondWithSafeError(respond, error) {
@@ -233,65 +490,80 @@ function respondWithSafeError(respond, error) {
 }
 
 export function createOriginBindingHandlers({
+  admissionRegistry,
   runContext,
-  randomBytes = crypto.randomBytes,
-}) {
+  now = Date.now,
+} = {}) {
   if (
+    !admissionRegistry ||
+    typeof admissionRegistry.bind !== "function" ||
+    typeof admissionRegistry.reconcile !== "function" ||
+    typeof admissionRegistry.reserve !== "function" ||
+    typeof admissionRegistry.clear !== "function" ||
     !runContext ||
     typeof runContext.getRunContext !== "function" ||
     typeof runContext.setRunContext !== "function" ||
-    typeof runContext.clearRunContext !== "function"
+    typeof runContext.clearRunContext !== "function" ||
+    typeof now !== "function"
   ) {
-    throw new Error("OpenClaw run-context API is unavailable");
+    throw new Error("Smart reMarkable origin registry is unavailable");
   }
 
   return Object.freeze({
     async bind({ params, respond }) {
       try {
         const request = validateBindParams(params);
-        const existing = runContext.getRunContext({
-          runId: request.requestId,
-          namespace: REMARKABLE_RUN_CONTEXT_NAMESPACE,
-        });
-        if (existing !== undefined) {
+        const at = now();
+        if (!Number.isSafeInteger(at) || at < 0) {
+          throw originUnavailable();
+        }
+        admissionRegistry.reconcile(runContext);
+        const raw = readRawStoredOrigin(
+          runContext,
+          request.requestId,
+        );
+        let origin = parseStoredOrigin(raw, request.requestId);
+        if (raw !== undefined && !origin) {
+          if (!clearStoredOrigin(runContext, request.requestId)) {
+            throw originUnavailable();
+          }
+        }
+        if (origin && origin.expiresAt <= at) {
+          if (!clearStoredOrigin(runContext, request.requestId)) {
+            throw originUnavailable();
+          }
+          origin = undefined;
+        }
+        if (origin) {
           if (
-            !isBoundOrigin(existing, request.requestId) ||
-            existing.mode !== request.mode ||
-            existing.expectedSessionId !== request.expectedSessionId
+            origin.mode !== request.mode ||
+            origin.expectedSessionId !== request.expectedSessionId
           ) {
             throw invalidRequest(
               "Smart reMarkable request ID is already bound to different origin state",
             );
           }
+          origin = admissionRegistry.reserve(origin);
         } else {
-          const capability = randomBytes(32).toString("base64url");
-          if (!CAPABILITY_PATTERN.test(capability)) {
-            throw new Error("Could not create a run capability");
-          }
-          const stored = runContext.setRunContext({
-            runId: request.requestId,
-            namespace: REMARKABLE_RUN_CONTEXT_NAMESPACE,
-            value: {
-              protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
-              source: "remarkable",
-              requestId: request.requestId,
-              mode: request.mode,
-              expectedSessionId: request.expectedSessionId,
-              capability,
-            },
-          });
-          if (stored !== true) {
+          origin = admissionRegistry.bind(request);
+          if (!storeOrigin(runContext, origin)) {
+            admissionRegistry.clear({
+              requestId: origin.requestId,
+              bindingHandle: origin.bindingHandle,
+            });
             throw originUnavailable();
           }
         }
         respond(
           true,
           {
+            protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
             status: "bound",
             runId: request.requestId,
             source: "remarkable",
             mode: request.mode,
             expectedSessionId: request.expectedSessionId,
+            bindingHandle: origin.bindingHandle,
           },
           undefined,
         );
@@ -303,21 +575,30 @@ export function createOriginBindingHandlers({
     async clear({ params, respond }) {
       try {
         const request = validateClearParams(params);
-        const existing = runContext.getRunContext({
-          runId: request.requestId,
-          namespace: REMARKABLE_RUN_CONTEXT_NAMESPACE,
-        });
-        if (
-          existing !== undefined &&
-          !isBoundOrigin(existing, request.requestId)
-        ) {
+        const raw = readRawStoredOrigin(
+          runContext,
+          request.requestId,
+        );
+        const stored = parseStoredOrigin(raw, request.requestId);
+        if (raw !== undefined && !stored) {
           throw originUnavailable();
         }
-        if (existing !== undefined) {
-          runContext.clearRunContext({
-            runId: request.requestId,
-            namespace: REMARKABLE_RUN_CONTEXT_NAMESPACE,
-          });
+        if (
+          stored &&
+          !constantTimeEqual(
+            stored.bindingHandle,
+            request.bindingHandle,
+          )
+        ) {
+          throw invalidRequest(
+            "Smart reMarkable binding handle does not match the active run",
+          );
+        }
+        admissionRegistry.clear(request);
+        if (stored) {
+          if (!clearStoredOrigin(runContext, request.requestId)) {
+            throw originUnavailable();
+          }
         }
         respond(
           true,
@@ -365,22 +646,56 @@ function buildRemarkableTurnGuidance(origin) {
   ].join("\n");
 }
 
-export function createRemarkableOriginHooks({ runContext }) {
+export function createRemarkableOriginHooks({
+  runContext,
+  now = Date.now,
+  activeTtlMs = DEFAULT_ORIGIN_ACTIVE_TTL_MS,
+}) {
   if (
     !runContext ||
-    typeof runContext.getRunContext !== "function"
+    typeof runContext.setRunContext !== "function" ||
+    typeof runContext.getRunContext !== "function" ||
+    typeof now !== "function" ||
+    !Number.isSafeInteger(activeTtlMs) ||
+    activeTtlMs <= 0
   ) {
-    throw new Error("OpenClaw run-context API is unavailable");
+    throw new Error("Smart reMarkable origin registry is unavailable");
   }
 
   return Object.freeze({
     beforePromptBuild(_event, context) {
-      const origin = readBoundOrigin(runContext, context?.runId);
       if (
-        !origin ||
-        context?.sessionId !== origin.expectedSessionId
+        context?.agentId !== CANONICAL_AGENT_ID ||
+        context?.sessionKey !== CANONICAL_SESSION_KEY ||
+        typeof context?.sessionId !== "string"
       ) {
         return undefined;
+      }
+      const at = now();
+      if (!Number.isSafeInteger(at) || at < 0) {
+        return undefined;
+      }
+      const stored = readStoredOrigin(runContext, context.runId);
+      if (
+        !stored ||
+        stored.expiresAt <= at ||
+        context.sessionId !== stored.expectedSessionId
+      ) {
+        return undefined;
+      }
+      let origin = stored;
+      if (stored.state === "pending") {
+        origin = Object.freeze({
+          ...stored,
+          state: "active",
+          expiresAt: at + activeTtlMs,
+        });
+        if (
+          !Number.isSafeInteger(origin.expiresAt) ||
+          !storeOrigin(runContext, origin)
+        ) {
+          return undefined;
+        }
       }
       return {
         appendSystemContext: buildRemarkableTurnGuidance(origin),
@@ -405,9 +720,11 @@ export function createRemarkableOriginHooks({ runContext }) {
             "reMarkable document delivery is not authorized for this run",
         };
       }
-      const origin = readBoundOrigin(runContext, runId);
+      const origin = readStoredOrigin(runContext, runId);
       if (
         !origin ||
+        origin.state !== "active" ||
+        origin.expiresAt <= Date.now() ||
         context.sessionId !== origin.expectedSessionId
       ) {
         return {
@@ -455,7 +772,11 @@ function constantTimeEqual(left, right) {
   );
 }
 
-function validateAuthorizedToolParams(params, runContext, sessionId) {
+function validateAuthorizedToolParams(
+  params,
+  runContext,
+  sessionId,
+) {
   if (!isRecord(params)) {
     throw uploadRejected();
   }
@@ -493,9 +814,11 @@ function validateAuthorizedToolParams(params, runContext, sessionId) {
   ) {
     throw uploadUnauthorized();
   }
-  const origin = readBoundOrigin(runContext, requestId);
+  const origin = readStoredOrigin(runContext, requestId);
   if (
     !origin ||
+    origin.state !== "active" ||
+    origin.expiresAt <= Date.now() ||
     sessionId !== origin.expectedSessionId ||
     !constantTimeEqual(origin.capability, capability)
   ) {

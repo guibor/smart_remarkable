@@ -212,7 +212,7 @@ test("the real plugin entry registers without requesting restricted keyed state"
         return runContexts.get(`${runId}:${namespace}`);
       },
       setRunContext({ runId, namespace, value }) {
-        runContexts.set(`${runId}:${namespace}`, structuredClone(value));
+        runContexts.set(`${runId}:${namespace}`, value);
         return true;
       },
       clearRunContext({ runId, namespace }) {

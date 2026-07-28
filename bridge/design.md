@@ -155,7 +155,18 @@ The captured session id is never supplied as `chat.send.sessionId`. In
 OpenClaw 2026.7.1 that field can rotate a newer current session to the
 caller-supplied id rather than atomically asserting transcript identity. If a
 pre-acceptance send fails after binding, the bridge calls the narrow clear
-method. Terminal OpenClaw lifecycle otherwise clears the run context.
+method. The bind method writes a realm-neutral JSON string into OpenClaw's
+host-owned run context so separate startup, active-hook, and pinned-tool plugin
+registries share the same authority. A bind is pending for at most twelve
+minutes; the exact prompt-hook run/transcript activates it once for a fixed
+fifteen-minute deadline. The bind-side registry holds at most 128 local
+reservations and rejects new ones rather than evicting them. Before each bind,
+it reconciles every tracked slot against the shared host scalar: a live active
+record retains its slot beyond the pending deadline, while an expired,
+missing, or malformed record is cleared from host state before capacity is
+released. The bridge also clears host and local state after every successful
+or failed outcome using the exact opaque binding handle, while expiry bounds
+authority left by a crashed bridge.
 
 Once accepted, the service starts exactly one
 `smart_remarkable.deliver` acknowledgement and notifies every waiting HTTP
@@ -245,22 +256,34 @@ client nevertheless requires both statuses to be `sent`; otherwise it refuses
 completion and notebook writeback. This preserves the explicit WhatsApp
 progress contract without hiding either receipt failure.
 
-### `createOriginBindingHandlers({ api, logger })`
+### `createOriginAdmissionRegistry(options)`
+
+Creates the bind handler's bounded local reservation index. It commits
+immutable pending records synchronously, makes exact repeats idempotent
+without extending their deadline or rotating secrets, rejects conflicting
+reuse, and enforces a hard capacity bound. Its reconciliation pass compares
+each tracked reservation with the authoritative scalar host run-context
+record, retains live pending or active authority, and clears expired or
+malformed host state before releasing the corresponding slot.
+
+### `createOriginBindingHandlers({ admissionRegistry })`
 
 Registers the narrow `smart_remarkable.bind_origin` and
 `smart_remarkable.clear_origin` Gateway methods at `operator.write` scope.
 Binding accepts only an exact request ID, response mode, and preflight-captured
-session ID, then stores server-generated capability state in OpenClaw's
-run-context namespace before `chat.send` can admit the run. Its receipt must
-echo all three values. An identical bind is idempotent; malformed, conflicting,
-or foreign namespace state fails closed. Clearing accepts only the matching
-request ID and is used for pre-admission failures. Normal terminal run events
-let OpenClaw remove the context.
+session ID, then stores a pending server-generated capability and cleanup
+handle as a realm-neutral scalar in OpenClaw's host run context before
+`chat.send` can admit the run. Its receipt must echo the protocol and bound
+values without exposing the tool capability. An identical bind is idempotent;
+malformed or conflicting state fails closed. Before binding, it asks the local
+index to reconcile capacity against current host state. Clearing requires the
+matching request ID and opaque handle and is used after every bridge outcome.
 
-### `createRemarkableOriginHooks({ api, logger })`
+### `createRemarkableOriginHooks({ runContext })`
 
-Creates the prompt and tool-call hooks that consume the trusted run context.
-For a bound run whose hook context has the exact captured session ID,
+Creates the prompt and tool-call hooks that consume scalar host admission
+state. For a pending run whose hook context has the exact request ID, captured session
+ID, canonical agent, and canonical session key,
 `before_prompt_build` identifies the current turn as coming from reMarkable
 while preserving the canonical WhatsApp conversation. It tells the agent to
 create a PDF or EPUB and call `remarkable_deliver_document` only when the user
@@ -268,7 +291,7 @@ actually asks to create, export, send, add, or place a document on the tablet.
 Merely discussing a document never implies an upload.
 
 `before_tool_call` is the execution boundary. It permits the upload tool only
-for the exact bound run, captured session ID, canonical `main` agent, and
+for the exact active run, captured session ID, canonical `main` agent, and
 `agent:main:main` session, then injects the server-owned request ID and
 capability. Tool execution rechecks that session identity and capability. User
 prompt text, transcript content, model output, and caller-supplied tool

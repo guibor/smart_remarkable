@@ -3,6 +3,7 @@ import { sendDurableMessageBatch } from "openclaw/plugin-sdk/channel-outbound";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createFileReceiptJournal } from "./file-receipt-journal.mjs";
 import {
+  createOriginAdmissionRegistry,
   registerRemarkableOriginHooks,
   registerRemarkableOriginMethods,
   registerRemarkableUploadTool,
@@ -15,6 +16,7 @@ export {
   REMARKABLE_CLEAR_ORIGIN_METHOD,
   REMARKABLE_RUN_CONTEXT_NAMESPACE,
   REMARKABLE_UPLOAD_TOOL,
+  createOriginAdmissionRegistry,
   createOriginBindingHandlers,
   createRemarkableOriginHooks,
   createRemarkableUploadTool,
@@ -392,8 +394,9 @@ export default definePluginEntry({
   description:
     "Native WhatsApp continuity and safe reMarkable Cloud document delivery.",
   register(api) {
+    const admissionRegistry = createOriginAdmissionRegistry();
     registerDeliveryMethod(api);
-    registerRemarkableOriginMethods(api);
+    registerRemarkableOriginMethods(api, { admissionRegistry });
     registerRemarkableUploadTool(api);
     registerRemarkableOriginHooks(api);
   },

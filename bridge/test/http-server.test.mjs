@@ -13,12 +13,15 @@ import { SelectionService } from "../src/selection-service.mjs";
 import {
   ORIGIN_BIND_METHOD,
   ORIGIN_CLEAR_METHOD,
+  SOURCE_PROVENANCE_PROTOCOL_VERSION,
   SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+  SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
 } from "../src/source-provenance.mjs";
 
 const BRIDGE_TOKEN = "bridge-test-token-that-is-at-least-32-characters";
 const DELIVERY_METHOD = "smart_remarkable.deliver";
 const DEFAULT_RECEIVED_TEXT = "What is six times seven?";
+const ORIGIN_BINDING_HANDLE = "A".repeat(43);
 const PNG_BASE64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]).toString("base64");
@@ -133,11 +136,13 @@ class FakeGateway {
     }
     if (method === ORIGIN_BIND_METHOD) {
       return Promise.resolve({
+        protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
         status: "bound",
         runId: params.requestId,
         source: "remarkable",
         mode: params.mode,
         expectedSessionId: params.expectedSessionId,
+        bindingHandle: ORIGIN_BINDING_HANDLE,
       });
     }
     if (method === ORIGIN_CLEAR_METHOD) {
@@ -470,16 +475,30 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   const originBindCalls = gateway.calls.filter(
     (call) => call.method === ORIGIN_BIND_METHOD,
   );
+  const originClearCalls = gateway.calls.filter(
+    (call) => call.method === ORIGIN_CLEAR_METHOD,
+  );
   assert.equal(originBindCalls.length, 1);
+  assert.equal(originClearCalls.length, 1);
   assert.deepEqual(originBindCalls[0].params, {
+    protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
     requestId: "smart-remarkable-test-0001",
     mode: "write_back",
     expectedSessionId: "test-canonical-session",
+  });
+  assert.deepEqual(originClearCalls[0].params, {
+    requestId: "smart-remarkable-test-0001",
+    bindingHandle: ORIGIN_BINDING_HANDLE,
   });
   assert.ok(
     gateway.calls.indexOf(originBindCalls[0]) <
       gateway.calls.indexOf(chatCalls[0]),
     "trusted origin must be bound before chat.send",
+  );
+  assert.ok(
+    gateway.calls.indexOf(originClearCalls[0]) >
+      gateway.calls.indexOf(finalCalls[0]),
+    "trusted origin must remain active through final delivery",
   );
   assert.deepEqual(
     {
@@ -521,6 +540,12 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
       .split(RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION).length - 1,
     1,
     "the response-envelope protocol must be appended exactly once",
+  );
+  assert.equal(
+    chatCalls[0].params.message
+      .split(SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION).length - 1,
+    1,
+    "trusted transport context must be appended exactly once",
   );
   assert.equal(chatCalls[0].params.message.includes("/verbose"), false);
   assert.equal(chatCalls[0].params.suppressCommandInterpretation, true);
@@ -1240,6 +1265,7 @@ test("uses pre-acceptance HTTP errors and sends no acknowledgement", async () =>
   assert.equal(clearCalls.length, 1);
   assert.deepEqual(clearCalls[0].params, {
     requestId: "smart-remarkable-preaccept-failure-0001",
+    bindingHandle: ORIGIN_BINDING_HANDLE,
   });
 });
 

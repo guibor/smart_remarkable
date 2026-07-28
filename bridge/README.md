@@ -50,8 +50,11 @@ attempt cannot silently consume the next tap.
 3. The bridge preflights canonical history to capture the transcript ID for
    recovery and authority binding. It then calls
    `smart_remarkable.bind_origin` with the request ID, response mode, and
-   captured transcript ID and requires the plugin's exact receipt. This creates
-   trusted, run-scoped state before model admission. The bridge does not pass
+   captured transcript ID and requires the plugin's exact versioned receipt
+   and opaque cleanup handle. This creates a pending realm-neutral JSON string
+   in OpenClaw's host-owned run context, which is shared across the Gateway
+   startup registry, active prompt/tool hooks, and pinned tool factory. The
+   bridge does not pass
    the captured transcript ID to `chat.send`; on OpenClaw 2026.7.1 that field
    can rotate current session state rather than atomically assert identity.
 4. The bridge appends a versioned instruction requiring the canonical
@@ -66,9 +69,12 @@ attempt cannot silently consume the next tap.
    source tool is `smart_remarkable`. This records one canonical
    user/assistant turn without relying on unverified automatic delivery or
    changing persistent verbose settings in the canonical session. A
-   pre-admission failure clears the run binding.
-5. The plugin's prompt hook reads only the trusted run context and requires
-   the hook's actual transcript ID to match the captured one. It tells OpenClaw
+   failed admission and every completed bridge outcome clear the binding.
+5. The plugin's prompt hook activates only the pending record whose actual run
+   ID, canonical agent/session key, and transcript ID match the captured
+   values. Pending records expire after twelve minutes, active records after a
+   fixed fifteen minutes, and a 128-record cap rejects new binds without
+   evicting live authority. It tells OpenClaw
    that the current turn originated on reMarkable while preserving normal
    WhatsApp continuity. If the user actually asks to create, export, send, add,
    or place a document, the hook tells the agent to create a finished PDF or
@@ -102,7 +108,7 @@ attempt cannot silently consume the next tap.
    reported as `failed`; a final chat event alone is never described as
    successful delivery. The acknowledgement is held to the same checks.
 10. When the agent calls `remarkable_deliver_document`, a second plugin hook
-    requires the exact bound request, captured transcript ID, canonical main
+    requires the exact active request, captured transcript ID, canonical main
     agent, and canonical main session before injecting a server-only
     capability. Tool execution rechecks that session identity. The tool admits
     only a workspace-contained regular PDF or EPUB, snapshots it privately,
@@ -309,7 +315,7 @@ npm test
 node --test openclaw-plugin/test/*.test.mjs
 ```
 
-The 118 bridge/plugin tests use a fake Gateway client and temporary filesystem
+The 122 bridge/plugin tests use a fake Gateway client and temporary filesystem
 journals. They verify pre-acceptance header
 withholding, both modes, fixed routing, one turn/acknowledgement/final send per
 request ID, conflicting duplicates, acknowledgement and final delivery
@@ -320,7 +326,8 @@ recovery, history-only `started` completion, cross-user attribution refusal,
 fixed public errors, WhatsApp-only response redaction, the OpenClaw 2026.7.1
 `started` compatibility path, persistent restart replay, fail-closed incomplete
 reservations, per-caller replay labeling, fixed capacity, symlink/corruption
-rejection, trusted origin/session binding and clearing, routing-contract drift,
+rejection, active-host capacity retention and expiry cleanup, trusted
+origin/session binding and clearing, routing-contract drift,
 durable provenance, active and real reset-archive transcript recovery,
 replacement-session/live-final rejection, production service wiring, and
 pre-health journal preparation.
