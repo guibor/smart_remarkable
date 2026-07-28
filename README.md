@@ -116,6 +116,14 @@ reMarkable cloud library. It reports what it read and what it did in WhatsApp.
 That delivery tool is execution-gated to the bound tablet run; typing similar
 words in a normal WhatsApp turn does not authorize it.
 
+The reviewed OpenClaw workspace plugin is version `0.2.2`. OpenClaw closes
+ordinary plugin API methods after registration, so late origin bind and clear
+calls use a registered synchronous agent-event adapter: only a random
+operation ID crosses the plugin-owned control stream, while host callback
+methods perform run-context get/set/clear and exact read-back. Origin bind and
+clear require `operator.admin`; any missing, delayed, mismatched, or failed
+receipt is unavailable rather than weakening provenance.
+
 The AppLoad tile starts a transient, non-boot
 `smart-remarkable-session.service` bound to `xochitl` and mutually exclusive
 with T.M.R. It uses local tunnel port `18791`, while T.M.R. uses `18790`.
@@ -138,6 +146,9 @@ The two response destinations, three trigger modes, narrow bridge protocol,
 single-request admission, bounded plugin-owned origin admission, per-request
 cleanup, guarded QMLDiff artifacts, and
 exact-device coexistence policy are implemented and locally tested. The
+current reviewed plugin candidate is version `0.2.2`; its host run-context
+adapter and admin-scoped origin methods still require transactional live
+promotion and physical acceptance. The
 current stock-icon functional QMD has SHA-256
 `0fea5e9d78cb085528f0cde5af672abb9c3ca2b327127f43dc6e54605a688412`;
 the matching disabled visual canary has SHA-256

@@ -26,7 +26,7 @@ export const DEFAULT_MAX_ORIGIN_BINDINGS = 128;
 
 const CANONICAL_AGENT_ID = "main";
 const CANONICAL_SESSION_KEY = "agent:main:main";
-const ORIGIN_METHOD_SCOPE = "operator.write";
+const ORIGIN_METHOD_SCOPE = "operator.admin";
 const UPLOAD_JOURNAL_NAMESPACE =
   "smart-remarkable-cloud-upload-receipts-v1";
 const UPLOAD_JOURNAL_SCHEMA_VERSION = 1;
@@ -1379,6 +1379,7 @@ async function executeRmSync({
 export function createRemarkableUploadTool({
   api,
   context,
+  runContext = api.runContext,
   store,
   execFileFn = nodeExecFileAsync,
   pythonPath = DEFAULT_RM_SYNC_PYTHON,
@@ -1418,7 +1419,7 @@ export function createRemarkableUploadTool({
       try {
         request = validateAuthorizedToolParams(
           params,
-          api.runContext,
+          runContext,
           context.sessionId,
         );
         artifact = await stageWorkspaceArtifact({

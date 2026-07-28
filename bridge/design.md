@@ -59,6 +59,13 @@
   reMarkable-only prompt guidance and execution gating, workspace artifact
   validation/snapshotting, receipt-journaled `rm_sync.cli upload`, and strict
   reMarkable Cloud receipt parsing.
+- `openclaw-plugin/run-context-control.mjs` is the late-call adapter for
+  OpenClaw's host-owned run context. It registers one plugin-owned agent-event
+  subscription while the plugin API is open, retains complete commands only
+  in the originating plugin instance, and emits only random operation IDs.
+  The synchronous callback uses host `getRunContext`, `setRunContext`, and
+  `clearRunContext`; exact receipts and read-back make every failure
+  fail-closed.
 - `openclaw-plugin/file-receipt-journal.mjs` provides the ordinary workspace
   plugin's persistent idempotency backend. It uses hash-named atomic directory
   reservations and write-fsync-rename receipt commits under OpenClaw's state
@@ -68,7 +75,7 @@
   and fatal UTF-8 validation before parsing cached success.
 - `openclaw-plugin/openclaw.plugin.json` and
   `openclaw-plugin/package.json` are the pinned OpenClaw 2026.7.1 workspace
-  plugin manifest and entrypoint metadata.
+  plugin manifest and entrypoint metadata at plugin version 0.2.2.
 - `systemd/smart-remarkable-openclaw-bridge.service.example` is a system unit
   that drops to `User=mdf`. Using PID 1, rather than the systemd 249 user
   manager, makes `ProtectHome=read-only`, `ProtectSystem=strict`, and the
@@ -157,7 +164,16 @@ caller-supplied id rather than atomically asserting transcript identity. If a
 pre-acceptance send fails after binding, the bridge calls the narrow clear
 method. The bind method writes a realm-neutral JSON string into OpenClaw's
 host-owned run context so separate startup, active-hook, and pinned-tool plugin
-registries share the same authority. A bind is pending for at most twelve
+registries share the same authority. Ordinary plugin API methods close after
+registration, so plugin version 0.2.2 performs each late bind-side get, set, or
+clear through the registered synchronous agent-event adapter. Only a random
+operation ID enters the plugin-owned stream; the command and scalar remain in
+the originating instance's bounded private map. The host callback performs the
+operation for the event run ID, and a missing or asynchronous receipt,
+mismatch, unavailable host method, failed exact read-back, or exception is
+`UNAVAILABLE`. The bridge pins OpenClaw 2026.7.1 because same-stack event
+delivery is part of this adapter's reviewed contract; an upgrade requires a
+fresh lifecycle audit. A bind is pending for at most twelve
 minutes; the exact prompt-hook run/transcript activates it once for a fixed
 fifteen-minute deadline. The bind-side registry holds at most 128 local
 reservations and rejects new ones rather than evicting them. Before each bind,
@@ -266,10 +282,22 @@ each tracked reservation with the authoritative scalar host run-context
 record, retains live pending or active authority, and clears expired or
 malformed host state before releasing the corresponding slot.
 
-### `createOriginBindingHandlers({ admissionRegistry })`
+### `createRunContextControl({ api })`
+
+Registers the plugin-owned control subscription during `register`, before the
+ordinary plugin API closes. A late get, set, or clear places a bounded command
+in a private map, emits an event containing only a fresh random operation ID,
+and requires the matching subscription to complete synchronously. The callback
+uses OpenClaw's host-supplied run-context methods, verifies exact set/clear
+read-back, and writes a private receipt. Event attribution, operation ID,
+operation, run ID, and namespace must all match; maps are cleared in `finally`.
+No admission scalar, capability, cleanup handle, or operation is placed in an
+event, run ID, prompt, or transcript.
+
+### `createOriginBindingHandlers({ admissionRegistry, runContext })`
 
 Registers the narrow `smart_remarkable.bind_origin` and
-`smart_remarkable.clear_origin` Gateway methods at `operator.write` scope.
+`smart_remarkable.clear_origin` Gateway methods at `operator.admin` scope.
 Binding accepts only an exact request ID, response mode, and preflight-captured
 session ID, then stores a pending server-generated capability and cleanup
 handle as a realm-neutral scalar in OpenClaw's host run context before
@@ -297,9 +325,11 @@ capability. Tool execution rechecks that session identity and capability. User
 prompt text, transcript content, model output, and caller-supplied tool
 arguments cannot authorize an upload.
 
-### `createRemarkableUploadTool({ runtime, logger, store, execFile })`
+### `createRemarkableUploadTool({ api, context, runContext, store, execFileFn })`
 
 Registers `remarkable_deliver_document` only in the canonical main session. It
+uses the injected late-call run-context adapter, rather than the closed
+ordinary plugin facade, for the final capability/session recheck. It
 accepts a workspace-relative PDF or EPUB and optional safe display name. The
 tool resolves the file through OpenClaw's root-contained file API, rejects
 traversal, links, non-regular or multiply linked files, excessive size, invalid

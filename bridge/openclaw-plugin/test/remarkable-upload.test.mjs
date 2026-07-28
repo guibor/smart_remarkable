@@ -12,8 +12,13 @@ import {
   createOriginBindingHandlers,
   createRemarkableOriginHooks,
   createRemarkableUploadTool,
+  registerRemarkableOriginHooks,
   registerRemarkableOriginMethods,
 } from "../remarkable-upload.mjs";
+import {
+  RUN_CONTEXT_CONTROL_STREAM,
+  createRunContextControl,
+} from "../run-context-control.mjs";
 
 const REQUEST_ID = "smart-remarkable-upload-test-0001";
 const OTHER_REQUEST_ID = "smart-remarkable-upload-test-0002";
@@ -51,6 +56,87 @@ class FakeHostRunContext {
   clearRunContext({ runId, namespace }) {
     this.values.delete(this.key(runId, namespace));
   }
+}
+
+function createAgentEventRunContextHost() {
+  const directCalls = [];
+  const emittedEvents = [];
+  const subscriptions = [];
+  const values = new Map();
+
+  function key(runId, namespace) {
+    return `${runId}\0${namespace}`;
+  }
+
+  function deadRunContext(registry) {
+    return {
+      getRunContext() {
+        directCalls.push({ registry, operation: "get" });
+        return undefined;
+      },
+      setRunContext() {
+        directCalls.push({ registry, operation: "set" });
+        return false;
+      },
+      clearRunContext() {
+        directCalls.push({ registry, operation: "clear" });
+      },
+    };
+  }
+
+  function createRegistryApi(registry) {
+    return {
+      id: "smart-remarkable-delivery",
+      runContext: deadRunContext(registry),
+      agent: {
+        events: {
+          registerAgentEventSubscription(subscription) {
+            subscriptions.push(subscription);
+          },
+          emitAgentEvent(event) {
+            emittedEvents.push(structuredClone(event));
+            const matching = subscriptions.filter((subscription) =>
+              subscription.streams.includes(event.stream),
+            );
+            for (const subscription of matching) {
+              subscription.handle(
+                {
+                  ...structuredClone(event),
+                  data: {
+                    ...structuredClone(event.data),
+                    pluginId: "smart-remarkable-delivery",
+                  },
+                },
+                {
+                  getRunContext(namespace) {
+                    return values.get(key(event.runId, namespace));
+                  },
+                  setRunContext(namespace, value) {
+                    values.set(key(event.runId, namespace), value);
+                  },
+                  clearRunContext(namespace) {
+                    values.delete(key(event.runId, namespace));
+                  },
+                },
+              );
+            }
+            return {
+              emitted: matching.length > 0,
+              stream: event.stream,
+            };
+          },
+        },
+      },
+    };
+  }
+
+  return {
+    createRegistryApi,
+    directCalls,
+    emittedEvents,
+    subscriptions,
+    values,
+  };
 }
 
 function readStoredTestOrigin(runContext, requestId = REQUEST_ID) {
@@ -244,7 +330,7 @@ async function createFixture(
   };
 }
 
-test("registers exact operator.write origin bind and clear methods", () => {
+test("registers exact operator.admin origin bind and clear methods", () => {
   const admissionRegistry = createTestAdmissionRegistry();
   const runContext = new FakeHostRunContext();
   const registrations = [];
@@ -263,7 +349,7 @@ test("registers exact operator.write origin bind and clear methods", () => {
   );
   assert.deepEqual(
     registrations.map(({ options }) => options),
-    [{ scope: "operator.write" }, { scope: "operator.write" }],
+    [{ scope: "operator.admin" }, { scope: "operator.admin" }],
   );
   assert.throws(
     () => createOriginBindingHandlers({ runContext }),
@@ -835,6 +921,205 @@ test("scalar host context bridges startup bind, active hooks, and pinned tools",
   );
 });
 
+test("event-backed run context crosses dead plugin registries end to end", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "smart-remarkable-event-control-"),
+  );
+  t.after(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const workspaceDir = path.join(root, "workspace");
+  const stateDir = path.join(root, "state");
+  const pythonPath = path.join(root, "python");
+  const configPath = path.join(root, "config.json");
+  await fs.mkdir(workspaceDir, { recursive: true });
+  await fs.mkdir(stateDir, { recursive: true });
+  await fs.writeFile(pythonPath, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await fs.chmod(pythonPath, 0o700);
+  await fs.writeFile(configPath, '{"device_token":"test-only"}\n', {
+    mode: 0o600,
+  });
+  await fs.chmod(configPath, 0o600);
+  await fs.writeFile(
+    path.join(workspaceDir, "event-control.pdf"),
+    validPdf("event-backed control"),
+  );
+
+  const host = createAgentEventRunContextHost();
+  const gatewayApi = host.createRegistryApi("gateway-registration");
+  const hookApi = host.createRegistryApi("hook-registration");
+  const toolApi = host.createRegistryApi("tool-registration");
+  assert.notEqual(gatewayApi.runContext, hookApi.runContext);
+  assert.notEqual(hookApi.runContext, toolApi.runContext);
+
+  function createControl(api, firstSequence) {
+    return createRunContextControl({
+      api,
+      randomUUID: (() => {
+        let next = firstSequence;
+        return () => {
+          next += 1;
+          return `00000000-0000-4000-8000-${String(next).padStart(12, "0")}`;
+        };
+      })(),
+    });
+  }
+  const gatewayRunContext = createControl(gatewayApi, 0);
+  const hookRunContext = createControl(hookApi, 1_000);
+  const toolRunContext = createControl(toolApi, 2_000);
+  assert.equal(host.subscriptions.length, 3);
+  assert.ok(
+    host.subscriptions.every(
+      (subscription) =>
+        subscription.streams.length === 1 &&
+        subscription.streams[0] === RUN_CONTEXT_CONTROL_STREAM,
+    ),
+  );
+
+  const at = Date.now();
+  const gatewayMethods = new Map();
+  const admissionRegistry = createTestAdmissionRegistry({
+    now: () => at,
+  });
+  gatewayApi.registerGatewayMethod = (method, handler, options) => {
+    gatewayMethods.set(method, { handler, options });
+  };
+  registerRemarkableOriginMethods(gatewayApi, {
+    admissionRegistry,
+    runContext: gatewayRunContext,
+    now: () => at,
+  });
+  assert.deepEqual(
+    [
+      gatewayMethods.get(REMARKABLE_BIND_ORIGIN_METHOD)?.options,
+      gatewayMethods.get(REMARKABLE_CLEAR_ORIGIN_METHOD)?.options,
+    ],
+    [{ scope: "operator.admin" }, { scope: "operator.admin" }],
+  );
+
+  const hooks = new Map();
+  hookApi.on = (name, handler, options) => {
+    hooks.set(name, { handler, options });
+  };
+  registerRemarkableOriginHooks(hookApi, {
+    runContext: hookRunContext,
+    now: () => at,
+  });
+  assert.deepEqual(
+    [...hooks.values()].map(({ options }) => options),
+    [{ priority: 100 }, { priority: 100 }],
+  );
+
+  const bind = await invokeGateway(
+    gatewayMethods.get(REMARKABLE_BIND_ORIGIN_METHOD).handler,
+    {
+      protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+      requestId: REQUEST_ID,
+      mode: "write_back",
+      expectedSessionId: SESSION_ID,
+    },
+  );
+  assert.equal(bind.ok, true);
+  const hookContext = {
+    runId: REQUEST_ID,
+    agentId: "main",
+    sessionKey: "agent:main:main",
+    sessionId: SESSION_ID,
+  };
+  const prompt = hooks.get("before_prompt_build").handler(
+    { prompt: "create a PDF", messages: [] },
+    hookContext,
+  );
+  assert.match(prompt.appendSystemContext, /reMarkable/);
+  const authorization = hooks.get("before_tool_call").handler(
+    {
+      toolName: REMARKABLE_UPLOAD_TOOL,
+      runId: REQUEST_ID,
+      params: {
+        path: "event-control.pdf",
+        artifact_key: "event-control",
+      },
+    },
+    {
+      ...hookContext,
+      toolName: REMARKABLE_UPLOAD_TOOL,
+    },
+  );
+  assert.equal(authorization.block, undefined);
+
+  const receiptValues = new Map();
+  const receiptStore = {
+    async lookup(key) {
+      return receiptValues.get(key);
+    },
+    async registerIfAbsent(key, value) {
+      if (receiptValues.has(key)) {
+        return false;
+      }
+      receiptValues.set(key, structuredClone(value));
+      return true;
+    },
+    async register(key, value) {
+      receiptValues.set(key, structuredClone(value));
+    },
+  };
+  toolApi.runtime = {
+    state: {
+      resolveStateDir() {
+        return stateDir;
+      },
+    },
+  };
+  toolApi.logger = { error() {} };
+  const tool = createRemarkableUploadTool({
+    api: toolApi,
+    context: {
+      ...hookContext,
+      workspaceDir,
+      fsPolicy: { workspaceOnly: true },
+    },
+    runContext: toolRunContext,
+    store: receiptStore,
+    pythonPath,
+    configPath,
+    execFileFn: async () => ({
+      stdout: JSON.stringify({ id: DOCUMENT_ID, hash: CLOUD_HASH }),
+      stderr: "",
+    }),
+  });
+  const uploaded = await tool.execute(
+    "event-control",
+    authorization.params,
+  );
+  assert.equal(uploaded.details.status, "uploaded");
+  assert.equal(uploaded.details.request_id, REQUEST_ID);
+
+  const cleared = await invokeGateway(
+    gatewayMethods.get(REMARKABLE_CLEAR_ORIGIN_METHOD).handler,
+    {
+      requestId: REQUEST_ID,
+      bindingHandle: bind.payload.bindingHandle,
+    },
+  );
+  assert.equal(cleared.ok, true);
+  await assert.rejects(
+    tool.execute("event-control-after-clear", authorization.params),
+    (error) => error?.code === "UNAUTHORIZED",
+  );
+
+  assert.equal(host.directCalls.length, 0);
+  assert.equal(host.values.size, 0);
+  assert.ok(host.emittedEvents.length > 0);
+  assert.ok(
+    host.emittedEvents.every(
+      (event) =>
+        event.stream === RUN_CONTEXT_CONTROL_STREAM &&
+        event.runId === REQUEST_ID &&
+        Object.keys(event.data).join(",") === "opId",
+    ),
+  );
+});
+
 test("tool factory exposes uploads only to the canonical main session", () => {
   const api = {
     runtime: {
@@ -1141,7 +1426,7 @@ test("manifest declares the document tool contract", async () => {
       "utf8",
     ),
   );
-  assert.equal(manifest.version, "0.2.1");
+  assert.equal(manifest.version, "0.2.2");
   assert.deepEqual(manifest.contracts.tools, [
     REMARKABLE_UPLOAD_TOOL,
   ]);

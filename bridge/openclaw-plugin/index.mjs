@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { sendDurableMessageBatch } from "openclaw/plugin-sdk/channel-outbound";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createFileReceiptJournal } from "./file-receipt-journal.mjs";
+import { createRunContextControl } from "./run-context-control.mjs";
 import {
   createOriginAdmissionRegistry,
   registerRemarkableOriginHooks,
@@ -24,6 +25,11 @@ export {
   registerRemarkableOriginMethods,
   registerRemarkableUploadTool,
 } from "./remarkable-upload.mjs";
+export {
+  RUN_CONTEXT_CONTROL_STREAM,
+  RUN_CONTEXT_CONTROL_SUBSCRIPTION_ID,
+  createRunContextControl,
+} from "./run-context-control.mjs";
 
 export const DELIVERY_METHOD = "smart_remarkable.deliver";
 export const CANONICAL_SESSION_KEY = "agent:main:main";
@@ -394,10 +400,14 @@ export default definePluginEntry({
   description:
     "Native WhatsApp continuity and safe reMarkable Cloud document delivery.",
   register(api) {
+    const runContext = createRunContextControl({ api });
     const admissionRegistry = createOriginAdmissionRegistry();
     registerDeliveryMethod(api);
-    registerRemarkableOriginMethods(api, { admissionRegistry });
-    registerRemarkableUploadTool(api);
-    registerRemarkableOriginHooks(api);
+    registerRemarkableOriginMethods(api, {
+      admissionRegistry,
+      runContext,
+    });
+    registerRemarkableUploadTool(api, { runContext });
+    registerRemarkableOriginHooks(api, { runContext });
   },
 });

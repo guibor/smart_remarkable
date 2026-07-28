@@ -124,8 +124,8 @@ so only one request owns the pipeline. A pen contact that begins while busy
 stays ineligible even if processing ends before pen-up, and a button pressed
 while busy is consumed and dropped rather than becoming a surprise queued
 request. Pen modes fingerprint the selected crop and suppress the still-active
-selection from being submitted again; an explicit **LLM** or **Send** button
-press is allowed to resubmit intentionally. A no-marquee candidate makes no
+selection from being submitted again; an explicit press of either stock
+answer-here or agent icon is allowed to resubmit intentionally. A no-marquee candidate makes no
 model call and rearms. For an admitted selection, screenshot processing groups
 every contiguous Paper Pro `/dev/dri/card0` mapping and includes large detached
 anonymous allocations, probes bounded frame-header chains, reads the accepted
@@ -153,7 +153,24 @@ pending admission as a realm-neutral JSON string in OpenClaw's host run
 context and activates it only when the prompt hook sees the exact request run,
 canonical route, and preflight-captured transcript. This host-owned scalar is
 visible across OpenClaw's separate startup, active-hook, and pinned-tool
-registries. Before every new bind, the startup-side bounded index reconciles
+registries.
+
+OpenClaw closes ordinary plugin API methods after registration, so late bind
+and clear Gateway handlers do not call the public run-context facade directly.
+Plugin version 0.2.2 registers a private agent-event control subscription
+during `register`. Each late get, set, or clear stays in the originating
+plugin instance's bounded private map while the adapter emits only a random
+operation ID on its plugin-owned stream. The synchronous subscription callback
+uses OpenClaw's host-bound `getRunContext`, `setRunContext`, or
+`clearRunContext` for the event run ID. Set and clear require exact read-back;
+missing or delayed receipts, unavailable host methods, mismatches, exceptions,
+and capacity overflow fail closed. Operations, admission values,
+capabilities, and cleanup handles never enter the event, run ID, prompt, or
+transcript. Bind and clear require `operator.admin`. This depends on the
+audited synchronous event ordering in exactly pinned OpenClaw 2026.7.1; a
+version upgrade is blocked until that lifecycle is reviewed again.
+
+Before every new bind, the startup-side bounded index reconciles
 each of its reservations against that shared host scalar. A still-live active
 record keeps its capacity slot even after the original pending deadline;
 expired, missing, or malformed host records are cleared before their slots are
@@ -319,7 +336,8 @@ canonical server session.
 
 The current two-button client passes 48 native library tests with one unrelated
 upstream font-render test filtered. The bridge and no-mirror delivery plugin
-pass 122 Node tests, and the settings/runtime/protocol shell suites pass. The
+suite contains 130 Node tests, and the settings/runtime/protocol shell suites
+pass. The
 native tests include deterministic luma/background normalization, bounded
 Lanczos enlargement, malformed-image rejection, and the real marquee fixture.
 The bridge tests include strict transcription/answer envelopes, exact atomic
@@ -498,9 +516,14 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   request ID, kind, and text; derives the direct `agent:main:main` WhatsApp
   route inside OpenClaw; coalesces exact retries; sends through the public
   durable channel outbound API without transcript-mirror metadata; and exposes
-  only normalized provider receipts or fixed errors. Origin binding stores a
+  only normalized provider receipts or fixed errors. Delivery remains
+  `operator.write`; origin bind and clear require `operator.admin`. Origin binding stores a
   server-generated capability and separate cleanup handle as a scalar host
-  run-context record before model admission. Pending records expire after
+  run-context record before model admission. The version-0.2.2 plugin reaches
+  that host state after registration through its synchronous agent-event
+  adapter. The event contains only a random operation ID; the complete bounded
+  command remains private to its originating plugin instance, and exact host
+  read-back is required before success. Pending records expire after
   twelve minutes; the exact prompt-hook run and captured transcript activate
   authority for at most fifteen minutes, and every bridge outcome explicitly
   clears it with the exact handle. The bind-side 128-record cap rejects new
@@ -652,6 +675,13 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   receipts, accepts current history only for the captured session, verifies a
   live candidate against its request anchor, reconciles exact active/reset
   transcript output, and commits the mode-specific safe response.
+- `createRunContextControl` in
+  `bridge/openclaw-plugin/run-context-control.mjs`: registers the plugin-owned
+  subscription while the API is open, then adapts late synchronous
+  get/set/clear requests to host callback methods. It emits only a random
+  operation ID, keeps commands and receipts bounded and private, requires an
+  exact synchronous receipt and read-back, and clears both maps in a `finally`
+  path.
 - `recoverTranscriptMessages` in `bridge/src/transcript-recovery.mjs`: opens
   only the preflight-captured active JSONL or bounded exact-name OpenClaw reset
   archives without following links, validates the first session record and

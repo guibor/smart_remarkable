@@ -53,7 +53,17 @@ attempt cannot silently consume the next tap.
    captured transcript ID and requires the plugin's exact versioned receipt
    and opaque cleanup handle. This creates a pending realm-neutral JSON string
    in OpenClaw's host-owned run context, which is shared across the Gateway
-   startup registry, active prompt/tool hooks, and pinned tool factory. The
+   startup registry, active prompt/tool hooks, and pinned tool factory.
+   OpenClaw closes ordinary plugin API methods after registration, so plugin
+   version 0.2.2 reaches that host state through a registered synchronous
+   agent-event adapter. The complete get/set/clear command remains in the
+   originating plugin instance; the emitted plugin-owned control event carries
+   only a fresh random operation ID. Its host callback performs the operation,
+   and set/clear succeed only after exact read-back. A missing or delayed
+   callback, unavailable host method, mismatched receipt, exception, or
+   capacity overflow fails closed. No origin value, capability, cleanup
+   handle, or operation enters the event, run ID, prompt, or transcript. Bind
+   and clear require `operator.admin`. The
    bridge does not pass
    the captured transcript ID to `chat.send`; on OpenClaw 2026.7.1 that field
    can rotate current session state rather than atomically assert identity.
@@ -206,7 +216,8 @@ session.
   `User=mdf`; that user's home must contain the canonical OpenClaw
   configuration and main-agent session store.
 - Install and enable `openclaw-plugin/` as a native workspace plugin before
-  starting the bridge. Its manifest activates on Gateway startup, and the
+  starting the bridge. The reviewed manifest/package version is `0.2.2`; its
+  manifest activates on Gateway startup, and the
   Gateway must expose `smart_remarkable.deliver`,
   `smart_remarkable.bind_origin`, and `smart_remarkable.clear_origin`, plus the
   `remarkable_deliver_document` agent tool.
@@ -315,7 +326,7 @@ npm test
 node --test openclaw-plugin/test/*.test.mjs
 ```
 
-The 122 bridge/plugin tests use a fake Gateway client and temporary filesystem
+The 130 bridge/plugin tests use a fake Gateway client and temporary filesystem
 journals. They verify pre-acceptance header
 withholding, both modes, fixed routing, one turn/acknowledgement/final send per
 request ID, conflicting duplicates, acknowledgement and final delivery
@@ -327,7 +338,10 @@ fixed public errors, WhatsApp-only response redaction, the OpenClaw 2026.7.1
 `started` compatibility path, persistent restart replay, fail-closed incomplete
 reservations, per-caller replay labeling, fixed capacity, symlink/corruption
 rejection, active-host capacity retention and expiry cleanup, trusted
-origin/session binding and clearing, routing-contract drift,
+origin/session binding and clearing, the synchronous agent-event host
+run-context adapter, exact set/clear read-back, missing synchronous receipt
+failure, wrong-plugin event rejection, bounded reentrant control,
+routing-contract drift,
 durable provenance, active and real reset-archive transcript recovery,
 replacement-session/live-final rejection, production service wiring, and
 pre-health journal preparation.
@@ -335,7 +349,8 @@ pre-health journal preparation.
 The plugin tests use fake sends plus both a fake journal and the real atomic
 file journal in a temporary directory. They verify ordinary workspace-plugin
 registration never touches OpenClaw's restricted keyed state API, the exact
-`operator.write` scope, strict bounded params, fixed canonical route
+`operator.write` delivery scope and `operator.admin` origin bind/clear scopes,
+strict bounded params, fixed canonical route
 derivation, direct-adapter receipt checks, absent `mirror`/`session` fields,
 in-flight coalescing, durable receipt replay, and fail-closed ambiguous restart
 behavior, including a surviving reservation while an independently keyed

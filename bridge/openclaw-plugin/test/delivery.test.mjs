@@ -203,10 +203,22 @@ test("the real plugin entry registers without requesting restricted keyed state"
   const registrations = [];
   const tools = [];
   const hooks = [];
+  const agentEventSubscriptions = [];
   const runContexts = new Map();
   deliveryPlugin.register({
+    id: "smart-remarkable-delivery",
     runtime,
     logger: { error() {} },
+    agent: {
+      events: {
+        registerAgentEventSubscription(subscription) {
+          agentEventSubscriptions.push(subscription);
+        },
+        emitAgentEvent() {
+          return { emitted: false, reason: "registration smoke only" };
+        },
+      },
+    },
     runContext: {
       getRunContext({ runId, namespace }) {
         return runContexts.get(`${runId}:${namespace}`);
@@ -242,10 +254,14 @@ test("the real plugin entry registers without requesting restricted keyed state"
     registrations.map((entry) => entry.options),
     [
       { scope: "operator.write" },
-      { scope: "operator.write" },
-      { scope: "operator.write" },
+      { scope: "operator.admin" },
+      { scope: "operator.admin" },
     ],
   );
+  assert.equal(agentEventSubscriptions.length, 1);
+  assert.deepEqual(agentEventSubscriptions[0].streams, [
+    "smart-remarkable-delivery.origin-control",
+  ]);
   assert.equal(tools.length, 1);
   assert.equal(typeof tools[0].tool, "function");
   assert.deepEqual(tools[0].options, {
