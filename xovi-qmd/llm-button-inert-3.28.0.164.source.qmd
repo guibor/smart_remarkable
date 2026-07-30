@@ -1,0 +1,30 @@
+; Inert visual canary for the Smart Remarkable answer-here and agent buttons.
+; Exact target: Ferrari firmware 3.28.0.164.
+; This artifact contains no action and cannot start or signal a worker.
+
+VERSION 3.28.0.164
+
+AFFECT /qml/common/SceneSelectionHandler.qml
+    TRAVERSE Item#selectionRoot
+        TRAVERSE SelectionContextualMenu#tools
+            LOCATE AFTER ArkControls.ContextualMenu.Button#selectionDuplicate
+            INSERT {
+                ArkControls.ContextualMenu.Button {
+                    id: smartRemarkableLlmButton
+                    focusPolicy: Qt.NoFocus
+                    type: tools.type
+                    iconSource: "qrc:/ark/icons/notebook_sparkles"
+                    enabled: false
+                }
+
+                ArkControls.ContextualMenu.Button {
+                    id: smartRemarkableSendButton
+                    focusPolicy: Qt.NoFocus
+                    type: tools.type
+                    iconSource: "qrc:/icons/sparkles.svg"
+                    enabled: false
+                }
+            }
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT

@@ -134,13 +134,23 @@ provider API keys, and bundled kernel modules are not used.
 
 The raw `xovi-ext/llmbutton` extension described below is deliberately not
 used on firmware 3.28. It resolves private Qt ABI from native code and has a
-real `xochitl` crash history. The candidate for 3.28.0.163 is instead a
+real `xochitl` crash history. The candidate for 3.28.0.164 is instead a
 small, firmware-hashed QMLDiff patch that adds the firmware's stock
 sparkling-notebook and sparkles resources after **Copy** and delegates to
 AppLoad. It contains no
 credentials, networking, model call, Draw action, kernel code, or boot action.
 
 ### Implementation and deployment status
+
+The 3.28.0.164 update is intentionally a reinstall, not an attempt to make
+Xovi survive firmware updates. The exact new functional QMD
+(`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`)
+and disabled canary
+(`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`)
+pass offline compatibility and compose with all seven supported ReMagic QMDs
+into 22 resources. At this point those are candidate bytes; the tablet remains
+on healthy stock `xochitl` until the signed packages and guarded live canary
+complete.
 
 The two response destinations, three trigger modes, narrow bridge protocol,
 single-request admission, bounded plugin-owned origin admission, per-request

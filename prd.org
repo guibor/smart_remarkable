@@ -44,6 +44,11 @@
 - Permit coexistence with other installed QMLDiff hacks only when every co-resident =.qmd= has an explicitly allowlisted filename, SHA-256, root ownership, and mode 0644. Missing, changed, symlinked, or additional =.qmd=, =.qrr=, or =.rcc= files must abort the button transaction before mutation.
 - Keep =session-hold= usable without the injected button as the safe fallback. Holding means: draw and close the lasso while the pen is touching, keep its endpoint within a small movement radius for the configured duration (initially 800 ms), then lift; an ordinary immediate lift must remain a normal reMarkable selection and must not submit.
 - Treat tunnel health as part of worker readiness. The AppLoad launcher must reject a stale =ready= marker unless the forwarded bridge health probe succeeds, restart one stale active transient unit at most once, and fail closed if the fresh bridge is still unhealthy. The runner must supervise both worker and tunnel, remove readiness and stop the worker as soon as either tunnel exits, and preserve the worker's own exit status when it finishes first.
+- Firmware updates may deliberately return the tablet to stock operation. The
+  supported workflow does not need to persist Xovi across an update; instead,
+  regenerate the exact-firmware QMD and allowlist, reinstall through the
+  documented bounded recipe, and preserve the existing =/home=-backed Smart
+  Remarkable settings and worker bundle.
 
 * Requirements that changed
 
@@ -78,6 +83,11 @@
 - The first plugin receipt reader used path-based =readFile= and could follow a symlinked =record.json= into a forged cached success. Both WhatsApp and cloud-upload receipt journals now use no-follow descriptor reads with owner/type/identity, private-mode, single-link, 64 KiB, stable-read, and fatal UTF-8 checks before parsing.
 - The first transient runner waited only for the Smart Remarkable process and could leave a stale ready marker after its SSH tunnel died. The runner now supervises both children, and AppLoad independently health-checks the fixed forwarded bridge before accepting either native-button trigger.
 - The first trusted-origin implementation passed a plugin-realm object to OpenClaw's public =runContext.setRunContext= API before =chat.send=. OpenClaw 2026.7.1 validates plain-object prototype identity in the host realm, and the live write returned =false= before admission. A plugin-instance Map was considered next, but OpenClaw can keep separate startup, active-hook, and pinned-tool registries, so those Maps would not share authority. A realm-neutral scalar then passed split-registry unit tests, but live bind still returned =UNAVAILABLE=: the Gateway method was calling the ordinary plugin run-context facade after plugin registration had closed, so the late write could not be treated as a usable host mutation. The current version retains the v2 scalar authority and its exact run/transcript checks, but reaches host get/set/clear through a registered synchronous agent-event subscription. The emitter places only a random operation id on the plugin-owned stream; the operation, scalar, capability, and cleanup handle never enter the event or run id. Exact read-back, bounded in-flight commands, opaque-handle cleanup, and missing/asynchronous receipt failure preserve the original fail-closed authority model.
+- Automatic survival across firmware updates is no longer required. The user
+  accepts an exact, hassle-free reinstall after each update. This changes only
+  update orchestration: exact runtime fingerprints, offline composition,
+  independent rollback, root-read-only checks, and physical acceptance remain
+  required.
 
 * Immediate next steps
 
@@ -128,6 +138,10 @@
 45. [X] Add trusted, bounded reMarkable origin admission, durable input provenance, exact captured-transcript recovery after canonical-session remapping, and a gated receipt-checked PDF/EPUB reMarkable-cloud delivery tool; replace unusable late public-facade writes with the synchronous agent-event host run-context adapter and pin the reviewed plugin metadata at version =0.2.2=.
 46. [X] Transactionally deploy reviewed plugin version =0.2.2= and the bridge, plus the reversible =/home=-scoped worker/button refresh; verify server and tablet rollback preconditions before mutation.
 47. [ ] Run one disposable request through each icon and one harmless document-delivery smoke request, then verify WhatsApp receipts, answer-only insertion, cloud artifact receipt, inactive helpers, unchanged =xochitl= restart count, and read-only root.
+48. [X] Capture the Paper Pro 3.28.0.164 stock executable, build ID, rebuilt hashtable, exact resource tree, surviving Xovi/AppLoad hashes, and a Mac-side =/home= preimage while stock =xochitl= remains stable.
+49. [X] Build the 3.28.0.164 inert and functional stock-icon QMDs, update the exact co-resident allowlist, and compose all eight QMDs offline into 22 resources with no compatibility errors.
+50. [ ] Install the signed 3.28.0.164 packages and refresh the button through the independent rollback canary; verify AppLoad mappings, zero restarts, inactive takeover helpers, and read-only root.
+51. [ ] Record the exact package hashes, Gestik-settings before/after hash, activation transaction, and postchecks in the shared update recipe.
 
 * Verification notes
 

@@ -131,10 +131,10 @@ case "$HOST" in
 esac
 
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-ALLOWLIST="$REPO/xovi-qmd/compatibility-3.28.0.163.env"
+ALLOWLIST="$REPO/xovi-qmd/compatibility-3.28.0.164.env"
 DEVICE_SCRIPT="$REPO/ops/device-install-llm-button-canary.sh"
 QMLDIFF_BIN=${QMLDIFF_BIN:-}
-XOCHITL_REFERENCE=${XOCHITL_REFERENCE:-/private/tmp/xochitl-ferrari-3.28.0.163}
+XOCHITL_REFERENCE=${XOCHITL_REFERENCE:-/private/tmp/xochitl-ferrari-3.28.0.164}
 READELF=${READELF:-/opt/homebrew/bin/aarch64-linux-gnu-readelf}
 ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/smart-remarkable-llm-canary.XXXXXX")
@@ -263,13 +263,13 @@ do
 done
 
 if [ "$PHASE" = inert ] || [ "$PHASE" = refresh-inert ]; then
-    SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.163.source.qmd"
-    BUTTON_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.163.qmd"
+    SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.164.source.qmd"
+    BUTTON_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.164.qmd"
     EXPECTED_SOURCE_SHA=$INERT_SOURCE_QMD_SHA256
     EXPECTED_BUTTON_SHA=$INERT_BUTTON_QMD_SHA256
 else
-    SOURCE_QMD="$REPO/xovi-qmd/llm-button-3.28.0.163.source.qmd"
-    BUTTON_QMD="$REPO/xovi-qmd/llm-button-3.28.0.163.qmd"
+    SOURCE_QMD="$REPO/xovi-qmd/llm-button-3.28.0.164.source.qmd"
+    BUTTON_QMD="$REPO/xovi-qmd/llm-button-3.28.0.164.qmd"
     EXPECTED_SOURCE_SHA=$SOURCE_QMD_SHA256
     EXPECTED_BUTTON_SHA=$BUTTON_QMD_SHA256
 fi

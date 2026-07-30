@@ -1,0 +1,126 @@
+; Smart Remarkable answer-here and agent selection-menu buttons.
+; Exact target: Ferrari firmware 3.28.0.164.
+; No credentials, file I/O, network I/O, native ABI calls, or Draw action.
+
+VERSION 3.28.0.164
+
+AFFECT [[3197972396468700595]]
+    TRAVERSE [[6502786168]]#[[10742505294233322867]]
+        TRAVERSE [[12395602925408354507]]#[[214642769434]]
+            LOCATE AFTER [[425121728314878811.16765000136167945189.7081261925573]]#[[3922282194937966250]]
+            INSERT {
+                ~&425121728314878811&~.~&16765000136167945189&~.~&7081261925573&~ {
+                    ~&5972374&~: smartRemarkableLlmButton
+                    ~&481641799955318521&~: ~&5971598&~.~&233696851602406&~
+                    ~&6504337259&~: ~&214642769434&~.~&6504337259&~
+                    /* One pending mode shared by both buttons prevents a rapid*/
+                    /* answer-here + agent double tap from creating two requests.*/
+                    property ~&7083178290016&~ pendingMode: ""
+                    ~&8399601734642709923&~: ~&"10806537930630303861&~
+                    ~&7713561545874130&~: pendingMode === "write_back"
+
+                    ~&428051690305612204&~ {
+                        ~&7083194890448&~: ~&10742505294233322867&~
+                        function ~&13733777459642361598&~() {
+                            smartRemarkableLlmButton.clearPendingMode()
+                        }
+                    }
+
+                    /* AppLoad's launcher API has no completion callback. If*/
+                    /* startup or pre-acceptance transport fails, keep the*/
+                    /* selection visible but release the UI guard after a*/
+                    /* bounded interval so the same lasso can be retried.*/
+                    ~&214604601930&~ {
+                        ~&5972374&~: smartRemarkablePendingReset
+                        ~&7713147298280334&~: 45000
+                        ~&7083121289162&~: ~&214625660372&~
+                        ~&495358363329399331&~: smartRemarkableLlmButton.clearPendingMode()
+                    }
+
+                    /* The worker sends this private chord only after the*/
+                    /* selected crop has been accepted by the remote bridge.*/
+                    /* Calling the stock close() path clears selection state*/
+                    /* without copying or deleting the underlying strokes.*/
+                    ~&7712201763518885&~ {
+                        ~&233726547792244&~: smartRemarkableLlmButton.pendingMode !== "" && ~&10742505294233322867&~.~&233748328658231&~
+                        ~&7713561760591106&~: "Ctrl+Alt+Shift+9"
+                        ~&495331016591073787&~: {
+                            /* Release the guard before close() changes visibility.*/
+                            /* This also disables the shortcut immediately, so a*/
+                            /* delayed chord cannot affect the next selection.*/
+                            smartRemarkableLlmButton.clearPendingMode()
+                            ~&5971598&~.~&254524858248187773&~(function() {
+                                ~&5972376&~ (~&10742505294233322867&~.~&233748328658231&~) {
+                                    ~&10742505294233322867&~.~&214622501183&~()
+                                }
+                            })
+                        }
+                    }
+
+                    function clearPendingMode() {
+                        smartRemarkablePendingReset.~&6504295855&~()
+                        pendingMode = ""
+                    }
+
+                    function requestMode(~&6504074414&~) {
+                        ~&5972376&~ (pendingMode !== "") {
+                            ~&7083121450889&~
+                        }
+                        ~&5972376&~ (~&6504074414&~ !== "write_back" &&
+                                ~&6504074414&~ !== "whatsapp_only") {
+                            ~&7083121450889&~
+                        }
+                        pendingMode = ~&6504074414&~
+                        smartRemarkablePendingReset.~&233743006639214&~()
+                        ~&5972376&~ (!launch(~&6504074414&~)) {
+                            clearPendingMode()
+                        }
+                    }
+
+                    function launch(~&6504074414&~) {
+                        /* Resolve AppLoad only when tapped. Keeping the module*/
+                        /* out of the host file's static imports lets the stock*/
+                        /* selection component keep loading if AppLoad is ever*/
+                        /* absent or disabled.*/
+                        ~&197102514&~ helper = ~&6504117156&~
+                        try {
+                            helper = ~&5971598&~.createQmlObject(
+                                'import QtQuick;\n' +
+                                'import net.asivery.AppLoad 1.0;\n' +
+                                'QtObject { function go(mode) { AppLoadLauncher.launchApplication("external::smart-remarkable", ["--selection-button=" + mode], ({}), false) } }',
+                                ~&10742505294233322867&~,
+                                "smart_remarkable_appload_launcher"
+                            )
+                            ~&5972376&~ (helper) {
+                                helper.go(~&6504074414&~)
+                                helper.~&233724926106067&~()
+                                ~&7083121450889&~ ~&6504329801&~
+                            } ~&6503784146&~ {
+                                ~&7083121450889&~ ~&214625660372&~
+                            }
+                        } catch (~&214625091795&~) {
+                            ~&233724020023100&~.~&6504419009&~("Smart Remarkable launcher unavailable")
+                            ~&5972376&~ (helper) {
+                                helper.~&233724926106067&~()
+                            }
+                            ~&7083121450889&~ ~&214625660372&~
+                        }
+                    }
+
+                    ~&254542236275632405&~: requestMode("write_back")
+                }
+
+                ~&425121728314878811&~.~&16765000136167945189&~.~&7081261925573&~ {
+                    ~&5972374&~: smartRemarkableSendButton
+                    ~&481641799955318521&~: ~&5971598&~.~&233696851602406&~
+                    ~&6504337259&~: ~&214642769434&~.~&6504337259&~
+                    ~&8399601734642709923&~: ~&"6787780988446224774&~
+                    ~&7713561545874130&~: smartRemarkableLlmButton.pendingMode === "whatsapp_only"
+
+                    ~&254542236275632405&~: smartRemarkableLlmButton.requestMode(
+                        "whatsapp_only")
+                }
+            }
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT

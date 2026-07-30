@@ -255,9 +255,9 @@ delivery: it represented only synthetic ingress context. Engine content,
 crop/image slots, request mode, and tool state are cleared before admission is
 released for another request.
 
-For firmware 3.28.0.163, the selected native-button candidate is a two-button
+For firmware 3.28.0.164, the selected native-button candidate is a two-button
 QMLDiff patch rather than the upstream raw `llmbutton.so`.
-`xovi-qmd/llm-button-3.28.0.163.source.qmd` inserts one stock
+`xovi-qmd/llm-button-3.28.0.164.source.qmd` inserts one stock
 QML block containing the firmware's stock sparkling-notebook and sparkles
 resources into the exact
 `SceneSelectionHandler.qml` tree immediately after `selectionDuplicate`
@@ -265,8 +265,8 @@ resources into the exact
 exposes the capture-confirmation shortcut described above;
 keeping AppLoad out of the host file's static imports reduces the chance that
 an unavailable module prevents the stock selection component from loading.
-`xovi-qmd/llm-button-inert-3.28.0.163.source.qmd` inserts the same two visual
-buttons disabled and with no actions. `xovi-qmd/compatibility-3.28.0.163.env`
+`xovi-qmd/llm-button-inert-3.28.0.164.source.qmd` inserts the same two visual
+buttons disabled and with no actions. `xovi-qmd/compatibility-3.28.0.164.env`
 records exact firmware, xochitl, hashtable, Xovi, qt-resource-rebuilder,
 message-broker, AppLoad, artifact, and target-resource hashes.
 
@@ -333,6 +333,22 @@ transcript or page images. History and durable memory live only in OpenClaw's
 canonical server session.
 
 ## Deployment validation
+
+The 3.28.0.164 update candidate is exact-firmware scoped. Its stock `xochitl`
+SHA-256 is
+`113bf7ea62ad171ea03c77c1f90e0666bcff163242a22ebca84372533b270c1c`,
+build ID is `71ec3f61e3ce341d7b5fc4c56ca698980ff64cfb`, and rebuilt
+hashtable SHA-256 is
+`75c4e7b7353fdc4c3ee8840adfa42f61f19a02111a7c1492a99b7cfb57e12236`.
+The functional QMD is
+`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`;
+the disabled canary is
+`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`.
+Both pass exact-hashtable compatibility and apply to the extracted resource
+tree. Together with the seven supported ReMagic QMDs, they compose in device
+filename order into 22 patched resources with no compatibility or locator
+error. These are offline build facts; live installation and physical button
+acceptance remain separate gates.
 
 The current two-button client passes 48 native library tests with one unrelated
 upstream font-render test filtered. The bridge and no-mirror delivery plugin
@@ -590,7 +606,7 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   stock sparkles agent action immediately after Copy. Pending state is
   centralized and cleared on visibility loss, timeout, launch failure, and
   before shortcut-driven close. Offline QMLDiff compatibility/application
-  against the extracted exact 3.28.0.163 resource tree must succeed before
+  against the extracted exact 3.28.0.164 resource tree must succeed before
   either device canary. The functional patch has no credential or direct
   OpenClaw access; the AppLoad launcher remains the only bridge to the session
   worker.
