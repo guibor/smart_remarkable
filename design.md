@@ -334,7 +334,7 @@ canonical server session.
 
 ## Deployment validation
 
-The 3.28.0.164 update candidate is exact-firmware scoped. Its stock `xochitl`
+The installed 3.28.0.164 update is exact-firmware scoped. Its stock `xochitl`
 SHA-256 is
 `113bf7ea62ad171ea03c77c1f90e0666bcff163242a22ebca84372533b270c1c`,
 build ID is `71ec3f61e3ce341d7b5fc4c56ca698980ff64cfb`, and rebuilt
@@ -347,8 +347,33 @@ the disabled canary is
 Both pass exact-hashtable compatibility and apply to the extracted resource
 tree. Together with the seven supported ReMagic QMDs, they compose in device
 filename order into 22 patched resources with no compatibility or locator
-error. These are offline build facts; live installation and physical button
-acceptance remain separate gates.
+error.
+
+The exact 3.28.0.164 bytes are now live. A firmware update had removed the
+volatile Xovi service drop-ins while leaving `/home/root/xovi` intact, so the
+installed `remagic-live-test-safe.sh` first masked the dangerous stock
+failure escalation in `/run`, armed a timed stock rollback, sampled Xovi for
+30 seconds, and required AppLoad's success marker. It passed without a
+crash/automatic restart; `NRestarts` stayed zero while the deliberate Xovi
+activation created a new `xochitl` process. Disabled transaction
+`20260730T184327Z-34344` then
+committed QMD
+`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`;
+functional transaction `20260730T184443Z-34618` promoted only that canary to
+QMD
+`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`.
+Both transaction/watchdog pairs cleared. Their final records are
+`success:functional:9449` and `validated:functional:9449`.
+
+All seven co-resident package QMDs plus Smart Remarkable loaded, the Xovi,
+QRR, broker, and AppLoad mappings matched the allowlist, and the AppLoad
+success marker was present. Final `xochitl` PID is `9449`, `NRestarts=0`,
+root is read-only, and the Riddle/Smart workers are inactive. Gestik's final
+live and protected settings both match the standalone Mac preimage at
+`826211118322c6a84d899a9cf2f11e3e24d5223ac11ee96efaf47e45a47f5938`.
+This proves installation and runtime stability; physical handwritten
+answer-here and WhatsApp-only button round trips remain a separate human
+acceptance gate.
 
 The current two-button client passes 48 native library tests with one unrelated
 upstream font-render test filtered. The bridge and no-mirror delivery plugin
@@ -364,17 +389,19 @@ no-eviction capacity, ownership-marker races, an eagerly writable private
 systemd state directory, and explicit provider `sent` receipts. The current
 aarch64 worker SHA-256 is
 `0bce9522c47aa2becc2f07171ed59ade012061ff33bd5cdbc11ec1c94eefde50`;
-it requires no GLIBC symbol newer than 2.28. Both
-current QMLDiff artifacts pass offline compatibility and apply-diff checks
-against the exact extracted 3.28.0.163 resources. The functional two-button
+it requires no GLIBC symbol newer than 2.28. The prior 3.28.0.163
+QMLDiff artifacts passed offline compatibility and apply-diff checks against
+that firmware's exact extracted resources. Its functional two-button
 QMD is
 `0fea5e9d78cb085528f0cde5af672abb9c3ca2b327127f43dc6e54605a688412`;
 the disabled canary is
 `0e5eec4ffa03b2b0fdbc6b42519165f93ae77a00c01cf77d92db8993d934978e`.
-The tablet runs that exact functional stock-icon QMD. The user visually
+The tablet ran that exact functional stock-icon QMD before the 3.28.0.164
+update. The user visually
 accepted disabled transaction `20260728T095031Z-58185`; guarded transaction
 `20260728T104334Z-63134` then promoted only that accepted layout and wrote the
-device-bound marker `validated:refresh-functional:78929`. `xochitl` remained
+device-bound marker `validated:refresh-functional:78929`. In that historical
+deployment, `xochitl` remained
 on PID `78929` with zero automatic restarts, the root filesystem stayed
 read-only, and both canary units exited.
 

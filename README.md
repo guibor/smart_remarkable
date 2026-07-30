@@ -134,8 +134,8 @@ provider API keys, and bundled kernel modules are not used.
 
 The raw `xovi-ext/llmbutton` extension described below is deliberately not
 used on firmware 3.28. It resolves private Qt ABI from native code and has a
-real `xochitl` crash history. The candidate for 3.28.0.164 is instead a
-small, firmware-hashed QMLDiff patch that adds the firmware's stock
+real `xochitl` crash history. The installed 3.28.0.164 integration is instead
+a small, firmware-hashed QMLDiff patch that adds the firmware's stock
 sparkling-notebook and sparkles resources after **Copy** and delegates to
 AppLoad. It contains no
 credentials, networking, model call, Draw action, kernel code, or boot action.
@@ -148,23 +148,29 @@ Xovi survive firmware updates. The exact new functional QMD
 and disabled canary
 (`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`)
 pass offline compatibility and compose with all seven supported ReMagic QMDs
-into 22 resources. At this point those are candidate bytes; the tablet remains
-on healthy stock `xochitl` until the signed packages and guarded live canary
-complete.
+into 22 resources. Those exact bytes are installed: ReMagic's 30-second
+stock-rollback canary passed, inert transaction
+`20260730T184327Z-34344` committed the disabled QMD, and functional transaction
+`20260730T184443Z-34618` promoted it. All eight QMDs and AppLoad loaded;
+`xochitl` is stable on PID `9449` with zero restarts; root remains read-only;
+and all takeover/canary helpers are inactive. Gestik's final live settings and
+protected backup both match the standalone Mac preinstall hash. The complete
+repeatable procedure is
+in the
+[Paper Pro Beta update recipe](https://github.com/guibor/remarkable-beta-os/blob/beta/pro/3.28.0.164/UPDATE-RECIPE.md).
+Physical handwritten acceptance through both icons remains pending.
 
 The two response destinations, three trigger modes, narrow bridge protocol,
 single-request admission, bounded plugin-owned origin admission, per-request
 cleanup, guarded QMLDiff artifacts, and
 exact-device coexistence policy are implemented and locally tested. The
-current reviewed plugin candidate is version `0.2.2`; its host run-context
-adapter and admin-scoped origin methods still require transactional live
-promotion and physical acceptance. The
-current stock-icon functional QMD has SHA-256
-`0fea5e9d78cb085528f0cde5af672abb9c3ca2b327127f43dc6e54605a688412`;
-the matching disabled visual canary has SHA-256
-`0e5eec4ffa03b2b0fdbc6b42519165f93ae77a00c01cf77d92db8993d934978e`.
-The tablet still retains the previous literal-label functional QMD until the
-new disabled layout completes its guarded visual-confirmation phase.
+current reviewed plugin is version `0.2.2`. Its host run-context adapter and
+admin-scoped origin methods are deployed; physical acceptance remains separate
+from server/runtime promotion. The active 3.28.0.164 stock-icon functional QMD
+is
+`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`;
+the matching disabled canary is
+`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`.
 
 The loopback bridge/plugin and dedicated local-forward-only SSH account are
 live. The current worker
@@ -176,7 +182,8 @@ strict literal-transcription/answer envelope: WhatsApp receives one atomic
 only the answer for stock-text insertion and the sparkles action returns no
 assistant text to the tablet.
 
-Server source transaction `20260725T230143Z` and tablet transaction
+In the earlier 3.28.0.163 deployment, server source transaction
+`20260725T230143Z` and tablet transaction
 `20260725T230352Z` both retain rollback preimages. The new worker passed a
 start/health/stop tunnel smoke test without creating a model request. A
 harmless live `Send`-mode canary was transcribed exactly as
@@ -185,9 +192,10 @@ WhatsApp receipts for both acknowledgement and final. After human confirmation
 of the disabled layout, guarded transaction
 `20260725T211315Z-12106` promoted the exact functional two-button QMD
 `761b7fd4f86ceed9625a541c1a8e7c2c101abc835b56e22c8f8e1a5f919f8ac7`.
-Stock `xochitl` is healthy on the committed PID with zero automatic restarts,
-the root filesystem remains read-only, and all assistant/deployment units are
-inactive. A disposable-page answer-here and agent acceptance test remains required
+Stock `xochitl` was healthy on that committed PID with zero automatic
+restarts, the root filesystem remained read-only, and all
+assistant/deployment units were inactive. A disposable-page answer-here and
+agent acceptance test remains required
 to verify real handwriting and notebook insertion through the physical UI.
 The current allowlist requires the exact reviewed Better TOC, Better TOC
 Collapse, Gestik, Ghostbuster, Pen Layer Memory, Quick Settings Timer, and TOC
