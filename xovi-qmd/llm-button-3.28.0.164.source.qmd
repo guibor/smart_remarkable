@@ -44,10 +44,11 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         }
                     }
 
-                    // AppLoad's launcher API has no completion callback. If
-                    // startup or pre-acceptance transport fails, keep the
-                    // selection visible but release the UI guard after a
-                    // bounded interval so the same lasso can be retried.
+                    // The direct AppLoad library call reports only whether the
+                    // small launcher process started. If startup or
+                    // pre-acceptance transport fails, keep the selection
+                    // visible but release the UI guard after a bounded interval
+                    // so the same lasso can be retried.
                     Timer {
                         id: smartRemarkablePendingReset
                         interval: 45000
@@ -150,10 +151,21 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         pendingSnapshot = snapshot
                         pendingPrepared = false
                         smartRemarkablePendingReset.restart()
-                        if (!launchArgument(
-                                "--selection-button-descriptor=" + descriptor)) {
-                            clearPendingMode()
-                        }
+                        // Let the stock selected state paint before AppLoad's
+                        // synchronous process-start check. Revalidate the exact
+                        // pending snapshot in case the stock menu changed in
+                        // the intervening event-loop turn.
+                        Qt.callLater(function() {
+                            if (pendingMode !== mode ||
+                                    pendingSnapshot !== snapshot ||
+                                    !selectionRoot.visible ||
+                                    captureSnapshot() !== snapshot ||
+                                    !launchArgument(
+                                        "--selection-button-descriptor=" +
+                                        descriptor)) {
+                                clearPendingMode()
+                            }
+                        })
                     }
 
                     function captureSnapshot() {
@@ -264,20 +276,30 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         // Resolve AppLoad only when tapped. Keeping the module
                         // out of the host file's static imports lets the stock
                         // selection component keep loading if AppLoad is ever
-                        // absent or disabled.
+                        // absent or disabled. Call AppLoadLibrary directly:
+                        // AppLoadLauncher broadcasts to every loaded AppLoad
+                        // view, and its non-QTFB receiver also dereferences an
+                        // undefined window after spawning the process. A
+                        // direct library call creates exactly one process and
+                        // returns its PID without entering that window path.
                         var helper = null
                         try {
                             helper = Qt.createQmlObject(
                                 'import QtQuick;\n' +
                                 'import net.asivery.AppLoad 1.0;\n' +
-                                'QtObject { function go(argument) { AppLoadLauncher.launchApplication("external::smart-remarkable", [argument], ({}), false) } }',
+                                'AppLoadLibrary { function go(argument) { return launchExternal("external::smart-remarkable", -1, [argument], ({})) } }',
                                 selectionRoot,
                                 "smart_remarkable_appload_launcher"
                             )
                             if (helper) {
-                                helper.go(argument)
+                                var pid = helper.go(argument)
                                 helper.destroy()
-                                return true
+                                if (pid > 0) {
+                                    return true
+                                }
+                                console.warn(
+                                    "Smart Remarkable launcher did not start")
+                                return false
                             } else {
                                 return false
                             }

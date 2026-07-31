@@ -59,10 +59,16 @@ patch has passed its device canary, is:
 3. The chosen button highlights at once and shared pending state ignores
    repeated taps. The v2 QML records the live `ink`, `image`, or `mixed` kind,
    fixed-point selection rectangle, stable `normal`/`rot180` orientation, and
-   capture time. AppLoad strictly parses that descriptor, starts the local
-   worker when necessary, adds a fresh kernel-random nonce, and publishes a
-   root-only busy marker before the trigger. Local capture readiness does not
-   wait for the SSH tunnel or bridge.
+   capture time. It then yields one event-loop turn so the selected state can
+   paint, revalidates the exact pending snapshot, and dynamically calls
+   AppLoad's non-QTFB `launchExternal` once. A positive launcher PID is required;
+   an exception or non-positive result clears pending state. This direct call
+   avoids AppLoad's global launcher broadcast and its no-GUI window path while
+   leaving the bounded launcher, worker, and tunnel work asynchronous in the
+   child. AppLoad strictly parses the descriptor, starts the local worker when
+   necessary, adds a fresh kernel-random nonce, and publishes a root-only busy
+   marker before the trigger. Local capture readiness does not wait for the SSH
+   tunnel or bridge.
 4. Smart asks QML to re-read the same selection immediately before capture.
    Only an exact match temporarily hides the stock tint, border, and menu via
    the stock `controlsAreVisible` flag and returns a nonce-bound prepare
@@ -89,15 +95,18 @@ patch has passed its device canary, is:
    budget. Legacy and pen-lasso routes cannot prove this exact binding and
    therefore do not type locally in this candidate.
 
-During app-first rollout only, the currently installed QMD hash
+During the earlier app-first rollout, QMD hash
 `2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`
-still calls `--selection-button=write_back` or
-`--selection-button=whatsapp_only`. The launcher accepts those exact old
-shapes as a separately tagged, random `legacy-v1` generation so the installed
-buttons do not break before the v2 QMD is reviewed and promoted. That path
-still uses historical marquee detection and remote-accepted close; it is a
-transition contract, not evidence that the v2 descriptor/acknowledgement path
-is installed or physically accepted.
+called `--selection-button=write_back` or
+`--selection-button=whatsapp_only`. The launcher still recognizes those exact
+old shapes as a separately tagged, random `legacy-v1` generation for an
+approved rollback/migration state. The tablet moved from the prior v2 QMD
+`28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`
+to the corrected direct-launch QMD
+`3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`
+through guarded inert and functional refreshes, so the legacy route is not the
+active button path. Physical button acceptance remains separate from that
+successful installation.
 
 Both buttons are explicit triggers in all three modes. In `once`, the worker
 exits after the request; in either session mode it rearms for another one.
@@ -182,33 +191,40 @@ credentials, networking, model call, Draw action, kernel code, or boot action.
 ### Implementation and deployment status
 
 The 3.28.0.164 update is intentionally a reinstall, not an attempt to make
-Xovi survive firmware updates. The tablet is still on the separately pinned
-legacy-v1 functional QMD
-`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`,
-deployed worker
-`0bce9522c47aa2becc2f07171ed59ade012061ff33bd5cdbc11ec1c94eefde50`,
-and deployed plugin `0.2.2`. ReMagic's 30-second stock-rollback canary passed;
+Xovi survive firmware updates. The legacy generation was restored safely by
 inert transaction `20260730T184327Z-34344` and functional transaction
-`20260730T184443Z-34618` restored that exact installed generation. All eight
-QMDs and AppLoad loaded; the recorded final `xochitl` PID was `9449` with zero
-restarts, root was read-only, and takeover/canary helpers were inactive. The
+`20260730T184443Z-34618`; guarded transaction
+`20260731T162912Z-38343` subsequently promoted the prior v2 functional QMD
+`28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`
+and worker
+`c73586e65fe6acc5333b95c5934a9f5298ec5126de1069504ed09182c05e08a5`.
+That build exposed AppLoad's no-GUI `undefined window` error after process
+spawn and did not establish a successful end-to-end button round trip. The
 repeatable procedure is in the
 [Paper Pro Beta update recipe](https://github.com/guibor/remarkable-beta-os/blob/beta/pro/3.28.0.164/UPDATE-RECIPE.md).
 
-The new v2 generation is complete locally but has not been installed on the
-tablet or promoted to the server. Its exact functional source QMD is
-`130353dbba7fd31b764f0835b610d59d9c25c7f1cc2b2c52e9285379f23ec1b8`,
+The corrected direct-launch revision is now installed. Its exact functional
+source QMD is
+`6aa2e491cffa568458c696e9035dca31f02b66786e30ad6f12f67dbfaa5b1fb9`,
 compiled functional QMD is
-`28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`,
-and aarch64 worker is
+`3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`,
+and its unchanged aarch64 worker is
 `c73586e65fe6acc5333b95c5934a9f5298ec5126de1069504ed09182c05e08a5`
 (build ID `63c2a311d60699e22a22ee54e90094cce2e587f8`, maximum GLIBC
-`2.28`, no RPATH/RUNPATH). The exact eight-QMD stack passes compatibility and
-composes into 22 resources; 88 applicable Rust tests, 145 Node tests, and all
-six device-free shell suites pass. This proves the local candidate and artifact
-contract, not device behavior. Fresh exact-firmware preflight, inert canary,
-human visual confirmation, functional watchdog/rollback, and physical
-ink/image/mixed acceptance through both icons remain mandatory.
+`2.28`, no RPATH/RUNPATH). The QML schedules launch after the immediate visual
+state update, creates one dynamic `AppLoadLibrary`, calls `launchExternal` with
+QTFB key `-1` and one descriptor argument, and accepts only a positive returned
+PID. It does not emit the global `AppLoadLauncher` signal, create or maximize a
+window, add a boot service, or change the worker/server protocol. Old-contract
+refresh-inert transaction `20260731T222234Z-48219` first committed the exact
+disabled QMD; application staged manifest
+`5690a3e627c5fa82f02dba631616522ebdf0278c6d91eb2bbccf0db339b20a54`
+then installed the unchanged worker, and refresh-functional transaction
+`20260731T222432Z-49869` committed the corrected QMD. The recorded final
+`xochitl` PID is `39042` with `NRestarts=0`. The deployed server plugin remains
+`0.2.2`; the local server candidate remains unpromoted. This proves exact
+installation and stock-process stability, not physical ink/image/mixed
+acceptance through both icons.
 
 OpenClaw's candidate canonical final remains a strict
 literal-transcription/answer envelope: WhatsApp receives one atomic `I read:`
@@ -425,10 +441,11 @@ tool shows **LLM** and **Draw** buttons beside cut/copy/paste. That native
 extension is not the safe Paper Pro integration. The guarded 3.28.0.163
 candidate in `xovi-qmd/` adds the stock notebook-with-sparkles and sparkles
 actions. The current v2 source launches a bounded descriptor containing mode,
-kind, orientation, geometry, and capture time, then uses AppLoad again for the
-same-snapshot prepare and close acknowledgements; it never talks to the Rust
-process directly. Historical `--selection-button=...` actions remain only for
-the pinned installed legacy-QMD transition described above.
+kind, orientation, geometry, and capture time through one direct checked
+`AppLoadLibrary` call, then uses AppLoad again for the same-snapshot prepare and
+close acknowledgements; it never talks to the Rust process directly.
+Historical `--selection-button=...` actions remain only for the pinned approved
+legacy-QMD rollback/migration state described above.
 
 **Key CLI flags**
 
@@ -696,22 +713,27 @@ separate C shared object that resolves private Qt6 symbols with `dlsym` and
 walks the live QtQuick scene graph. It is retained only as upstream source
 and is not compatible with the guarded Paper Pro path.
 
-The Paper Pro candidate instead uses firmware-specific QMLDiff artifacts in
+The Paper Pro integration instead uses firmware-specific QMLDiff artifacts in
 `xovi-qmd/`. The functional patch inserts two
 `ArkControls.ContextualMenu.Button` objects into the exact
-`SceneSelectionHandler.qml` resource and dynamically asks AppLoad to launch
-a strict v2 selection descriptor. AppLoad owns worker startup, adds the random
-nonce, publishes the root-only busy/trigger generation, and relays exact
+`SceneSelectionHandler.qml` resource. The local revision lets selected-state
+feedback paint, revalidates the pending snapshot, and dynamically asks exactly
+one `AppLoadLibrary` instance to start a strict v2 descriptor. It checks the
+returned PID and bypasses both AppLoad's broadcast launcher signal and its
+broken no-GUI window bookkeeping. AppLoad owns later worker startup, adds the
+random nonce, publishes the root-only busy/trigger generation, and relays exact
 prepare/close acknowledgements. The listener advertises local capture
 readiness independently from the runner's remote bridge-ready marker. QML has
-no credential, network, or model access. The v2 source rehashes to the pinned
-compiled candidate, and that candidate composes successfully with the seven
-exact co-resident QMDs. The old installed compiled QMD still uses
-transition-only `--selection-button=...` calls; the reviewed v2 candidate must
-still pass inert and functional device canaries plus physical acceptance before
-it replaces that artifact. A separate disabled-button patch remains the first
-visual canary, and activation still requires fresh live hashes plus a bounded
-rollback transaction.
+no credential, network, or model access. The prior deployed compiled v2 QMD
+was `28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`;
+the corrected currently deployed QMD is
+`3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
+Guarded transactions `20260731T222234Z-48219` and
+`20260731T222432Z-49869` passed the inert and functional device stages and
+replaced the prior v2 artifact with the corrected candidate. Physical button
+acceptance remains pending. A separate disabled-button patch remains the first
+visual canary for later revisions, and activation still requires fresh live
+hashes plus a bounded rollback transaction.
 
 ## License
 

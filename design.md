@@ -95,11 +95,25 @@ icon (send to agent) in the stock selection menu immediately after
 `write_back`: OpenClaw delivers through WhatsApp and the tablet inserts the
 same final answer as stock text. Send to agent means `whatsapp_only`:
 OpenClaw delivers through WhatsApp and the tablet performs no text, pen, or
-touch output. Each button sets its own stock `selected` state before asking
-AppLoad to launch, while shared pending state rejects another button tap.
-One `clearPendingMode` path runs on menu visibility changes, timeout, failed
-AppLoad launch, or local validation failure, so a failed attempt cannot latch
-the other icon or leave stock controls hidden.
+touch output. Each button sets its own stock `selected` state and snapshots the
+pending selection before scheduling launch with `Qt.callLater`, while shared
+pending state rejects another button tap. The deferred callback first
+revalidates the same mode, snapshot, and visible handler so the selected state
+can paint before AppLoad's synchronous process-start boundary.
+`launchArgument` dynamically creates exactly one `AppLoadLibrary`, calls
+`launchExternal("external::smart-remarkable", -1, [argument], ({}))`, destroys
+the helper, and accepts only a positive PID. It deliberately does not emit
+`AppLoadLauncher.launchApplication`: that singleton signal is received by
+every loaded AppLoad QML view, while AppLoad's non-QTFB handler starts the
+external process and then writes the PID to an undefined window object. The
+direct library path therefore avoids broadcast fan-out, window creation, and
+the observed post-spawn QML error. It still performs AppLoad's synchronous
+`QProcess::waitForStarted` check on the stock UI thread, but the launched shell,
+transient service, worker, tunnel, and remote work all continue in the child;
+no persistent or boot service is introduced. One `clearPendingMode` path runs
+on menu visibility changes, timeout, failed or non-positive AppLoad launch, or
+local validation failure, so a failed attempt cannot latch the other icon or
+leave stock controls hidden.
 
 The canonical button path is protocol v2. At tap time QML derives the exact
 `ink`, `image`, or `mixed` kind, maps all four selection corners into the
@@ -138,17 +152,18 @@ Handshake modifier/key releases are one balanced evdev batch with no embedded
 reported prepare emission failure is treated as potentially side-effecting and
 immediately attempts the idempotent restore chord before returning.
 
-App-first staging retains one deliberately separate migration route for the
-currently installed QMD hash
+App-first staging retains one deliberately separate rollback/migration route
+for the historical QMD hash
 `2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`.
 Its historical `--selection-button=write_back` and
 `--selection-button=whatsapp_only` calls receive a fresh random
 `legacy-v1` generation, use marquee detection, and close on
 `ModelExecutionStatus::RemoteAccepted` as that old QML expects. This route is
-not accepted as v2 geometry or acknowledgement evidence and exists only while
-the app-first worker is compatible with the pinned installed artifact. It
-becomes unreachable after the reviewed v2 QMD is promoted and is then eligible
-for removal in a later artifact generation.
+not accepted as v2 geometry or acknowledgement evidence. It became inactive
+when guarded transaction `20260731T162912Z-38343` promoted the prior v2 QMD
+`28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`,
+but remains an approved rollback/migration state until a later artifact
+generation deliberately removes it.
 
 `xovi-qmd/compatibility-3.28.0.164.env` is also the cross-artifact deployment
 contract. `ops/artifact-compatibility-contract.sh` parses its exact key set as
@@ -156,17 +171,24 @@ data and binds one protocol generation to the functional source/QMD plus the
 installed worker, AppLoad launcher, run-armed runner, and selection-protocol
 helper. `UNRESOLVED` is permitted only as an offline implementation marker;
 application installation and functional or refresh-functional QMD promotion
-require all six reviewed SHA-256 values. The exact current 3.28.0.164 legacy
-functional QMD is
+require all six reviewed SHA-256 values. The approved 3.28.0.164 legacy
+functional rollback QMD is
 `LEGACY_BUTTON_QMD_SHA256=2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`;
 the separate
 `PREVIOUS_BUTTON_QMD_SHA256=0fea5e9d78cb085528f0cde5af672abb9c3ca2b327127f43dc6e54605a688412`
 is only the historical 3.28.0.163
 recovery reference and is never used to classify the active migration state.
 
-The guarded forward order is new backward-compatible app while that exact
-legacy QMD remains active, new inert QMD, then new functional v2 QMD. Both
-device installers share `/run/smart-remarkable-llm-button/deployment.lock`.
+The guarded forward order is a compatible functional app/QMD, inert QMD, then
+the next functional QMD. For this direct-launch refresh, an isolated old-HEAD
+worktree retained the old contract that classified deployed QMD
+`28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`
+as its exact `new-functional`; guarded transaction
+`20260731T222234Z-48219` used that contract to commit inert QMD
+`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`
+before the new contract or application installer was allowed to run. This
+avoids weakening the new contract with an extra predecessor classification.
+Both device installers share `/run/smart-remarkable-llm-button/deployment.lock`.
 The application installer accepts only an absent, exact legacy-functional,
 exact new-inert, or exact new-functional Smart QMD; if new-functional is
 active, the existing app must already match the same complete contract so an
@@ -392,11 +414,14 @@ QMLDiff patch rather than the upstream raw `llmbutton.so`.
 QML block containing the firmware's stock sparkling-notebook and sparkles
 resources into the exact
 `SceneSelectionHandler.qml` tree immediately after `selectionDuplicate`
-(Copy). On tap the chosen button marks itself selected, dynamically resolves
-AppLoad, and exposes the prepare, close, and restore transaction described
-above;
-keeping AppLoad out of the host file's static imports reduces the chance that
-an unavailable module prevents the stock selection component from loading.
+(Copy). On tap the chosen button marks itself selected, schedules one deferred
+same-snapshot launch, dynamically creates one `AppLoadLibrary`, and accepts only
+a positive PID from direct non-QTFB `launchExternal`. This bypasses
+`AppLoadLauncher`'s process-wide broadcast and the external-no-GUI receiver's
+undefined-window assignment while exposing the prepare, close, and restore
+transaction described above. Keeping AppLoad out of the host file's static
+imports reduces the chance that an unavailable module prevents the stock
+selection component from loading.
 `xovi-qmd/llm-button-inert-3.28.0.164.source.qmd` inserts the same two visual
 buttons disabled and with no actions. `xovi-qmd/compatibility-3.28.0.164.env`
 records exact firmware, xochitl, hashtable, Xovi, qt-resource-rebuilder,
@@ -472,41 +497,48 @@ SHA-256 is
 build ID is `71ec3f61e3ce341d7b5fc4c56ca698980ff64cfb`, and rebuilt
 hashtable SHA-256 is
 `75c4e7b7353fdc4c3ee8840adfa42f61f19a02111a7c1492a99b7cfb57e12236`.
-The installed legacy-v1 functional QMD is
+The approved legacy-v1 rollback QMD is
 `2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`;
 the disabled canary is
 `81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`.
-Both pass exact-hashtable compatibility and apply to the extracted resource
-tree. Together with the seven supported ReMagic QMDs, they compose in device
-filename order into 22 patched resources with no compatibility or locator
-error.
+The prior v2 functional source/compiled pair is
+`130353dbba7fd31b764f0835b610d59d9c25c7f1cc2b2c52e9285379f23ec1b8`
+and `28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`.
+The corrected direct-launch source/compiled pair is
+`6aa2e491cffa568458c696e9035dca31f02b66786e30ad6f12f67dbfaa5b1fb9`
+and `3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
+Each pinned pair passes exact-hashtable compatibility and applies to the
+extracted resource tree; with the seven supported ReMagic QMDs, the selected
+Smart QMD composes in device filename order into 22 patched resources.
 
-Those exact legacy-v1 3.28.0.164 bytes are live. A firmware update had removed the
-volatile Xovi service drop-ins while leaving `/home/root/xovi` intact, so the
-installed `remagic-live-test-safe.sh` first masked the dangerous stock
-failure escalation in `/run`, armed a timed stock rollback, sampled Xovi for
-30 seconds, and required AppLoad's success marker. It passed without a
-crash/automatic restart; `NRestarts` stayed zero while the deliberate Xovi
-activation created a new `xochitl` process. Disabled transaction
-`20260730T184327Z-34344` then
-committed QMD
-`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`;
-functional transaction `20260730T184443Z-34618` promoted only that canary to
-QMD
-`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`.
-Both transaction/watchdog pairs cleared. Their final records are
-`success:functional:9449` and `validated:functional:9449`.
+The historical firmware-recovery sequence first used disabled transaction
+`20260730T184327Z-34344` and functional transaction
+`20260730T184443Z-34618` to restore the legacy QMD. Guarded transaction
+`20260731T162912Z-38343` later promoted the exact prior-v2 compiled QMD
+`28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`
+and deployed worker
+`c73586e65fe6acc5333b95c5934a9f5298ec5126de1069504ed09182c05e08a5`;
+its recorded `xochitl` PID was `26925` with `NRestarts=0`. That establishes
+which v2 bytes were live. It does not establish a successful button round
+trip: AppLoad logged its external-no-GUI undefined-window error after spawning,
+and the Rust listener did not receive the expected trigger. The global
+`AppLoadLauncher` signal can also reach multiple loaded AppLoad receivers,
+making one tap capable of starting competing launchers before that error.
 
-All seven co-resident package QMDs plus Smart Remarkable loaded, the Xovi,
-QRR, broker, and AppLoad mappings matched the allowlist, and the AppLoad
-success marker was present. Final `xochitl` PID is `9449`, `NRestarts=0`,
-root is read-only, and the Riddle/Smart workers are inactive. Gestik's final
-live and protected settings both match the standalone Mac preimage at
-`826211118322c6a84d899a9cf2f11e3e24d5223ac11ee96efaf47e45a47f5938`.
-This proves installation and runtime stability for the pinned historical QMD,
-not v2 descriptor/acknowledgement deployment or physical acceptance. Physical
-handwritten answer-here and WhatsApp-only round trips remain a separate human
-acceptance gate.
+For the direct-launch refresh, the old contract was retained in an isolated
+old-HEAD worktree long enough to classify the exact deployed prior-v2 bytes.
+Guarded refresh-inert transaction `20260731T222234Z-48219` then committed the
+exact inert QMD before the new application contract was introduced. This is a
+safe intermediate boundary: the new application was then installed with staged
+manifest
+`5690a3e627c5fa82f02dba631616522ebdf0278c6d91eb2bbccf0db339b20a54`
+and unchanged worker
+`c73586e65fe6acc5333b95c5934a9f5298ec5126de1069504ed09182c05e08a5`.
+Guarded refresh-functional transaction `20260731T222432Z-49869` finally
+committed corrected QMD
+`3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
+The recorded final `xochitl` PID is `39042` with `NRestarts=0`. Physical
+handwritten/Capture round trips remain the separate acceptance gate.
 
 The current two-button client passes 88 applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
@@ -534,22 +566,21 @@ systemd state directory, explicit provider `sent` receipts, the strict request
 namespace, schema-v1 migration barriers, explicit sensitive-hook policy,
 final-prompt admission gating, current-generation capability re-probing,
 reconnect-race refusal, and dynamic health failure before journal reservation.
-The last deployed legacy-compatible aarch64 worker SHA-256 remains
-`0bce9522c47aa2becc2f07171ed59ade012061ff33bd5cdbc11ec1c94eefde50`.
-The unpromoted v2 aarch64 candidate is
+The deployed v2 aarch64 worker SHA-256 is
 `c73586e65fe6acc5333b95c5934a9f5298ec5126de1069504ed09182c05e08a5`
 with build ID `63c2a311d60699e22a22ee54e90094cce2e587f8`; it is an
 ELF64 little-endian AArch64 PIE using `/lib/ld-linux-aarch64.so.1`, has no
-RPATH/RUNPATH, and requires no GLIBC symbol newer than 2.28. Its source QMD
-hash is
+RPATH/RUNPATH, and requires no GLIBC symbol newer than 2.28. The prior deployed
+v2 QMD used source
 `130353dbba7fd31b764f0835b610d59d9c25c7f1cc2b2c52e9285379f23ec1b8`
-and exact rehashed compiled QMD is
+and compiled bytes
 `28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`.
-The pinned QMLDiff tool reports no compatibility errors, and that candidate
-plus the seven exact co-resident QMDs applies to the exact extracted
-3.28.0.164 tree as 22 patched resources. Independent local artifact and client
-reviews found no release-blocking code or contract defect after the final
-rebuild. None of these candidate bytes has been deployed. The prior 3.28.0.163
+The corrected deployed revision keeps that worker and changes only the functional
+QMD source/compiled pair to
+`6aa2e491cffa568458c696e9035dca31f02b66786e30ad6f12f67dbfaa5b1fb9`
+and `3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
+Those corrected functional bytes were promoted by transaction
+`20260731T222432Z-49869`; physical interaction is still unverified. The prior 3.28.0.163
 QMLDiff artifacts passed offline compatibility and apply-diff checks against
 that firmware's exact extracted resources. Its functional two-button
 QMD is
@@ -849,21 +880,24 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   active descriptor. Historical `--selection-button` arguments are accepted
   only as the explicit pinned-QMD `legacy-v1` migration route.
 - `xovi-qmd/`: contains the disabled visual-canary source/artifact, the
-  reviewable firmware-specific v2 functional source, the pinned compiled
-  legacy-v1 functional artifact, and the immutable compatibility contract.
-  The functional source rehashes through the pinned QMLDiff tool and exact
-  firmware hashtable to the byte-identical compiled v2 candidate recorded by
-  the finalized contract. That candidate and the seven exact co-resident QMDs
-  pass compatibility and compose to 22 resources; device promotion and
-  physical acceptance remain gated work. Both menus place the firmware's stock
+  reviewable firmware-specific v2 functional source, the pinned legacy-v1
+  rollback artifact, and the immutable compatibility contract. The functional
+  source rehashes through the pinned QMLDiff tool and exact firmware hashtable
+  to the byte-identical compiled direct-launch candidate recorded by the
+  finalized contract. That candidate and the seven exact co-resident QMDs pass
+  compatibility and compose to 22 resources; guarded functional promotion is
+  complete and physical acceptance remains gated work. Both menus place the firmware's stock
   notebook-with-sparkles answer-here action and stock sparkles agent action
   immediately after Copy. The v2 source derives
   live kind, fixed-point view geometry, and stable scene orientation; rechecks
   that snapshot at both the prepare and close phases; hides only the stock
   `controlsAreVisible` flag through a reversible binding; and returns exact
-  prepare/close acknowledgements through AppLoad. Pending state is centralized
-  and cleared on visibility loss, timeout, launch failure, or revalidation
-  failure. Offline QMLDiff compatibility/application against the extracted
+  prepare/close acknowledgements through AppLoad. Pending state is centralized,
+  its initial launch is deferred one event-loop turn for paint, and one dynamic
+  `AppLoadLibrary.launchExternal` call must return a positive PID. State clears
+  on visibility loss, timeout, launch failure, or revalidation failure. The
+  QMD never emits AppLoad's global launcher signal or enters its no-GUI window
+  path. Offline QMLDiff compatibility/application against the extracted
   exact 3.28.0.164 resource tree must succeed before either device canary. The
   patch has no credential or direct OpenClaw access; the AppLoad launcher
   remains the only bridge to the session worker.
@@ -1014,6 +1048,10 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
 - `captureSnapshot` in the firmware-pinned QML source: derives the live
   selection kind, maps all four selection corners into fixed-point view bounds,
   and accepts only the stable `normal` or `rot180` scene transform.
+- `requestMode` and `launchArgument` in the firmware-pinned QML source: commit
+  and revalidate one pending snapshot across a deferred paint turn, then invoke
+  exactly one non-QTFB `AppLoadLibrary.launchExternal` operation and accept only
+  its positive PID without broadcasting or creating a window.
 - `smart_parse_selection_request`, `smart_parse_selection_snapshot`, and
   `smart_parse_active_selection_descriptor` in
   `scripts/selection-protocol.sh`: parse each distinct protocol shape as strict

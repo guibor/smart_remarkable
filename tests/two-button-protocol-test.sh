@@ -31,7 +31,11 @@ test "$(grep -c 'function captureSnapshot()' "$QML")" -eq 1
 test "$(grep -c 'sequence: "Ctrl+Alt+Shift+7"' "$QML")" -eq 1
 test "$(grep -c 'sequence: "Ctrl+Alt+Shift+8"' "$QML")" -eq 1
 test "$(grep -c 'sequence: "Ctrl+Alt+Shift+9"' "$QML")" -eq 1
-test "$(grep -c 'AppLoadLauncher.launchApplication' "$QML")" -eq 1
+test "$(grep -c 'AppLoadLibrary {' "$QML")" -eq 1
+grep -F 'return launchExternal("external::smart-remarkable", -1, [argument], ({}))' \
+    "$QML" >/dev/null
+grep -F 'if (pid > 0) {' "$QML" >/dev/null
+! grep -F 'AppLoadLauncher' "$QML" >/dev/null
 test "$(grep -c 'property: "controlsAreVisible"' "$QML")" -eq 1
 test "$(grep -c 'restoreMode: Binding.RestoreBindingOrValue' "$QML")" -eq 1
 ! grep -E 'target: selection[[:space:]]*$' "$QML" >/dev/null
@@ -40,11 +44,16 @@ grep -F 'selectionRoot.close()' "$QML" >/dev/null
 test "$(grep -c 'id: smartRemarkablePendingReset' "$QML")" -eq 1
 grep -F 'interval: 45000' "$QML" >/dev/null
 grep -F 'smartRemarkablePendingReset.restart()' "$QML" >/dev/null
+test "$(grep -c 'Qt.callLater(function() {' "$QML")" -eq 3
+grep -F '// Let the stock selected state paint before AppLoad' "$QML" >/dev/null
+grep -F 'pendingMode !== mode ||' "$QML" >/dev/null
+grep -F 'pendingSnapshot !== snapshot ||' "$QML" >/dev/null
 grep -F 'onTriggered: smartRemarkableLlmButton.clearPendingMode()' "$QML" >/dev/null
 grep -F 'onClicked: requestMode("write_back")' "$QML" >/dev/null
 grep -F 'onClicked: smartRemarkableLlmButton.requestMode(' "$QML" >/dev/null
 grep -F '"whatsapp_only")' "$QML" >/dev/null
-grep -F '"--selection-button-descriptor=" + descriptor' "$QML" >/dev/null
+grep -F '"--selection-button-descriptor=" +' "$QML" >/dev/null
+grep -F 'descriptor)) {' "$QML" >/dev/null
 grep -F '"--selection-prepare-ack=" + snapshot' "$QML" >/dev/null
 grep -F '"--selection-close-ack=" + snapshot' "$QML" >/dev/null
 test "$(grep -c 'selection.mapToItem' "$QML")" -eq 4
