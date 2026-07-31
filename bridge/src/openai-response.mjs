@@ -14,6 +14,7 @@ function responseContent(mode, text) {
 export function buildSuccessResponse({
   requestId,
   mode,
+  selectionKind,
   text,
   ack,
   finalDelivery,
@@ -51,6 +52,7 @@ export function buildSuccessResponse({
     x_smart_remarkable: {
       request_id: requestId,
       response_mode: mode,
+      selection_kind: selectionKind,
       replayed,
     },
   };
@@ -59,6 +61,7 @@ export function buildSuccessResponse({
 export function buildPostAcceptanceErrorResponse({
   requestId,
   mode,
+  selectionKind,
   ack,
   replayed,
   created = Math.floor(Date.now() / 1000),
@@ -93,6 +96,7 @@ export function buildPostAcceptanceErrorResponse({
     x_smart_remarkable: {
       request_id: requestId,
       response_mode: mode,
+      selection_kind: selectionKind,
       replayed,
     },
   };

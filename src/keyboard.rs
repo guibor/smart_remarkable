@@ -6,6 +6,12 @@ use std::{thread, time};
 
 use evdev::{uinput::VirtualDevice, AttributeSet, EventType as EvdevEventType, InputEvent, KeyCode as EvdevKey};
 
+pub const TABLET_WRITE_BACK_MAX_UTF8_BYTES: usize = 2_048;
+pub const TABLET_WRITE_BACK_MAX_KEYPRESSES: usize = 600;
+pub const TABLET_WRITE_BACK_MAX_ESTIMATED_MS: usize = 6_500;
+const ESTIMATED_KEYPRESS_MS: usize = 10;
+const ESTIMATED_STYLE_AND_SYNC_MS: usize = 20;
+
 pub struct Keyboard {
     device: Option<VirtualDevice>,
     key_map: HashMap<char, (EvdevKey, bool)>,
@@ -237,84 +243,144 @@ impl Keyboard {
     }
 
     pub fn string_to_keypresses(&mut self, input: &str) -> Result<()> {
+        self.string_to_keypresses_with_guard(input, || Ok(false), false)
+    }
+
+    pub fn string_to_keypresses_guarded(
+        &mut self,
+        input: &str,
+        should_abort: impl FnMut() -> Result<bool>,
+    ) -> Result<()> {
+        self.string_to_keypresses_with_guard(input, should_abort, true)
+    }
+
+    fn keypress_batch(key: EvdevKey, shift: bool) -> Vec<InputEvent> {
+        let mut events = Vec::with_capacity(if shift { 4 } else { 2 });
+        if shift {
+            events.push(InputEvent::new(
+                EvdevEventType::KEY.0,
+                EvdevKey::KEY_LEFTSHIFT.code(),
+                1,
+            ));
+        }
+        events.push(InputEvent::new(EvdevEventType::KEY.0, key.code(), 1));
+        events.push(InputEvent::new(EvdevEventType::KEY.0, key.code(), 0));
+        if shift {
+            events.push(InputEvent::new(
+                EvdevEventType::KEY.0,
+                EvdevKey::KEY_LEFTSHIFT.code(),
+                0,
+            ));
+        }
+        events
+    }
+
+    fn string_to_keypresses_with_guard(
+        &mut self,
+        input: &str,
+        mut should_abort: impl FnMut() -> Result<bool>,
+        reject_unsupported: bool,
+    ) -> Result<()> {
         if let Some(device) = &mut self.device {
+            if should_abort()? {
+                anyhow::bail!("Physical input changed before keyboard output");
+            }
             // make sure we are synced before we start; this might be paranoia
             device.emit(&[InputEvent::new(EvdevEventType::SYNCHRONIZATION.0, 0, 0)])?;
             thread::sleep(time::Duration::from_millis(10));
 
             for c in input.chars() {
+                if should_abort()? {
+                    anyhow::bail!("Physical input changed during keyboard output");
+                }
                 if let Some(&(key, shift)) = self.key_map.get(&c) {
-                    if shift {
-                        // Press Shift
-                        device.emit(&[InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTSHIFT.code(), 1)])?;
-                    }
-
-                    // Press key
-                    device.emit(&[InputEvent::new(EvdevEventType::KEY.0, key.code(), 1)])?;
-
-                    // Release key
-                    device.emit(&[InputEvent::new(EvdevEventType::KEY.0, key.code(), 0)])?;
-
-                    if shift {
-                        // Release Shift
-                        device.emit(&[InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTSHIFT.code(), 0)])?;
-                    }
-
-                    // Sync event
-                    device.emit(&[InputEvent::new(EvdevEventType::SYNCHRONIZATION.0, 0, 0)])?;
+                    // One guarded, balanced uinput batch per character keeps
+                    // Shift from being stranded and minimizes the interval
+                    // between the physical-input check and key emission.
+                    device.emit(&Self::keypress_batch(key, shift))?;
                     thread::sleep(time::Duration::from_millis(10));
+                } else if reject_unsupported {
+                    anyhow::bail!("Tablet keyboard cannot emit the complete response");
                 }
             }
         }
         Ok(())
     }
 
-    /// Ask the firmware-pinned Smart Remarkable QML button to close the
-    /// already-captured native selection through SceneSelectionHandler::close.
-    ///
-    /// The shortcut is enabled in QML only after that button was tapped, so
-    /// this chord cannot dismiss an unrelated stock selection. It performs no
-    /// clipboard, delete, or text action.
-    pub fn dismiss_captured_selection(&mut self) -> Result<()> {
+    /// Bound the interval during which physical input must remain absent for a
+    /// tablet write-back. The complete answer still reaches canonical WhatsApp
+    /// when this returns false; no partial local insertion is begun.
+    pub fn tablet_write_back_is_bounded(&self, input: &str) -> bool {
+        let supported = input.chars().filter(|character| self.key_map.contains_key(character)).count();
+        let estimated_ms = ESTIMATED_STYLE_AND_SYNC_MS.saturating_add(supported.saturating_mul(ESTIMATED_KEYPRESS_MS));
+        !input.is_empty()
+            && self.no_draw_progress
+            && input.len() <= TABLET_WRITE_BACK_MAX_UTF8_BYTES
+            && supported > 0
+            && input.chars().all(|character| self.key_map.contains_key(&character))
+            && supported <= TABLET_WRITE_BACK_MAX_KEYPRESSES
+            && estimated_ms <= TABLET_WRITE_BACK_MAX_ESTIMATED_MS
+    }
+
+    fn selection_handshake_batch(key: EvdevKey) -> [InputEvent; 8] {
+        [
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTCTRL.code(), 1),
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTALT.code(), 1),
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTSHIFT.code(), 1),
+            InputEvent::new(EvdevEventType::KEY.0, key.code(), 1),
+            InputEvent::new(EvdevEventType::KEY.0, key.code(), 0),
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTSHIFT.code(), 0),
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTALT.code(), 0),
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTCTRL.code(), 0),
+        ]
+    }
+
+    fn selection_handshake_chord(&mut self, key: EvdevKey) -> Result<()> {
         if let Some(device) = &mut self.device {
-            device.emit(&[
-                InputEvent::new(
-                    EvdevEventType::KEY.0,
-                    EvdevKey::KEY_LEFTCTRL.code(),
-                    1,
-                ),
-                InputEvent::new(
-                    EvdevEventType::KEY.0,
-                    EvdevKey::KEY_LEFTALT.code(),
-                    1,
-                ),
-                InputEvent::new(
-                    EvdevEventType::KEY.0,
-                    EvdevKey::KEY_LEFTSHIFT.code(),
-                    1,
-                ),
-                InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_9.code(), 1),
-                InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_9.code(), 0),
-                InputEvent::new(
-                    EvdevEventType::KEY.0,
-                    EvdevKey::KEY_LEFTSHIFT.code(),
-                    0,
-                ),
-                InputEvent::new(
-                    EvdevEventType::KEY.0,
-                    EvdevKey::KEY_LEFTALT.code(),
-                    0,
-                ),
-                InputEvent::new(
-                    EvdevEventType::KEY.0,
-                    EvdevKey::KEY_LEFTCTRL.code(),
-                    0,
-                ),
-                InputEvent::new(EvdevEventType::SYNCHRONIZATION.0, 0, 0),
-            ])?;
+            // VirtualDevice::emit appends exactly one SYN_REPORT. Keeping the
+            // explicit chord free of SYN means a returned trailing-sync error
+            // cannot occur after an earlier embedded SYN already activated
+            // the QML transaction.
+            device.emit(&Self::selection_handshake_batch(key))?;
             thread::sleep(time::Duration::from_millis(10));
         }
         Ok(())
+    }
+
+    fn emit_prepare_with_restore(mut emit_chord: impl FnMut(EvdevKey) -> Result<()>) -> Result<()> {
+        if let Err(prepare_error) = emit_chord(EvdevKey::KEY_8) {
+            // Treat every reported prepare failure as potentially
+            // side-effecting. The restore shortcut is idempotent before
+            // prepare and after close, so this is safe even when the kernel
+            // rejected the original chord before QML observed it.
+            return match emit_chord(EvdevKey::KEY_7) {
+                Ok(()) => Err(prepare_error),
+                Err(restore_error) => Err(anyhow::anyhow!(
+                    "{}; prepared-selection restoration also failed: {}",
+                    prepare_error,
+                    restore_error
+                )),
+            };
+        }
+        Ok(())
+    }
+
+    /// Ask the firmware-pinned QML to revalidate the live stock selection,
+    /// hide only its tint/controls, and publish a nonce-bound prepare ack.
+    pub fn prepare_captured_selection(&mut self) -> Result<()> {
+        Self::emit_prepare_with_restore(|key| self.selection_handshake_chord(key))
+    }
+
+    /// Ask QML to revalidate the prepared selection, close it through the
+    /// stock SceneSelectionHandler path, and publish a nonce-bound close ack.
+    pub fn dismiss_captured_selection(&mut self) -> Result<()> {
+        self.selection_handshake_chord(EvdevKey::KEY_9)
+    }
+
+    /// Restore chrome for a prepared selection when local capture fails. The
+    /// QML shortcut is disabled after close, so this cannot reopen a selection.
+    pub fn restore_prepared_selection(&mut self) -> Result<()> {
+        self.selection_handshake_chord(EvdevKey::KEY_7)
     }
 
     fn key_cmd(&mut self, button: &str, shift: bool) -> Result<()> {
@@ -345,6 +411,35 @@ impl Keyboard {
         Ok(())
     }
 
+    fn emit_body_command_guarded(
+        mut should_abort: impl FnMut() -> Result<bool>,
+        mut emit: impl FnMut(&[InputEvent]) -> Result<()>,
+    ) -> Result<()> {
+        if should_abort()? {
+            anyhow::bail!("Physical input changed before text style activation");
+        }
+        // Modifier down, style key down/up, and modifier up form one uinput
+        // batch. There is no guard gap that can leave Ctrl held or apply the
+        // style key after focus moves.
+        emit(&[
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTCTRL.code(), 1),
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_3.code(), 1),
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_3.code(), 0),
+            InputEvent::new(EvdevEventType::KEY.0, EvdevKey::KEY_LEFTCTRL.code(), 0),
+        ])
+    }
+
+    pub fn key_cmd_body_guarded(&mut self, should_abort: impl FnMut() -> Result<bool>) -> Result<()> {
+        if let Some(device) = &mut self.device {
+            Self::emit_body_command_guarded(should_abort, |events| {
+                device.emit(events)?;
+                Ok(())
+            })?;
+            thread::sleep(time::Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
     pub fn key_cmd_bullet(&mut self) -> Result<()> {
         self.key_cmd("4", false)?;
         Ok(())
@@ -369,5 +464,123 @@ impl Keyboard {
         }
         self.progress_count = 0;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::{EvdevEventType, EvdevKey, Keyboard, TABLET_WRITE_BACK_MAX_KEYPRESSES};
+
+    #[test]
+    fn tablet_write_back_accepts_the_exact_keypress_boundary() {
+        let keyboard = Keyboard::new(true, true);
+        assert!(keyboard.tablet_write_back_is_bounded(&"a".repeat(TABLET_WRITE_BACK_MAX_KEYPRESSES)));
+    }
+
+    #[test]
+    fn tablet_write_back_rejects_one_keypress_over_the_boundary() {
+        let keyboard = Keyboard::new(true, true);
+        assert!(!keyboard.tablet_write_back_is_bounded(&"a".repeat(TABLET_WRITE_BACK_MAX_KEYPRESSES + 1)));
+    }
+
+    #[test]
+    fn tablet_write_back_rejects_empty_or_entirely_unsupported_text() {
+        let keyboard = Keyboard::new(true, true);
+        assert!(!keyboard.tablet_write_back_is_bounded(""));
+        assert!(!keyboard.tablet_write_back_is_bounded("שלום"));
+        assert!(!keyboard.tablet_write_back_is_bounded("תשובה 10"));
+        for mixed in ["answer’s", "answer—10", "answer 🙂", "x = √2"] {
+            assert!(!keyboard.tablet_write_back_is_bounded(mixed), "{mixed:?} must fail before the first key");
+        }
+    }
+
+    #[test]
+    fn guarded_body_style_is_one_balanced_batch_and_abort_emits_nothing() {
+        let mut emitted = Vec::new();
+        assert!(Keyboard::emit_body_command_guarded(
+            || Ok(true),
+            |events| {
+                emitted.extend_from_slice(events);
+                Ok(())
+            },
+        )
+        .is_err());
+        assert!(emitted.is_empty());
+
+        Keyboard::emit_body_command_guarded(
+            || Ok(false),
+            |events| {
+                emitted.extend_from_slice(events);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(emitted.len(), 4);
+        assert_eq!(emitted[0].event_type(), EvdevEventType::KEY);
+        assert_eq!(emitted[0].code(), EvdevKey::KEY_LEFTCTRL.code());
+        assert_eq!(emitted[0].value(), 1);
+        assert_eq!(emitted[1].code(), EvdevKey::KEY_3.code());
+        assert_eq!(emitted[1].value(), 1);
+        assert_eq!(emitted[2].code(), EvdevKey::KEY_3.code());
+        assert_eq!(emitted[2].value(), 0);
+        assert_eq!(emitted[3].code(), EvdevKey::KEY_LEFTCTRL.code());
+        assert_eq!(emitted[3].value(), 0);
+    }
+
+    #[test]
+    fn shifted_keypress_batch_always_releases_shift_in_the_same_batch() {
+        let shifted = Keyboard::keypress_batch(EvdevKey::KEY_A, true);
+        assert_eq!(shifted.len(), 4);
+        assert_eq!(shifted[0].code(), EvdevKey::KEY_LEFTSHIFT.code());
+        assert_eq!(shifted[0].value(), 1);
+        assert_eq!(shifted[1].code(), EvdevKey::KEY_A.code());
+        assert_eq!(shifted[1].value(), 1);
+        assert_eq!(shifted[2].code(), EvdevKey::KEY_A.code());
+        assert_eq!(shifted[2].value(), 0);
+        assert_eq!(shifted[3].code(), EvdevKey::KEY_LEFTSHIFT.code());
+        assert_eq!(shifted[3].value(), 0);
+
+        let unshifted = Keyboard::keypress_batch(EvdevKey::KEY_A, false);
+        assert_eq!(unshifted.len(), 2);
+        assert!(unshifted
+            .iter()
+            .all(|event| event.code() == EvdevKey::KEY_A.code()));
+    }
+
+    #[test]
+    fn selection_prepare_reported_after_side_effect_is_restored() {
+        let prepared = Cell::new(false);
+        let mut keys = Vec::new();
+        let result = Keyboard::emit_prepare_with_restore(|key| {
+            keys.push(key);
+            if key == EvdevKey::KEY_8 {
+                prepared.set(true);
+                return Err(anyhow::anyhow!(
+                    "simulated emit error after QML observed prepare"
+                ));
+            }
+            assert_eq!(key, EvdevKey::KEY_7);
+            prepared.set(false);
+            Ok(())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(keys, vec![EvdevKey::KEY_8, EvdevKey::KEY_7]);
+        assert!(!prepared.get());
+    }
+
+    #[test]
+    fn selection_handshake_batch_is_balanced_and_has_no_embedded_sync() {
+        let events = Keyboard::selection_handshake_batch(EvdevKey::KEY_8);
+        assert_eq!(events.len(), 8);
+        assert!(events
+            .iter()
+            .all(|event| event.event_type() == EvdevEventType::KEY));
+        assert_eq!(events[0].code(), EvdevKey::KEY_LEFTCTRL.code());
+        assert_eq!(events[0].value(), 1);
+        assert_eq!(events[7].code(), EvdevKey::KEY_LEFTCTRL.code());
+        assert_eq!(events[7].value(), 0);
     }
 }

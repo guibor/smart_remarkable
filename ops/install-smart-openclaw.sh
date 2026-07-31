@@ -13,6 +13,8 @@ BINARY="$REPO/target/aarch64-unknown-linux-gnu/release/smart_remarkable"
 LOCAL_INSTALLER="$REPO/ops/install-smart-openclaw.sh"
 DEVICE_INSTALLER="$REPO/ops/device-install-smart-openclaw.sh"
 MANIFEST_BUILDER="$REPO/ops/build-staged-sha256-manifest.sh"
+CONTRACT="$REPO/xovi-qmd/compatibility-3.28.0.164.env"
+CONTRACT_HELPER="$REPO/ops/artifact-compatibility-contract.sh"
 ID=$(date -u +%Y%m%dT%H%M%SZ)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/smart-remarkable-install.XXXXXX")
 STAGE="$WORK/smart-remarkable"
@@ -22,11 +24,6 @@ REMOTE_ARCHIVE="/home/root/.smart-remarkable.bundle-$ID.tar"
 REMOTE_SCRIPT="/home/root/.smart-remarkable.install-$ID.sh"
 REMOTE_TOKEN="/home/root/.smart-remarkable.bridge-token-$ID"
 REMOTE_CLEANUP=0
-EXPECTED_DEVICE_SERIAL=0A247209DABC7917
-EXPECTED_FIRMWARE_VERSION=3.28.0.164
-EXPECTED_FIRMWARE_BUILD=20260702125656
-EXPECTED_XOCHITL_SHA256=113bf7ea62ad171ea03c77c1f90e0666bcff163242a22ebca84372533b270c1c
-EXPECTED_SMART_REMARKABLE_SHA256=0bce9522c47aa2becc2f07171ed59ade012061ff33bd5cdbc11ec1c94eefde50
 
 cleanup() {
     status=$?
@@ -41,6 +38,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+test -f "$CONTRACT"
+test ! -L "$CONTRACT"
+test -f "$CONTRACT_HELPER"
+test ! -L "$CONTRACT_HELPER"
+# shellcheck disable=SC1090
+. "$CONTRACT_HELPER"
+smart_contract_load "$CONTRACT"
+smart_contract_require_complete || {
+    echo "Application installation requires finalized app and QMD contract hashes" >&2
+    exit 1
+}
+EXPECTED_DEVICE_SERIAL=$DEVICE_SERIAL
+EXPECTED_FIRMWARE_VERSION=$FIRMWARE_VERSION
+EXPECTED_FIRMWARE_BUILD=$FIRMWARE_BUILD
+EXPECTED_XOCHITL_SHA256=$XOCHITL_SHA256
+EXPECTED_SMART_REMARKABLE_SHA256=$SMART_REMARKABLE_SHA256
+CONTRACT_SHA=$(shasum -a 256 "$CONTRACT" | awk '{print $1}')
+
 test -x "$BINARY"
 BUNDLE_SOURCE_PATHS=(
     target/aarch64-unknown-linux-gnu/release/smart_remarkable
@@ -49,6 +64,7 @@ BUNDLE_SOURCE_PATHS=(
     remagic/external.manifest.json
     remagic/icon.png
     remagic/appload-launch.sh
+    scripts/selection-protocol.sh
     scripts/run-armed-once.sh
     scripts/run-selected-once.sh
     scripts/mode-settings.sh
@@ -56,6 +72,8 @@ BUNDLE_SOURCE_PATHS=(
     ops/install-smart-openclaw.sh
     ops/device-install-smart-openclaw.sh
     ops/build-staged-sha256-manifest.sh
+    ops/artifact-compatibility-contract.sh
+    xovi-qmd/compatibility-3.28.0.164.env
 )
 for source_relative_path in "${BUNDLE_SOURCE_PATHS[@]}"; do
     source_path="$REPO/$source_relative_path"
@@ -71,12 +89,19 @@ install -m 0644 \
 install -m 0644 "$REPO/remagic/external.manifest.json" "$STAGE/external.manifest.json"
 install -m 0644 "$REPO/remagic/icon.png" "$STAGE/icon.png"
 install -m 0755 "$REPO/remagic/appload-launch.sh" "$STAGE/appload-launch.sh"
+install -m 0755 \
+    "$REPO/ops/artifact-compatibility-contract.sh" \
+    "$STAGE/scripts/artifact-compatibility-contract.sh"
+install -m 0755 \
+    "$REPO/scripts/selection-protocol.sh" \
+    "$STAGE/scripts/selection-protocol.sh"
 install -m 0755 "$REPO/scripts/run-armed-once.sh" "$STAGE/scripts/run-armed-once.sh"
 install -m 0755 "$REPO/scripts/run-selected-once.sh" "$STAGE/scripts/run-selected-once.sh"
 install -m 0755 "$REPO/scripts/mode-settings.sh" "$STAGE/scripts/mode-settings.sh"
 install -m 0755 \
     "$REPO/scripts/openclaw-runtime-env.sh" \
     "$STAGE/scripts/openclaw-runtime-env.sh"
+install -m 0644 "$CONTRACT" "$STAGE/compatibility.env"
 
 BINARY_SHA=$(shasum -a 256 "$BINARY" | awk '{print $1}')
 test "$BINARY_SHA" = "$EXPECTED_SMART_REMARKABLE_SHA256"
@@ -95,6 +120,8 @@ SOURCE_INPUTS_SHA=$(shasum -a 256 "$STAGE/SOURCE-INPUTS.sha256" | awk '{print $1
     printf 'git_head=%s\n' "$GIT_HEAD"
     printf 'source_diff_sha256=%s\n' "$SOURCE_DIFF_SHA"
     printf 'binary_sha256=%s\n' "$BINARY_SHA"
+    printf 'artifact_contract=compatibility.env\n'
+    printf 'artifact_contract_sha256=%s\n' "$CONTRACT_SHA"
     printf 'local_installer_sha256=%s\n' "$LOCAL_INSTALLER_SHA"
     printf 'device_installer_sha256=%s\n' "$DEVICE_INSTALLER_SHA"
     printf 'manifest_builder_sha256=%s\n' "$MANIFEST_BUILDER_SHA"
@@ -120,12 +147,15 @@ EXPECTED_ARCHIVE_MEMBERS=$(printf '%s\n' \
     './SOURCE-INPUTS.sha256' \
     './STAGED-FILES.sha256' \
     './appload-launch.sh' \
+    './compatibility.env' \
     './external.manifest.json' \
     './icon.png' \
+    './scripts/artifact-compatibility-contract.sh' \
     './scripts/mode-settings.sh' \
     './scripts/openclaw-runtime-env.sh' \
     './scripts/run-armed-once.sh' \
     './scripts/run-selected-once.sh' \
+    './scripts/selection-protocol.sh' \
     './selection_openclaw.json' \
     './selection_openclaw_whatsapp.json' \
     './smart_remarkable')
@@ -243,6 +273,17 @@ ssh -o BatchMode=yes "$HOST" "
         test ! -L \"\$dir\"
         test \"\$(stat -c %u:%g:%a \"\$dir\")\" = \"\$expected\"
     done
+    QMD=/home/root/xovi/exthome/qt-resource-rebuilder/smart-remarkable-llm.qmd
+    if test -e \"\$QMD\" || test -L \"\$QMD\"; then
+        test -f \"\$QMD\"
+        test ! -L \"\$QMD\"
+        test \"\$(stat -c %u:%g:%a \"\$QMD\")\" = 0:0:644
+        qmd_sha=\$(sha256sum \"\$QMD\" | cut -d' ' -f1)
+        case \"\$qmd_sha\" in
+            '$LEGACY_BUTTON_QMD_SHA256'|'$INERT_BUTTON_QMD_SHA256'|'$BUTTON_QMD_SHA256') ;;
+            *) echo 'Active Smart QMD is outside the application compatibility contract' >&2; exit 1 ;;
+        esac
+    fi
     test ! -e '$REMOTE_ARCHIVE'
     test ! -L '$REMOTE_ARCHIVE'
     test ! -e '$REMOTE_SCRIPT'
@@ -283,7 +324,7 @@ ssh -o BatchMode=yes "$HOST" "
         --property='Before=riddle-takeover.service smart-remarkable-once.service smart-remarkable-session.service' \
         /bin/bash '$REMOTE_SCRIPT' \
         '$ID' '$ARCHIVE_SHA' '$BINARY_SHA' '$TOKEN_SHA' \
-        '$STAGED_MANIFEST_SHA' '$DEVICE_INSTALLER_SHA'
+        '$STAGED_MANIFEST_SHA' '$DEVICE_INSTALLER_SHA' '$CONTRACT_SHA'
     rm -f '$REMOTE_SCRIPT'
 "
 REMOTE_CLEANUP=0
@@ -300,6 +341,10 @@ ssh -o BatchMode=yes "$HOST" "
         return 1
     }
     test \"\$(sha256sum \"\$APP/smart_remarkable\" | cut -d' ' -f1)\" = '$BINARY_SHA'
+    test \"\$(sha256sum \"\$APP/compatibility.env\" | cut -d' ' -f1)\" = '$CONTRACT_SHA'
+    test \"\$(sha256sum \"\$APP/appload-launch.sh\" | cut -d' ' -f1)\" = '$APPLOAD_LAUNCHER_SHA256'
+    test \"\$(sha256sum \"\$APP/scripts/run-armed-once.sh\" | cut -d' ' -f1)\" = '$RUN_ARMED_ONCE_SHA256'
+    test \"\$(sha256sum \"\$APP/scripts/selection-protocol.sh\" | cut -d' ' -f1)\" = '$SELECTION_PROTOCOL_SHA256'
     test \"\$(sha256sum \"\$APP/STAGED-FILES.sha256\" | cut -d' ' -f1)\" = '$STAGED_MANIFEST_SHA'
     (cd \"\$APP\" && sha256sum -c STAGED-FILES.sha256 >/dev/null)
     test \"\$(stat -c %u:%g:%a \"\$APP/.env\")\" = '0:0:600'
@@ -337,6 +382,8 @@ ssh -o BatchMode=yes "$HOST" "
     test \"\$(grep -Fxc 'source_inputs_sha256=$SOURCE_INPUTS_SHA' \"\$RECOVERY_METADATA\")\" -eq 1
     test \"\$(grep -Fxc 'staged_manifest_sha256=$STAGED_MANIFEST_SHA' \"\$RECOVERY_METADATA\")\" -eq 1
     test \"\$(grep -Fxc 'device_installer_sha256=$DEVICE_INSTALLER_SHA' \"\$RECOVERY_METADATA\")\" -eq 1
+    test \"\$(grep -Fxc 'artifact_contract_sha256=$CONTRACT_SHA' \"\$RECOVERY_METADATA\")\" -eq 1
+    test \"\$(grep -Fxc 'rollback_order=qmd-before-app' \"\$RECOVERY_METADATA\")\" -eq 1
     EMBEDDED_MANIFEST=\$(
         sed -n '/^staged_files_begin\$/,/^staged_files_end\$/p' \"\$RECOVERY_METADATA\" |
             sed '1d;\$d'

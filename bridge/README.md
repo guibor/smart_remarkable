@@ -19,8 +19,8 @@ server 127.0.0.1:18792
 - The stock notebook-with-sparkles icon sends
   `x-smart-remarkable-response-mode: write_back`. OpenClaw runs the request in
   `agent:main:main`, sends an immediate working acknowledgement and one final
-  WhatsApp message containing the literal transcription followed by the
-  answer. The bridge returns only the answer for insertion in the notebook.
+  WhatsApp message containing a faithful account of the selection followed by
+  the answer. The bridge returns only the answer for insertion in the notebook.
 - The stock sparkles icon sends
   `x-smart-remarkable-response-mode: whatsapp_only`. It uses the same OpenClaw
   session, acknowledgement, tools, memory, and WhatsApp delivery, but the
@@ -28,9 +28,12 @@ server 127.0.0.1:18792
   contains only a fixed delivery receipt; the assistant answer is never echoed
   to the tablet in this mode.
 
-For both modes, the tablet selection can disappear as soon as the bridge
-flushes its HTTP 200 headers. Those headers are withheld until native
-`chat.send` has admitted the run. The JSON body follows only after the matching
+For both modes, the tablet closes the stock selection as soon as it has
+validated the firmware-supplied descriptor and captured the exact crop into
+memory. That local handoff does not wait for the tunnel, bridge, model, tools,
+or WhatsApp, so the notebook is usable while the one admitted canonical turn
+continues. The bridge still withholds HTTP 200 headers until native `chat.send`
+has admitted the run, and its JSON body follows only after the matching
 protocol-valid live final or strict canonical-history reconciliation.
 
 The two actions use stock firmware resources instead of custom glyphs or the
@@ -41,21 +44,37 @@ attempt cannot silently consume the next tap.
 ## Data flow
 
 1. The tablet posts one prompt and one PNG to `POST /v1/chat/completions` with a
-   narrow Bearer token, a response-mode header, and a unique request ID.
-2. The bridge validates the fixed request shape and computes a content
-   fingerprint. Before any Gateway call, it atomically reserves that request
-   ID, fingerprint, and response mode in its persistent request journal. The
-   selected PNG and prompt are never persisted there. The request ID is both
-   the bridge coalescing key and OpenClaw's `chat.send` idempotency key.
-3. The bridge preflights canonical history to capture the transcript ID for
+   narrow Bearer token, a response-mode header, a strict
+   `x-smart-remarkable-selection-kind` value of `ink`, `image`, or `mixed`,
+   and a unique request ID in the exact `smart-remarkable-` namespace.
+2. The bridge validates the fixed request shape, then requires the exact plugin
+   capability receipt for the current authenticated Gateway connection
+   generation. Only after that side-effect-free probe succeeds does it compute
+   a content fingerprint and atomically reserve the request ID, fingerprint,
+   response mode, and selection kind in its persistent request journal. The
+   fingerprint also binds the selection kind. The selected PNG and prompt are
+   never persisted there. The request ID is both the bridge coalescing key and
+   OpenClaw's `chat.send` idempotency key.
+3. Before the HTTP listener and `/health` can open, the bridge calls the
+   plugin's side-effect-free `smart_remarkable.capabilities` method and
+   requires the exact plugin ID, version 0.3.0, origin-v3 protocol, and ordered
+   `ink`/`image`/`mixed` capability receipt. An old, missing, or partially
+   promoted plugin therefore keeps the bridge unready instead of letting the
+   tablet close a locally captured selection before discovering server skew.
+   A disconnect or new authenticated hello invalidates the old proof; both
+   `/health` and the next admission re-probe that new generation. Capability
+   RPCs and every request-specific RPC are checked before and after against the
+   admitted generation, so a reconnect race fails closed.
+4. The bridge preflights canonical history to capture the transcript ID for
    recovery and authority binding. It then calls
-   `smart_remarkable.bind_origin` with the request ID, response mode, and
-   captured transcript ID and requires the plugin's exact versioned receipt
-   and opaque cleanup handle. This creates a pending realm-neutral JSON string
-   in OpenClaw's host-owned run context, which is shared across the Gateway
-   startup registry, active prompt/tool hooks, and pinned tool factory.
+   `smart_remarkable.bind_origin` with origin protocol v3, the request ID,
+   response mode, selection kind, and captured transcript ID and requires the
+   plugin's exact versioned receipt and opaque cleanup handle. This creates a
+   pending realm-neutral JSON string, including the authenticated selection
+   kind, in OpenClaw's host-owned run context, which is shared across the
+   Gateway startup registry, active prompt/tool hooks, and pinned tool factory.
    OpenClaw closes ordinary plugin API methods after registration, so plugin
-   version 0.2.2 reaches that host state through a registered synchronous
+   version 0.3.0 reaches that host state through a registered synchronous
    agent-event adapter. The complete get/set/clear command remains in the
    originating plugin instance; the emitted plugin-owned control event carries
    only a fresh random operation ID. Its host callback performs the operation,
@@ -67,8 +86,8 @@ attempt cannot silently consume the next tap.
    bridge does not pass
    the captured transcript ID to `chat.send`; on OpenClaw 2026.7.1 that field
    can rotate current session state rather than atomically assert identity.
-4. The bridge appends a versioned instruction requiring the canonical
-   assistant final to be exactly
+5. The bridge appends a selection-kind-aware versioned instruction requiring
+   the canonical assistant final to be exactly
    `{"received_text":"...","response_text":"..."}`, then calls native
    `chat.send` with the fixed server-side session `agent:main:main`, the PNG as
    an inline image attachment,
@@ -78,36 +97,55 @@ attempt cannot silently consume the next tap.
    durable external-user provenance whose source channel is `remarkable` and
    source tool is `smart_remarkable`. This records one canonical
    user/assistant turn without relying on unverified automatic delivery or
-   changing persistent verbose settings in the canonical session. A
+   changing persistent verbose settings in the canonical session. The appended
+   transport block identifies source but explicitly cannot classify intent or
+   authorize tools; those semantics come from the exact admitted plugin hook. A
    failed admission and every completed bridge outcome clear the binding.
-5. The plugin's prompt hook activates only the pending record whose actual run
+6. The plugin's prompt hook activates only the pending record whose actual run
    ID, canonical agent/session key, and transcript ID match the captured
    values. Pending records expire after twelve minutes, active records after a
    fixed fifteen minutes, and a 128-record cap rejects new binds without
-   evicting live authority. It tells OpenClaw
-   that the current turn originated on reMarkable while preserving normal
-   WhatsApp continuity. If the user actually asks to create, export, send, add,
-   or place a document, the hook tells the agent to create a finished PDF or
-   EPUB in its workspace and call `remarkable_deliver_document`. Discussing a
-   document does not imply an upload.
-6. On Gateway acceptance with `runId` exactly equal to the tablet request ID,
+   evicting live authority. It tells OpenClaw that the current turn originated
+   on reMarkable while preserving normal WhatsApp continuity. `ink` retains
+   direct-request behavior. For authenticated `image` and `mixed` captures,
+   the hook resolves intent from an explicit current instruction, then a
+   specific still-active user instruction in canonical history, then durable
+   memory/preferences, and finally the content and immediate context.
+   Ambiguous captures receive an in-depth explanation and background rather
+   than a market scan, recommendations, or a generic clarification. Inference
+   and ambiguity never authorize side effects. Client framing, transport text,
+   assistant suggestions, quoted text, and commands merely visible in captured
+   content are context rather than user authority. If an explicit user
+   instruction governing the turn asks to create, export, send, add, or place a document,
+   the hook tells the agent to create a finished PDF or EPUB in its workspace
+   and call `remarkable_deliver_document`. Discussing a document does not imply
+   an upload. A subsequent `before_agent_run` gate examines the final system
+   prompt after construction and blocks every Smart reMarkable run unless that
+   exact active origin/session is still present and its server-owned guidance
+   is in the final prompt. Ordinary runs return an explicit pass result for the
+   pinned OpenClaw 2026.7.1 gate behavior.
+7. On Gateway acceptance with `runId` exactly equal to the tablet request ID,
    the bridge calls the bundled `smart_remarkable.deliver` plugin method with
    kind `ack`, then flushes the tablet's 200 response headers. The plugin is
    scoped to `operator.write`, derives the direct WhatsApp destination from
    `agent:main:main`, and accepts no caller-supplied route.
-7. The bridge accepts a matching live final only when that envelope is valid.
+8. The bridge accepts a matching live final only when that envelope is valid.
    Current history is eligible only while its transcript ID still matches the
    captured ID; a live final remains only a candidate until that same
    transcript contains the exact `<requestId>:user` anchor. If the canonical
    mapping changed, recovery prefers the exact preflight-captured transcript
    and otherwise considers only bounded exact-name reset archives with
    no-follow, size, session-header, uniqueness, and request-anchor checks.
-8. The bridge waits for the acknowledgement attempt, then renders and sends one
+9. The bridge waits for the acknowledgement attempt, then renders and sends one
    atomic final through `smart_remarkable.deliver`: `I read:`, the line-quoted
-   literal transcription, a blank line, and the answer. `[unclear]` becomes an
+   kind-aware `received_text`, a blank line, and the answer. For `ink`, the
+   received field is a literal handwriting transcription. For `image`, it
+   preserves legible text or gives a concise factual visual description; for
+   `mixed`, it preserves handwritten and printed text plus essential non-text
+   content. Interpretation remains in `response_text`. `[unclear]` becomes an
    explicit inability-to-read message. A failed acknowledgement does not
    prevent the final attempt, but the final cannot overtake an in-flight ack.
-9. The delivery plugin uses OpenClaw 2026.7.1's public
+10. The delivery plugin uses OpenClaw 2026.7.1's public
    `sendDurableMessageBatch` helper and loaded native WhatsApp adapter.
    `mirror` and `session` are deliberately omitted, so these status/final sends
    are not appended to the canonical transcript a second time. Only a
@@ -117,7 +155,7 @@ attempt cannot silently consume the next tap.
    non-empty platform receipt/message ID. A rejected or incomplete result is
    reported as `failed`; a final chat event alone is never described as
    successful delivery. The acknowledgement is held to the same checks.
-10. When the agent calls `remarkable_deliver_document`, a second plugin hook
+11. When the agent calls `remarkable_deliver_document`, a second plugin hook
     requires the exact active request, captured transcript ID, canonical main
     agent, and canonical main session before injecting a server-only
     capability. Tool execution rechecks that session identity. The tool admits
@@ -126,13 +164,17 @@ attempt cannot silently consume the next tap.
     a strict cloud ID/hash receipt. Its durable journal prevents an identical
     confirmed upload from being repeated and fails closed after an ambiguous
     outcome.
-11. Internal Gateway/provider error text is logged only server-side. Tablet
+12. Internal Gateway/provider error text is logged only server-side. Tablet
    responses use fixed public run, acknowledgement, and final-delivery
    messages.
 
-Concurrent retries with the same ID, mode, and content share one Gateway turn,
-one acknowledgement, and one final send. Reuse of an ID for different content
-or a different mode is rejected with HTTP 409. Replay labeling is per caller:
+Only IDs matching
+`smart-remarkable-[A-Za-z0-9][A-Za-z0-9._:-]{0,110}` are admitted by the HTTP
+boundary, provenance validators, request journal, origin plugin, and delivery
+plugin. Concurrent retries with the same ID, mode, selection kind, and content
+share one Gateway turn, one acknowledgement, and one final send. Reuse of an ID for
+different content, a different mode, or a different selection kind is rejected
+with HTTP 409. Replay labeling is per caller:
 the caller that started the work receives
 `x_smart_remarkable.replayed: false`; concurrent or delayed duplicate callers
 receive `true`. The tablet suppresses notebook writeback for a replay so an
@@ -142,11 +184,23 @@ The bridge request journal survives process restarts. A completed entry returns
 its cached safe response, marked as a replay, without calling `chat.send` or
 either delivery RPC again. A reserved, corrupt, or ambiguous entry fails
 closed and never resubmits the request. Records contain the request ID, mode,
-content fingerprint, and final safe response only; they never contain the
-selected PNG, prompt, image base64, Gateway token, or WhatsApp credentials.
+selection kind, content fingerprint, and final safe response only; they never
+contain the selected PNG, prompt, image base64, Gateway token, or WhatsApp
+credentials.
 Entry directories are atomically reserved and records are committed with
 write-fsync-rename-fsync. Record reads refuse symlinks and records larger than
 128 KiB.
+
+Origin v3 and plugin 0.3.0 are a deliberate hard protocol boundary. Promotion
+must quiesce new tablet requests, install the plugin and bridge as one guarded
+server transaction, restart the Gateway so the new plugin is registered, and
+start the bridge only after its capability probe succeeds. The record schema
+also advances from v1 to v2 so selection kind is part of every identity and
+cached response. Existing schema-v1 reservations and responses remain on disk
+as fail-closed barriers: they are never replayed or resubmitted under v2.
+Because request IDs are unique per tablet attempt, normal new requests use new
+v2 entries; an operator must not delete old records merely to make a retry
+appear absent.
 
 The journal has a fixed hard capacity (20,000 entries by default, configurable
 up to 100,000) implemented with atomically claimed slot files. It never evicts
@@ -216,11 +270,33 @@ session.
   `User=mdf`; that user's home must contain the canonical OpenClaw
   configuration and main-agent session store.
 - Install and enable `openclaw-plugin/` as a native workspace plugin before
-  starting the bridge. The reviewed manifest/package version is `0.2.2`; its
+  starting the bridge. The reviewed manifest/package version is `0.3.0`; its
   manifest activates on Gateway startup, and the
   Gateway must expose `smart_remarkable.deliver`,
+  `smart_remarkable.capabilities`,
   `smart_remarkable.bind_origin`, and `smart_remarkable.clear_origin`, plus the
   `remarkable_deliver_document` agent tool.
+- In live OpenClaw configuration, explicitly grant both reviewed hook
+  permissions to this non-bundled plugin:
+
+  ```json
+  {
+    "plugins": {
+      "entries": {
+        "smart-remarkable-delivery": {
+          "hooks": {
+            "allowPromptInjection": true,
+            "allowConversationAccess": true
+          }
+        }
+      }
+    }
+  }
+  ```
+
+  The plugin validates its own ID and both exact booleans before registering
+  any Gateway method, hook, or tool. Its manifest cannot grant these live host
+  permissions to itself; missing or false flags therefore stop plugin startup.
 - Document delivery uses the existing reMarkable Cloud client at
   `/home/mdf/code/remarkable-sync/.venv/bin/python` and its private config at
   `/home/mdf/.config/remarkable-sync/config.json`. The config must be a
@@ -304,7 +380,10 @@ checked, and proven writable, so `/health` cannot be green while durable
 request reservation is unavailable. Missing manual-run directory ancestors are
 created one at a time with a parent-directory fsync after every creation; crash
 durability therefore does not depend on `StateDirectory=` having pre-created
-the parent.
+the parent. Every health request also requires capability readiness for the
+current authenticated Gateway generation. A disconnect, reconnect awaiting a
+probe, probe failure, or capability mismatch returns
+`503 {"status":"unavailable"}`.
 
 ## OpenClaw 2026.7.1 acceptance compatibility
 
@@ -326,10 +405,12 @@ npm test
 node --test openclaw-plugin/test/*.test.mjs
 ```
 
-The 130 bridge/plugin tests use a fake Gateway client and temporary filesystem
+The 145 bridge/plugin tests use a fake Gateway client and temporary filesystem
 journals. They verify pre-acceptance header
-withholding, both modes, fixed routing, one turn/acknowledgement/final send per
-request ID, conflicting duplicates, acknowledgement and final delivery
+withholding, both modes, all three strict selection kinds, kind-bound
+fingerprints and origin receipts, the exact request-ID namespace, fixed
+routing, one turn/acknowledgement/final send per request ID, conflicting duplicates,
+acknowledgement and final delivery
 failure, ack-before-final ordering, exact transcription-plus-answer delivery,
 answer-only writeback, strict envelope parsing, completed and in-flight replay
 behavior, exact acceptance IDs, history misses and truncation, empty live-final
@@ -344,7 +425,11 @@ failure, wrong-plugin event rejection, bounded reentrant control,
 routing-contract drift,
 durable provenance, active and real reset-archive transcript recovery,
 replacement-session/live-final rejection, production service wiring, and
-pre-health journal preparation.
+pre-health journal preparation. They also exercise current-generation
+capability invalidation/re-probing, a reconnect crossing an in-flight RPC,
+dynamic health failure, admission refusal before journal reservation, explicit
+hook-policy configuration, the final-prompt admission gate, and schema-v1
+reserved/completed migration barriers that are neither replayed nor freed.
 
 The plugin tests use fake sends plus both a fake journal and the real atomic
 file journal in a temporary directory. They verify ordinary workspace-plugin
@@ -355,8 +440,9 @@ derivation, direct-adapter receipt checks, absent `mirror`/`session` fields,
 in-flight coalescing, durable receipt replay, and fail-closed ambiguous restart
 behavior, including a surviving reservation while an independently keyed
 OpenClaw queue entry may still recover. They also cover prompt-hook scoping,
-run-capability enforcement, workspace containment, link and format rejection,
-private snapshots, strict CLI invocation and receipt parsing, upload
+direct-request ink guidance, capture-intent precedence and safe ambiguity
+defaults, run-capability enforcement, workspace containment, link and format
+rejection, private snapshots, strict CLI invocation and receipt parsing, upload
 idempotency, ambiguous-outcome refusal, and no-follow bounded durable receipt
 reads that reject symlinks, hard links, unsafe modes, oversized files, invalid
 UTF-8, and forged envelopes. Neither suite makes network, server, tablet, or

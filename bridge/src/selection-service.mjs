@@ -8,9 +8,9 @@ import {
   RequestJournalError,
 } from "./request-journal.mjs";
 import {
+  buildResponseEnvelopeProtocolInstruction,
   parseResponseEnvelope,
   renderResponseEnvelope,
-  RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
 } from "./response-envelope.mjs";
 import {
   ORIGIN_BIND_METHOD,
@@ -133,7 +133,7 @@ function translateJournalError(error) {
   if (error.code === "conflict") {
     return new HttpError(
       409,
-      "Request ID was already used for different content or response mode",
+      "Request ID was already used for different content, response mode, or selection kind",
     );
   }
   if (error.code === "incomplete") {
@@ -194,11 +194,11 @@ function isRequestUserMessage(message, requestId) {
   );
 }
 
-function promptWithResponseProtocol(promptText) {
+function promptWithResponseProtocol(promptText, selectionKind) {
   return [
     promptText,
     SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
-    RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
+    buildResponseEnvelopeProtocolInstruction(selectionKind),
   ].join("\n\n");
 }
 
@@ -216,13 +216,32 @@ function requireSessionId(history) {
 }
 
 export class SelectionService {
-  constructor({ gateway, config, requestJournal, logger = console }) {
+  constructor({
+    gateway,
+    config,
+    requestJournal,
+    capabilityReadiness,
+    logger = console,
+  }) {
     if (!requestJournal) {
       throw new Error("SelectionService requires a persistent request journal");
+    }
+    if (
+      !capabilityReadiness ||
+      typeof capabilityReadiness.ensureReady !== "function" ||
+      typeof capabilityReadiness.isReady !== "function" ||
+      typeof capabilityReadiness.assertGeneration !== "function" ||
+      typeof capabilityReadiness.close !== "function" ||
+      typeof gateway?.requestForGeneration !== "function"
+    ) {
+      throw new Error(
+        "SelectionService requires current Gateway capability readiness",
+      );
     }
     this.gateway = gateway;
     this.config = config;
     this.requestJournal = requestJournal;
+    this.capabilityReadiness = capabilityReadiness;
     this.logger = logger;
     this.jobs = new Map();
     this.unsubscribe = gateway.subscribe((event) => this.#handleEvent(event));
@@ -230,18 +249,36 @@ export class SelectionService {
 
   async close() {
     this.unsubscribe?.();
+    this.capabilityReadiness.close();
   }
 
-  submit({ requestId, mode, selection, onAccepted }) {
+  async ensureReady() {
+    return this.capabilityReadiness.ensureReady();
+  }
+
+  isReady() {
+    return this.capabilityReadiness.isReady();
+  }
+
+  async submit({ requestId, mode, selectionKind, selection, onAccepted }) {
+    if (selection?.selectionKind !== selectionKind) {
+      throw new HttpError(
+        400,
+        "Selection kind did not match the validated request",
+      );
+    }
+    const gatewayGeneration = await this.capabilityReadiness.ensureReady();
+    this.capabilityReadiness.assertGeneration(gatewayGeneration);
     const existing = this.jobs.get(requestId);
     if (existing) {
       if (
         existing.fingerprint !== selection.fingerprint ||
-        existing.mode !== mode
+        existing.mode !== mode ||
+        existing.selectionKind !== selectionKind
       ) {
         throw new HttpError(
           409,
-          "Request ID was already used for different content or response mode",
+          "Request ID was already used for different content, response mode, or selection kind",
         );
       }
       this.#addAcceptedListener(existing, onAccepted);
@@ -251,6 +288,8 @@ export class SelectionService {
     const job = {
       requestId,
       mode,
+      selectionKind,
+      gatewayGeneration,
       fingerprint: selection.fingerprint,
       accepted: false,
       acceptanceError: null,
@@ -276,6 +315,15 @@ export class SelectionService {
       timer.unref?.();
     });
     return job.promise;
+  }
+
+  #requestForJob(job, method, params, options) {
+    return this.gateway.requestForGeneration(
+      job.gatewayGeneration,
+      method,
+      params,
+      options,
+    );
   }
 
   #addAcceptedListener(job, listener) {
@@ -316,16 +364,16 @@ export class SelectionService {
     job.runId = payload.runId;
 
     const acknowledgementRunId = `${job.requestId}:ack`;
-    job.ackPromise = this.gateway
-      .request(
-        DELIVERY_METHOD,
-        {
-          requestId: job.requestId,
-          kind: "ack",
-          text: "I’m reading your reMarkable selection now.",
-        },
-        { timeoutMs: this.config.sendTimeoutMs },
-      )
+    job.ackPromise = this.#requestForJob(
+      job,
+      DELIVERY_METHOD,
+      {
+        requestId: job.requestId,
+        kind: "ack",
+        text: "I’m reading your reMarkable selection now.",
+      },
+      { timeoutMs: this.config.sendTimeoutMs },
+    )
       .then((result) => {
         verifyNativeSend(
           result,
@@ -422,7 +470,7 @@ export class SelectionService {
     let history;
     let historyError = null;
     try {
-      history = await this.#readCanonicalHistory(timeoutMs);
+      history = await this.#readCanonicalHistory(job, timeoutMs);
       const currentSessionId = requireSessionId(history);
       if (currentSessionId !== job.sessionId) {
         historyError = new Error(
@@ -471,8 +519,9 @@ export class SelectionService {
     );
   }
 
-  async #readCanonicalHistory(timeoutMs) {
-    return this.gateway.request(
+  async #readCanonicalHistory(job, timeoutMs) {
+    return this.#requestForJob(
+      job,
       "chat.history",
       {
         sessionKey: this.config.sessionKey,
@@ -578,7 +627,8 @@ export class SelectionService {
       return;
     }
     try {
-      const result = await this.gateway.request(
+      const result = await this.#requestForJob(
+        job,
         ORIGIN_CLEAR_METHOD,
         {
           requestId: job.requestId,
@@ -667,12 +717,14 @@ export class SelectionService {
   async #execute(job, selection) {
     let requestResult;
     try {
+      this.capabilityReadiness.assertGeneration(job.gatewayGeneration);
       let reservation;
       try {
         reservation = await this.requestJournal.reserve({
           requestId: job.requestId,
           fingerprint: job.fingerprint,
           mode: job.mode,
+          selectionKind: job.selectionKind,
         });
       } catch (error) {
         throw translateJournalError(error);
@@ -684,16 +736,19 @@ export class SelectionService {
       }
 
       const routingSnapshot = await this.#readCanonicalHistory(
+        job,
         this.config.sendTimeoutMs,
       );
       job.sessionId = requireSessionId(routingSnapshot);
 
-      const binding = await this.gateway.request(
+      const binding = await this.#requestForJob(
+        job,
         ORIGIN_BIND_METHOD,
         {
           protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
           requestId: job.requestId,
           mode: job.mode,
+          selectionKind: job.selectionKind,
           expectedSessionId: job.sessionId,
         },
         { timeoutMs: this.config.sendTimeoutMs },
@@ -702,18 +757,23 @@ export class SelectionService {
         binding,
         job.requestId,
         job.mode,
+        job.selectionKind,
         job.sessionId,
       );
       job.originBound = true;
 
-      const requestPromise = this.gateway.request(
+      const requestPromise = this.#requestForJob(
+        job,
         "chat.send",
         {
           sessionKey: this.config.sessionKey,
           agentId: this.config.agentId,
           expectedSessionRoutingContract:
             this.config.expectedSessionRoutingContract,
-          message: promptWithResponseProtocol(selection.promptText),
+          message: promptWithResponseProtocol(
+            selection.promptText,
+            job.selectionKind,
+          ),
           deliver: false,
           suppressCommandInterpretation: true,
           originatingChannel: this.config.channel,
@@ -752,11 +812,13 @@ export class SelectionService {
       if (firstOutcome.kind === "result") {
         requestResult = firstOutcome.result;
       } else {
-        // The exact onAccepted callback is sufficient to close the stock
-        // marquee and begin durable history reconciliation. The request RPC
-        // may later fail or resolve without the final text in OpenClaw
-        // 2026.7.1; requestOutcome already owns either settlement, so it
-        // cannot become an unhandled rejection.
+        // Canonical v2 has already closed the stock marquee locally before
+        // submission. The exact onAccepted callback begins durable history
+        // reconciliation; only the transition-only legacy client separately
+        // uses RemoteAccepted as its close boundary. The request RPC may later
+        // fail or resolve without final text in OpenClaw 2026.7.1;
+        // requestOutcome already owns either settlement, so it cannot become
+        // an unhandled rejection.
         requestOutcome.then((outcome) => {
           if (outcome.kind === "error") {
             this.logger.error?.(
@@ -811,16 +873,16 @@ export class SelectionService {
       // attempt before submitting the final, even when the ack failed.
       const ack = await job.ackPromise;
       const finalRunId = `${job.requestId}:final`;
-      const finalDelivery = await this.gateway
-        .request(
-          DELIVERY_METHOD,
-          {
-            requestId: job.requestId,
-            kind: "final",
-            text: whatsappFinal,
-          },
-          { timeoutMs: this.config.sendTimeoutMs },
-        )
+      const finalDelivery = await this.#requestForJob(
+        job,
+        DELIVERY_METHOD,
+        {
+          requestId: job.requestId,
+          kind: "final",
+          text: whatsappFinal,
+        },
+        { timeoutMs: this.config.sendTimeoutMs },
+      )
         .then((result) => {
           verifyNativeSend(result, finalRunId, this.config.channel);
           return { ok: true };
@@ -834,6 +896,7 @@ export class SelectionService {
       const response = buildSuccessResponse({
         requestId: job.requestId,
         mode: job.mode,
+        selectionKind: job.selectionKind,
         text: envelope.response_text,
         ack,
         finalDelivery,
@@ -844,6 +907,7 @@ export class SelectionService {
           requestId: job.requestId,
           fingerprint: job.fingerprint,
           mode: job.mode,
+          selectionKind: job.selectionKind,
           response,
         });
         return response;
@@ -854,6 +918,7 @@ export class SelectionService {
         return buildPostAcceptanceErrorResponse({
           requestId: job.requestId,
           mode: job.mode,
+          selectionKind: job.selectionKind,
           ack,
           replayed: job.replayed,
         });
@@ -870,6 +935,7 @@ export class SelectionService {
       const response = buildPostAcceptanceErrorResponse({
         requestId: job.requestId,
         mode: job.mode,
+        selectionKind: job.selectionKind,
         ack,
         replayed: job.replayed,
       });
@@ -878,6 +944,7 @@ export class SelectionService {
           requestId: job.requestId,
           fingerprint: job.fingerprint,
           mode: job.mode,
+          selectionKind: job.selectionKind,
           response,
         });
       } catch {

@@ -6,14 +6,20 @@ import path from "node:path";
 import { afterEach, test } from "node:test";
 import { createHttpServer } from "../src/http-server.mjs";
 import { createRequestJournal } from "../src/request-journal.mjs";
+import { createCapabilityReadiness } from "../src/service-runtime.mjs";
 import {
+  buildResponseEnvelopeProtocolInstruction,
   RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
 } from "../src/response-envelope.mjs";
 import { SelectionService } from "../src/selection-service.mjs";
 import {
+  OPENCLAW_PLUGIN_ID,
+  OPENCLAW_PLUGIN_VERSION,
+  ORIGIN_CAPABILITIES_METHOD,
   ORIGIN_BIND_METHOD,
   ORIGIN_CLEAR_METHOD,
   SOURCE_PROVENANCE_PROTOCOL_VERSION,
+  SMART_REMARKABLE_SELECTION_KINDS,
   SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
   SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
 } from "../src/source-provenance.mjs";
@@ -65,10 +71,25 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function exactCapabilities() {
+  return {
+    status: "ready",
+    pluginId: OPENCLAW_PLUGIN_ID,
+    pluginVersion: OPENCLAW_PLUGIN_VERSION,
+    originProtocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
+    selectionKinds: [...SMART_REMARKABLE_SELECTION_KINDS],
+  };
+}
+
 class FakeGateway {
   constructor() {
     this.calls = [];
     this.listeners = new Set();
+    this.connectionListeners = new Set();
+    this.connectionGeneration = 1;
+    this.nextConnectionGeneration = 1;
+    this.capabilityCalls = 0;
+    this.capabilities = exactCapabilities();
     this.chat = [];
     this.ackError = null;
     this.ackDeferred = null;
@@ -88,7 +109,51 @@ class FakeGateway {
     return () => this.listeners.delete(listener);
   }
 
+  subscribeConnection(listener) {
+    this.connectionListeners.add(listener);
+    return () => this.connectionListeners.delete(listener);
+  }
+
+  getConnectionGeneration() {
+    return this.connectionGeneration;
+  }
+
+  async requestForGeneration(generation, method, params, options = {}) {
+    if (
+      generation !== this.connectionGeneration ||
+      this.connectionGeneration === null
+    ) {
+      throw new Error("Gateway generation is unavailable");
+    }
+    const result = await this.request(method, params, options);
+    if (generation !== this.connectionGeneration) {
+      throw new Error("Gateway generation changed during request");
+    }
+    return result;
+  }
+
+  disconnect() {
+    this.connectionGeneration = null;
+    for (const listener of this.connectionListeners) {
+      listener({ connected: false, generation: null });
+    }
+  }
+
+  reconnect() {
+    this.connectionGeneration = ++this.nextConnectionGeneration;
+    for (const listener of this.connectionListeners) {
+      listener({
+        connected: true,
+        generation: this.connectionGeneration,
+      });
+    }
+  }
+
   request(method, params, options = {}) {
+    if (method === ORIGIN_CAPABILITIES_METHOD) {
+      this.capabilityCalls += 1;
+      return Promise.resolve(this.capabilities);
+    }
     this.calls.push({ method, params, options });
     if (method === DELIVERY_METHOD) {
       if (params.kind === "ack" && this.ackError) {
@@ -141,6 +206,7 @@ class FakeGateway {
         runId: params.requestId,
         source: "remarkable",
         mode: params.mode,
+        selectionKind: params.selectionKind,
         expectedSessionId: params.expectedSessionId,
         bindingHandle: ORIGIN_BINDING_HANDLE,
       });
@@ -281,10 +347,16 @@ async function fixture({
     maxEntries: journalMaxEntries,
   });
   await requestJournal.prepare();
+  const capabilityReadiness = createCapabilityReadiness({
+    gateway,
+    timeoutMs: config.sendTimeoutMs,
+  });
+  await capabilityReadiness.ensureReady();
   const service = new SelectionService({
     gateway,
     config: { ...config, ...configOverrides },
     requestJournal,
+    capabilityReadiness,
     logger: { error() {} },
   });
   const server = createHttpServer({
@@ -346,6 +418,7 @@ function post({
   port,
   requestId,
   mode,
+  selectionKind = "ink",
   body = requestBody(),
   token = BRIDGE_TOKEN,
 }) {
@@ -364,6 +437,7 @@ function post({
         "content-length": Buffer.byteLength(encoded),
         "x-smart-remarkable-response-mode": mode,
         "x-smart-remarkable-request-id": requestId,
+        "x-smart-remarkable-selection-kind": selectionKind,
         "x-openclaw-session-key": "agent:main:main",
         "x-openclaw-message-channel": "whatsapp",
       },
@@ -392,6 +466,23 @@ function post({
   };
 }
 
+function getHealth(port) {
+  return new Promise((resolve, reject) => {
+    http
+      .get(`http://127.0.0.1:${port}/health`, (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({
+            statusCode: response.statusCode,
+            json: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+          }),
+        );
+      })
+      .on("error", reject);
+  });
+}
+
 async function nextTurn() {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
@@ -409,23 +500,56 @@ async function waitFor(predicate, message = "condition was not reached") {
 
 test("serves the tunnel health probe without exposing credentials", async () => {
   const { gateway, port } = await fixture();
-  const result = await new Promise((resolve, reject) => {
-    http
-      .get(`http://127.0.0.1:${port}/health`, (response) => {
-        const chunks = [];
-        response.on("data", (chunk) => chunks.push(chunk));
-        response.on("end", () =>
-          resolve({
-            statusCode: response.statusCode,
-            body: Buffer.concat(chunks).toString("utf8"),
-          }),
-        );
-      })
-      .on("error", reject);
-  });
+  const result = await getHealth(port);
   assert.equal(result.statusCode, 200);
-  assert.deepEqual(JSON.parse(result.body), { status: "ok" });
+  assert.deepEqual(result.json, { status: "ok" });
+  assert.equal(gateway.capabilityCalls, 1);
   assert.equal(gateway.calls.length, 0);
+});
+
+test("disconnect and capability drift block health and admission before journal reservation", async () => {
+  const { gateway, journalRoot, port } = await fixture();
+  const capacityDirectory = path.join(journalRoot, ".capacity-slots");
+  assert.equal((await fs.readdir(capacityDirectory)).length, 0);
+
+  gateway.disconnect();
+  assert.deepEqual(await getHealth(port), {
+    statusCode: 503,
+    json: { status: "unavailable" },
+  });
+  const disconnected = await post({
+    port,
+    requestId: "smart-remarkable-disconnected-0001",
+    mode: "write_back",
+  }).body;
+  assert.equal(disconnected.statusCode, 502);
+  assert.equal((await fs.readdir(capacityDirectory)).length, 0);
+  assert.equal(gateway.calls.length, 0);
+
+  gateway.capabilities = {
+    ...exactCapabilities(),
+    pluginVersion: "0.2.2",
+  };
+  gateway.reconnect();
+  assert.deepEqual(await getHealth(port), {
+    statusCode: 503,
+    json: { status: "unavailable" },
+  });
+  const mismatched = await post({
+    port,
+    requestId: "smart-remarkable-mismatched-plugin-0001",
+    mode: "write_back",
+  }).body;
+  assert.equal(mismatched.statusCode, 502);
+  assert.equal((await fs.readdir(capacityDirectory)).length, 0);
+  assert.equal(gateway.calls.length, 0);
+
+  gateway.capabilities = exactCapabilities();
+  assert.deepEqual(await getHealth(port), {
+    statusCode: 200,
+    json: { status: "ok" },
+  });
+  assert.equal(gateway.capabilityCalls, 4);
 });
 
 test("withholds HTTP headers until Gateway acceptance, then returns final text", async () => {
@@ -459,6 +583,7 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   gateway.finish("The answer is 42.", 0, "What is six times seven?");
   const result = await pending.body;
   assert.equal(result.json.choices[0].message.content, "The answer is 42.");
+  assert.equal(result.json.x_smart_remarkable.selection_kind, "ink");
   assert.equal(result.json.openclaw_delivery.acknowledgement.status, "sent");
   assert.equal(result.json.openclaw_delivery.final.status, "sent");
 
@@ -484,6 +609,7 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
     protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
     requestId: "smart-remarkable-test-0001",
     mode: "write_back",
+    selectionKind: "ink",
     expectedSessionId: "test-canonical-session",
   });
   assert.deepEqual(originClearCalls[0].params, {
@@ -546,6 +672,10 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
       .split(SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION).length - 1,
     1,
     "trusted transport context must be appended exactly once",
+  );
+  assert.match(
+    SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
+    /does not classify capture intent or authorize any side effect/u,
   );
   assert.equal(chatCalls[0].params.message.includes("/verbose"), false);
   assert.equal(chatCalls[0].params.suppressCommandInterpretation, true);
@@ -918,6 +1048,10 @@ for (const mode of ["write_back", "whatsapp_only"]) {
       result.json.x_smart_remarkable.response_mode,
       mode,
     );
+    assert.equal(
+      result.json.x_smart_remarkable.selection_kind,
+      "ink",
+    );
     const responseText = result.json.choices[0].message.content;
     const finalCall = gateway.calls.find((call) =>
       isDeliveryKind(call, "final"),
@@ -1104,9 +1238,53 @@ test("rejects reuse of a request ID with different content", async () => {
   assert.equal(modeConflictResult.statusCode, 409);
   assert.match(modeConflictResult.json.error.message, /different content/);
 
+  const conflictingKind = post({
+    port,
+    requestId: "smart-remarkable-conflict-0001",
+    mode: "write_back",
+    selectionKind: "image",
+  });
+  const kindConflictResult = await conflictingKind.body;
+  assert.equal(kindConflictResult.statusCode, 409);
+  assert.match(kindConflictResult.json.error.message, /selection kind/);
+
   gateway.accept();
   gateway.finish("finished");
   await first.body;
+});
+
+test("binds image kind and appends its exact kind-aware response protocol", async () => {
+  const { gateway, port } = await fixture();
+  const pending = post({
+    port,
+    requestId: "smart-remarkable-image-kind-0001",
+    mode: "whatsapp_only",
+    selectionKind: "image",
+  });
+  await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
+  const bind = gateway.calls.find(
+    (call) => call.method === ORIGIN_BIND_METHOD,
+  );
+  assert.equal(bind.params.selectionKind, "image");
+  assert.ok(
+    gateway.chat[0].params.message.endsWith(
+      buildResponseEnvelopeProtocolInstruction("image"),
+    ),
+  );
+  assert.equal(
+    gateway.chat[0].params.message.includes(
+      '"received_text" must be a literal transcription of the selected handwriting',
+    ),
+    false,
+  );
+  gateway.accept();
+  gateway.finish("Image explained.", 0, "A diagram of a bridge.");
+  const result = await pending.body;
+  assert.equal(result.statusCode, 200);
+  assert.equal(
+    result.json.x_smart_remarkable.selection_kind,
+    "image",
+  );
 });
 
 test("reports acknowledgement delivery failure after the accepted 200", async () => {

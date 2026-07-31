@@ -13,11 +13,29 @@ AFFECT [[3197972396468700595]]
                     ~&5972374&~: smartRemarkableLlmButton
                     ~&481641799955318521&~: ~&5971598&~.~&233696851602406&~
                     ~&6504337259&~: ~&214642769434&~.~&6504337259&~
-                    /* One pending mode shared by both buttons prevents a rapid*/
-                    /* answer-here + agent double tap from creating two requests.*/
+                    /* One pending snapshot shared by both buttons prevents a*/
+                    /* rapid answer-here + agent double tap from creating two*/
+                    /* requests. The root-only launcher binds this snapshot to*/
+                    /* a kernel-random nonce; QML never invents security tokens.*/
                     property ~&7083178290016&~ pendingMode: ""
+                    property ~&7083178290016&~ pendingSnapshot: ""
+                    property ~&6503679477&~ pendingPrepared: ~&214625660372&~
                     ~&8399601734642709923&~: ~&"10806537930630303861&~
                     ~&7713561545874130&~: pendingMode === "write_back"
+
+                    /* The stock file already derives SelectionPreview.tinted,*/
+                    /* border visibility, and menu visibility from*/
+                    /* controlsAreVisible. Override only that stock-owned flag:*/
+                    /* the selected strokes/images remain rendered while tint*/
+                    /* and chrome disappear, and the original binding/value is*/
+                    /* restored on every failure.*/
+                    ~&233681166222244&~ {
+                        ~&7083194890448&~: ~&10742505294233322867&~
+                        property: ~&"9041481390561923875&~
+                        ~&214644635174&~: ~&214625660372&~
+                        ~&6504426203&~: smartRemarkableLlmButton.pendingPrepared
+                        ~&499579089005686034&~: ~&233681166222244&~.RestoreBindingOrValue
+                    }
 
                     ~&428051690305612204&~ {
                         ~&7083194890448&~: ~&10742505294233322867&~
@@ -37,21 +55,70 @@ AFFECT [[3197972396468700595]]
                         ~&495358363329399331&~: smartRemarkableLlmButton.clearPendingMode()
                     }
 
-                    /* The worker sends this private chord only after the*/
-                    /* selected crop has been accepted by the remote bridge.*/
-                    /* Calling the stock close() path clears selection state*/
-                    /* without copying or deleting the underlying strokes.*/
+                    /* Phase one: immediately before capture, re-read the live*/
+                    /* stock selection and hide its chrome only if geometry,*/
+                    /* kind, and orientation still equal the tapped snapshot.*/
                     ~&7712201763518885&~ {
-                        ~&233726547792244&~: smartRemarkableLlmButton.pendingMode !== "" && ~&10742505294233322867&~.~&233748328658231&~
+                        ~&233726547792244&~: smartRemarkableLlmButton.pendingMode !== "" &&
+                            !smartRemarkableLlmButton.pendingPrepared &&
+                            ~&10742505294233322867&~.~&233748328658231&~
+                        ~&7713561760591106&~: "Ctrl+Alt+Shift+8"
+                        ~&495331016591073787&~: {
+                            ~&197102514&~ snapshot = smartRemarkableLlmButton.captureSnapshot()
+                            ~&5972376&~ (snapshot === "" || snapshot !==
+                                    smartRemarkableLlmButton.pendingSnapshot) {
+                                smartRemarkableLlmButton.clearPendingMode()
+                                ~&7083121450889&~
+                            }
+                            smartRemarkableLlmButton.pendingPrepared = ~&6504329801&~
+                            ~&5971598&~.~&254524858248187773&~(function() {
+                                ~&5972376&~ (!smartRemarkableLlmButton.pendingPrepared ||
+                                        !~&10742505294233322867&~.~&233748328658231&~ ||
+                                        smartRemarkableLlmButton.captureSnapshot() !==
+                                            snapshot ||
+                                        ~&10742505294233322867&~.~&9041481390561923875&~ !== ~&214625660372&~ ||
+                                        !smartRemarkableLlmButton.launchArgument(
+                                            "--selection-prepare-ack=" + snapshot)) {
+                                    smartRemarkableLlmButton.clearPendingMode()
+                                }
+                            })
+                        }
+                    }
+
+                    /* A local capture/validation failure restores the prepared*/
+                    /* selection without closing it. This shortcut is disabled*/
+                    /* once close() has hidden the handler.*/
+                    ~&7712201763518885&~ {
+                        ~&233726547792244&~: smartRemarkableLlmButton.pendingMode !== "" &&
+                            smartRemarkableLlmButton.pendingPrepared &&
+                            ~&10742505294233322867&~.~&233748328658231&~
+                        ~&7713561760591106&~: "Ctrl+Alt+Shift+7"
+                        ~&495331016591073787&~: smartRemarkableLlmButton.clearPendingMode()
+                    }
+
+                    /* Phase two: after the immutable crop exists, revalidate*/
+                    /* the same live selection again and call the exact stock*/
+                    /* close() path. AppLoad publishes an acknowledgement only*/
+                    /* after the handler is no longer visible.*/
+                    ~&7712201763518885&~ {
+                        ~&233726547792244&~: smartRemarkableLlmButton.pendingMode !== "" &&
+                            smartRemarkableLlmButton.pendingPrepared &&
+                            ~&10742505294233322867&~.~&233748328658231&~
                         ~&7713561760591106&~: "Ctrl+Alt+Shift+9"
                         ~&495331016591073787&~: {
-                            /* Release the guard before close() changes visibility.*/
-                            /* This also disables the shortcut immediately, so a*/
-                            /* delayed chord cannot affect the next selection.*/
-                            smartRemarkableLlmButton.clearPendingMode()
+                            ~&197102514&~ snapshot = smartRemarkableLlmButton.captureSnapshot()
+                            ~&5972376&~ (snapshot === "" || snapshot !==
+                                    smartRemarkableLlmButton.pendingSnapshot) {
+                                smartRemarkableLlmButton.clearPendingMode()
+                                ~&7083121450889&~
+                            }
+                            ~&10742505294233322867&~.~&214622501183&~()
                             ~&5971598&~.~&254524858248187773&~(function() {
-                                ~&5972376&~ (~&10742505294233322867&~.~&233748328658231&~) {
-                                    ~&10742505294233322867&~.~&214622501183&~()
+                                ~&5972376&~ (!~&10742505294233322867&~.~&233748328658231&~) {
+                                    smartRemarkableLlmButton.launchArgument(
+                                        "--selection-close-ack=" + snapshot)
+                                } ~&6503784146&~ {
+                                    smartRemarkableLlmButton.clearPendingMode()
                                 }
                             })
                         }
@@ -59,6 +126,8 @@ AFFECT [[3197972396468700595]]
 
                     function clearPendingMode() {
                         smartRemarkablePendingReset.~&6504295855&~()
+                        pendingPrepared = ~&214625660372&~
+                        pendingSnapshot = ""
                         pendingMode = ""
                     }
 
@@ -70,14 +139,128 @@ AFFECT [[3197972396468700595]]
                                 ~&6504074414&~ !== "whatsapp_only") {
                             ~&7083121450889&~
                         }
+                        ~&197102514&~ snapshot = captureSnapshot()
+                        ~&5972376&~ (snapshot === "") {
+                            ~&7083121450889&~
+                        }
+                        ~&197102514&~ descriptor = "v2," + ~&6504074414&~ + ~&"180917&~ +
+                            snapshot.~&254548200562243306&~(3) + ~&"180917&~ +
+                            ~&6502909715&~.~&214626058827&~(~&6502586279&~.now())
                         pendingMode = ~&6504074414&~
+                        pendingSnapshot = snapshot
+                        pendingPrepared = ~&214625660372&~
                         smartRemarkablePendingReset.~&233743006639214&~()
-                        ~&5972376&~ (!launch(~&6504074414&~)) {
+                        ~&5972376&~ (!launchArgument(
+                                "--selection-button-descriptor=" + descriptor)) {
                             clearPendingMode()
                         }
                     }
 
-                    function launch(~&6504074414&~) {
+                    function captureSnapshot() {
+                        ~&5972376&~ (!~&8399340108982949229&~ || ~&10742505294233322867&~.~&214646099849&~ <= 0 ||
+                                ~&10742505294233322867&~.~&7082729686082&~ <= 0) {
+                            ~&7083121450889&~ ""
+                        }
+
+                        ~&197102514&~ hasStroke =
+                            ~&8399340108982949229&~.~&2448815274170678758&~ === ~&6504329801&~
+                        ~&197102514&~ hasImage =
+                            ~&8399340108982949229&~.selectionContainsImage === ~&6504329801&~
+                        ~&197102514&~ kind = ""
+                        ~&5972376&~ (hasStroke && hasImage) {
+                            kind = "mixed"
+                        } ~&6503784146&~ ~&5972376&~ (hasStroke) {
+                            kind = "ink"
+                        } ~&6503784146&~ ~&5972376&~ (hasImage) {
+                            kind = ~&"214629637004&~
+                        } ~&6503784146&~ {
+                            /* Unknown/empty stock selections are not sent and*/
+                            /* never fall back to framebuffer color detection.*/
+                            ~&7083121450889&~ ""
+                        }
+
+                        /* Bind the descriptor to the stable transform from this*/
+                        /* view into the physical scene. Fail closed for a 90°,*/
+                        /* mirrored, sheared, or otherwise unknown transform.*/
+                        ~&197102514&~ rootOrigin = ~&10742505294233322867&~.mapToGlobal(0, 0)
+                        ~&197102514&~ rootX = ~&10742505294233322867&~.mapToGlobal(
+                            ~&10742505294233322867&~.~&214646099849&~, 0)
+                        ~&197102514&~ rootY = ~&10742505294233322867&~.mapToGlobal(
+                            0, ~&10742505294233322867&~.~&7082729686082&~)
+                        ~&197102514&~ xDx = rootX.~&180993&~ - rootOrigin.~&180993&~
+                        ~&197102514&~ xDy = rootX.~&180994&~ - rootOrigin.~&180994&~
+                        ~&197102514&~ yDx = rootY.~&180993&~ - rootOrigin.~&180993&~
+                        ~&197102514&~ yDy = rootY.~&180994&~ - rootOrigin.~&180994&~
+                        /* mapToGlobal may round a genuinely axis-aligned point*/
+                        /* by a fraction of one logical pixel. Permit only that*/
+                        /* bounded noise: a modest rotation or shear must not*/
+                        /* be mislabelled as normal/rot180. The two finite,*/
+                        /* positive axis scales must also describe one uniform*/
+                        /* scene transform rather than an unknown distortion.*/
+                        ~&197102514&~ offAxisTolerance = 0.5
+                        ~&197102514&~ ~&7083334283753&~ = ~&6502909715&~.~&197079679&~(xDx) / ~&10742505294233322867&~.~&214646099849&~
+                        ~&197102514&~ ~&7083373419146&~ = ~&6502909715&~.~&197079679&~(yDy) / ~&10742505294233322867&~.~&7082729686082&~
+                        ~&197102514&~ scaleTolerance = ~&6502909715&~.~&197092719&~(
+                            0.001, ~&6502909715&~.~&197092719&~(~&7083334283753&~, ~&7083373419146&~) * 0.001)
+                        ~&5972376&~ (!isFinite(xDx) || !isFinite(xDy) ||
+                                !isFinite(yDx) || !isFinite(yDy) ||
+                                !isFinite(~&7083334283753&~) || !isFinite(~&7083373419146&~) ||
+                                ~&7083334283753&~ <= 0 || ~&7083373419146&~ <= 0 ||
+                                ~&6502909715&~.~&197079679&~(xDy) > offAxisTolerance ||
+                                ~&6502909715&~.~&197079679&~(yDx) > offAxisTolerance ||
+                                ~&6502909715&~.~&197079679&~(~&7083334283753&~ - ~&7083373419146&~) >
+                                    scaleTolerance) {
+                            ~&7083121450889&~ ""
+                        }
+                        ~&197102514&~ ~&495572996767745525&~ = ""
+                        ~&5972376&~ (xDx > 0 && yDy > 0) {
+                            ~&495572996767745525&~ = "normal"
+                        } ~&6503784146&~ ~&5972376&~ (xDx < 0 && yDy < 0) {
+                            ~&495572996767745525&~ = "rot180"
+                        } ~&6503784146&~ {
+                            ~&7083121450889&~ ""
+                        }
+
+                        /* Map all four selection corners into the full logical*/
+                        /* view and transmit axis-aligned fixed-point bounds.*/
+                        ~&197102514&~ p0 = ~&254547531013851119&~.~&254538926601637369&~(~&10742505294233322867&~, 0, 0)
+                        ~&197102514&~ ~&5972554&~ = ~&254547531013851119&~.~&254538926601637369&~(
+                            ~&10742505294233322867&~, ~&254547531013851119&~.~&214646099849&~, 0)
+                        ~&197102514&~ ~&5972555&~ = ~&254547531013851119&~.~&254538926601637369&~(
+                            ~&10742505294233322867&~, 0, ~&254547531013851119&~.~&7082729686082&~)
+                        ~&197102514&~ p3 = ~&254547531013851119&~.~&254538926601637369&~(
+                            ~&10742505294233322867&~, ~&254547531013851119&~.~&214646099849&~, ~&254547531013851119&~.~&7082729686082&~)
+                        ~&197102514&~ minX = ~&6502909715&~.~&197092973&~(p0.~&180993&~, ~&5972554&~.~&180993&~, ~&5972555&~.~&180993&~, p3.~&180993&~)
+                        ~&197102514&~ minY = ~&6502909715&~.~&197092973&~(p0.~&180994&~, ~&5972554&~.~&180994&~, ~&5972555&~.~&180994&~, p3.~&180994&~)
+                        ~&197102514&~ ~&6504059815&~ = ~&6502909715&~.~&197092719&~(p0.~&180993&~, ~&5972554&~.~&180993&~, ~&5972555&~.~&180993&~, p3.~&180993&~)
+                        ~&197102514&~ ~&6504059816&~ = ~&6502909715&~.~&197092719&~(p0.~&180994&~, ~&5972554&~.~&180994&~, ~&5972555&~.~&180994&~, p3.~&180994&~)
+                        ~&5972376&~ (!isFinite(minX) || !isFinite(minY) ||
+                                !isFinite(~&6504059815&~) || !isFinite(~&6504059816&~) ||
+                                minX < 0 || minY < 0 ||
+                                ~&6504059815&~ > ~&10742505294233322867&~.~&214646099849&~ ||
+                                ~&6504059816&~ > ~&10742505294233322867&~.~&7082729686082&~ ||
+                                ~&6504059815&~ <= minX || ~&6504059816&~ <= minY) {
+                            ~&7083121450889&~ ""
+                        }
+
+                        ~&197102514&~ ~&214641137009&~ = 1000000
+                        ~&197102514&~ ~&5972817&~ = ~&6502909715&~.~&214640404177&~(
+                            minX * ~&214641137009&~ / ~&10742505294233322867&~.~&214646099849&~)
+                        ~&197102514&~ ~&5972850&~ = ~&6502909715&~.~&214640404177&~(
+                            minY * ~&214641137009&~ / ~&10742505294233322867&~.~&7082729686082&~)
+                        ~&197102514&~ ~&5972818&~ = ~&6502909715&~.~&214640404177&~(
+                            ~&6504059815&~ * ~&214641137009&~ / ~&10742505294233322867&~.~&214646099849&~)
+                        ~&197102514&~ ~&5972851&~ = ~&6502909715&~.~&214640404177&~(
+                            ~&6504059816&~ * ~&214641137009&~ / ~&10742505294233322867&~.~&7082729686082&~)
+                        ~&5972376&~ (~&5972817&~ < 0 || ~&5972850&~ < 0 || ~&5972818&~ > ~&214641137009&~ ||
+                                ~&5972851&~ > ~&214641137009&~ || ~&5972818&~ <= ~&5972817&~ || ~&5972851&~ <= ~&5972850&~) {
+                            ~&7083121450889&~ ""
+                        }
+                        ~&7083121450889&~ "v2," + kind + ~&"180917&~ + ~&495572996767745525&~ + ~&"180917&~ +
+                            ~&5972817&~ + ~&"180917&~ + ~&5972850&~ + ~&"180917&~ + ~&5972818&~ + ~&"180917&~ + ~&5972851&~
+                    }
+
+                    function launchArgument(argument) {
                         /* Resolve AppLoad only when tapped. Keeping the module*/
                         /* out of the host file's static imports lets the stock*/
                         /* selection component keep loading if AppLoad is ever*/
@@ -87,12 +270,12 @@ AFFECT [[3197972396468700595]]
                             helper = ~&5971598&~.createQmlObject(
                                 'import QtQuick;\n' +
                                 'import net.asivery.AppLoad 1.0;\n' +
-                                'QtObject { function go(mode) { AppLoadLauncher.launchApplication("external::smart-remarkable", ["--selection-button=" + mode], ({}), false) } }',
+                                'QtObject { function go(argument) { AppLoadLauncher.launchApplication("external::smart-remarkable", [argument], ({}), false) } }',
                                 ~&10742505294233322867&~,
                                 "smart_remarkable_appload_launcher"
                             )
                             ~&5972376&~ (helper) {
-                                helper.go(~&6504074414&~)
+                                helper.go(argument)
                                 helper.~&233724926106067&~()
                                 ~&7083121450889&~ ~&6504329801&~
                             } ~&6503784146&~ {

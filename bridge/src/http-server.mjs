@@ -61,7 +61,12 @@ export function createHttpServer({
 }) {
   return http.createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
-      writeJson(response, 200, { status: "ok" });
+      try {
+        await service.ensureReady();
+        writeJson(response, 200, { status: "ok" });
+      } catch {
+        writeJson(response, 503, { status: "unavailable" });
+      }
       return;
     }
     if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
@@ -71,14 +76,21 @@ export function createHttpServer({
 
     let requestId;
     let mode;
+    let selectionKind;
     try {
       authenticateRequest(request.headers.authorization, bridgeToken);
-      ({ requestId, mode } = validateRequestHeaders(request.headers));
-      const selection = validateOpenAiBody(await readJsonBody(request));
+      ({ requestId, mode, selectionKind } = validateRequestHeaders(
+        request.headers,
+      ));
+      const selection = validateOpenAiBody(
+        await readJsonBody(request),
+        selectionKind,
+      );
 
       const result = await service.submit({
         requestId,
         mode,
+        selectionKind,
         selection,
         onAccepted: () => writeAcceptedHeaders(response),
       });
@@ -113,6 +125,7 @@ export function createHttpServer({
             x_smart_remarkable: {
               request_id: requestId ?? null,
               response_mode: mode ?? null,
+              selection_kind: selectionKind ?? null,
             },
           }),
         );

@@ -1,18 +1,46 @@
 export const RESPONSE_ENVELOPE_PROTOCOL_VERSION =
-  "smart-remarkable.response-envelope.v1";
+  "smart-remarkable.response-envelope.v2";
 export const MAX_RECEIVED_TEXT_BYTES = 2_048;
 export const MAX_RENDERED_RESPONSE_BYTES = 32_768;
 
-export const RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION = [
-  `Response protocol ${RESPONSE_ENVELOPE_PROTOCOL_VERSION}:`,
-  "Return exactly one JSON object and nothing else.",
-  'The object must contain exactly the keys "received_text" and "response_text", and both values must be non-empty strings.',
-  '"received_text" must be a literal transcription of the selected handwriting in the language in which it was written; do not summarize, correct, translate, or guess.',
-  'If the handwriting cannot be read confidently, set "received_text" to exactly "[unclear]".',
-  '"response_text" must contain the answer or action result intended for the user.',
-  "Do not use Markdown code fences. Do not include NUL or other C0/C1 control characters except LF newlines.",
-  `"received_text" must be at most ${MAX_RECEIVED_TEXT_BYTES} UTF-8 bytes, and the final rendered message must fit within ${MAX_RENDERED_RESPONSE_BYTES} UTF-8 bytes.`,
-].join("\n");
+const SELECTION_KINDS = new Set(["ink", "image", "mixed"]);
+
+function receivedTextInstruction(selectionKind) {
+  if (selectionKind === "ink") {
+    return [
+      '"received_text" must be a literal transcription of the selected handwriting in the language in which it was written; do not summarize, correct, translate, or guess.',
+      'If the handwriting cannot be read confidently, set "received_text" to exactly "[unclear]".',
+    ];
+  }
+  if (selectionKind === "image") {
+    return [
+      '"received_text" must literally report what was selected: transcribe confidently legible text exactly in its original language; if there is no legible text, give a concise factual description of the visible image.',
+      'Do not infer intent, summarize, correct, translate, embellish, or guess in "received_text". If the selection cannot be identified confidently, set "received_text" to exactly "[unclear]".',
+    ];
+  }
+  return [
+    '"received_text" must literally report the mixed selection: transcribe confidently legible handwritten and printed text exactly in its original language, then briefly identify essential non-text visual content.',
+    'Do not infer intent, summarize, correct, translate, embellish, or guess in "received_text". If the selection cannot be interpreted confidently, set "received_text" to exactly "[unclear]".',
+  ];
+}
+
+export function buildResponseEnvelopeProtocolInstruction(selectionKind) {
+  if (!SELECTION_KINDS.has(selectionKind)) {
+    throw new TypeError("selectionKind must be ink, image, or mixed");
+  }
+  return [
+    `Response protocol ${RESPONSE_ENVELOPE_PROTOCOL_VERSION}:`,
+    "Return exactly one JSON object and nothing else.",
+    'The object must contain exactly the keys "received_text" and "response_text", and both values must be non-empty strings.',
+    ...receivedTextInstruction(selectionKind),
+    '"response_text" must contain the answer or action result intended for the user.',
+    "Do not use Markdown code fences. Do not include NUL or other C0/C1 control characters except LF newlines.",
+    `"received_text" must be at most ${MAX_RECEIVED_TEXT_BYTES} UTF-8 bytes, and the final rendered message must fit within ${MAX_RENDERED_RESPONSE_BYTES} UTF-8 bytes.`,
+  ].join("\n");
+}
+
+export const RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION =
+  buildResponseEnvelopeProtocolInstruction("ink");
 
 const REQUIRED_KEYS = new Set(["received_text", "response_text"]);
 const FORBIDDEN_CONTROL_PATTERN =
@@ -219,7 +247,7 @@ function entriesFromObject(envelope) {
 function renderNormalizedEnvelope(envelope) {
   const prefix =
     envelope.received_text === "[unclear]"
-      ? "I could not confidently read the selected handwriting."
+      ? "I could not confidently read the selection."
       : `I read:\n${envelope.received_text
           .split("\n")
           .map((line) => `> ${line}`)

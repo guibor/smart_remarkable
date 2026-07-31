@@ -1,13 +1,17 @@
 import crypto from "node:crypto";
 import { HttpError } from "./errors.mjs";
 import { RESPONSE_ENVELOPE_PROTOCOL_VERSION } from "./response-envelope.mjs";
-import { SOURCE_PROVENANCE_PROTOCOL_VERSION } from "./source-provenance.mjs";
+import {
+  SMART_REMARKABLE_REQUEST_ID_PATTERN,
+  SMART_REMARKABLE_SELECTION_KINDS,
+  SOURCE_PROVENANCE_PROTOCOL_VERSION,
+} from "./source-provenance.mjs";
 
 export const MAX_HTTP_BODY_BYTES = 9 * 1024 * 1024;
 export const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const RESPONSE_MODES = new Set(["write_back", "whatsapp_only"]);
+const SELECTION_KINDS = new Set(SMART_REMARKABLE_SELECTION_KINDS);
 const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 
 export function authenticateRequest(authorization, expectedToken) {
@@ -37,9 +41,20 @@ export function validateRequestHeaders(headers) {
   const requestId = headers["x-smart-remarkable-request-id"];
   if (
     typeof requestId !== "string" ||
-    !REQUEST_ID_PATTERN.test(requestId)
+    !SMART_REMARKABLE_REQUEST_ID_PATTERN.test(requestId)
   ) {
     throw new HttpError(400, "Invalid x-smart-remarkable-request-id");
+  }
+
+  const selectionKind = headers["x-smart-remarkable-selection-kind"];
+  if (
+    typeof selectionKind !== "string" ||
+    !SELECTION_KINDS.has(selectionKind)
+  ) {
+    throw new HttpError(
+      400,
+      "x-smart-remarkable-selection-kind must be ink, image, or mixed",
+    );
   }
 
   const legacySession = headers["x-openclaw-session-key"];
@@ -54,7 +69,7 @@ export function validateRequestHeaders(headers) {
     throw new HttpError(400, "OpenClaw channel routing is server-controlled");
   }
 
-  return { mode, requestId };
+  return { mode, requestId, selectionKind };
 }
 
 function decodePngDataUrl(value) {
@@ -88,7 +103,13 @@ function decodePngDataUrl(value) {
   return { encoded, imageBytes: image.length };
 }
 
-export function validateOpenAiBody(body) {
+export function validateOpenAiBody(body, selectionKind) {
+  if (!SELECTION_KINDS.has(selectionKind)) {
+    throw new HttpError(
+      400,
+      "x-smart-remarkable-selection-kind must be ink, image, or mixed",
+    );
+  }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new HttpError(400, "Request body must be a JSON object");
   }
@@ -137,6 +158,7 @@ export function validateOpenAiBody(body) {
     promptText: textParts.join("\n\n"),
     imageBase64: images[0].encoded,
     imageBytes: images[0].imageBytes,
+    selectionKind,
   };
   selection.fingerprint = crypto
     .createHash("sha256")
@@ -145,6 +167,8 @@ export function validateOpenAiBody(body) {
     .update(selection.promptText)
     .update("\0")
     .update(selection.imageBase64)
+    .update("\0")
+    .update(selection.selectionKind)
     .update("\0")
     .update(RESPONSE_ENVELOPE_PROTOCOL_VERSION)
     .update("\0")

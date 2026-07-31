@@ -12,11 +12,16 @@ import {
 const REQUEST_ID = "smart-remarkable-journal-test-0001";
 const FINGERPRINT = crypto.createHash("sha256").update("selection").digest("hex");
 
-function identity(requestId = REQUEST_ID, fingerprint = FINGERPRINT) {
+function identity(
+  requestId = REQUEST_ID,
+  fingerprint = FINGERPRINT,
+  selectionKind = "ink",
+) {
   return {
     requestId,
     fingerprint,
     mode: "write_back",
+    selectionKind,
   };
 }
 
@@ -41,6 +46,7 @@ function response(requestId = REQUEST_ID, replayed = false) {
     x_smart_remarkable: {
       request_id: requestId,
       response_mode: "write_back",
+      selection_kind: "ink",
       replayed,
     },
   };
@@ -61,6 +67,31 @@ async function temporaryJournal(t, maxEntries = 10) {
 
 function digest(requestId) {
   return crypto.createHash("sha256").update(requestId).digest("hex");
+}
+
+function responseDigest(value) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(value))
+    .digest("hex");
+}
+
+async function rewriteEntryAsSchemaV1(rootDirectory, requestId) {
+  const recordPath = path.join(
+    rootDirectory,
+    digest(requestId),
+    "record.json",
+  );
+  const envelope = JSON.parse(await fs.readFile(recordPath, "utf8"));
+  envelope.record.schemaVersion = 1;
+  delete envelope.record.selectionKind;
+  if (envelope.record.state === "completed") {
+    delete envelope.record.response.x_smart_remarkable.selection_kind;
+    envelope.record.responseHash = responseDigest(envelope.record.response);
+  }
+  await fs.writeFile(recordPath, `${JSON.stringify(envelope)}\n`, {
+    mode: 0o600,
+  });
 }
 
 async function allRegularFileContents(rootDirectory) {
@@ -98,6 +129,12 @@ test("durably replays a completed response without persisting the selected PNG",
     replay.response.choices[0].message.content,
     "Safe final response.",
   );
+  await assert.rejects(
+    journal.reserve(identity(REQUEST_ID, FINGERPRINT, "image")),
+    (error) =>
+      error instanceof RequestJournalError &&
+      error.code === "conflict",
+  );
 
   const persisted = (await allRegularFileContents(rootDirectory)).join("\n");
   assert.equal(persisted.includes("data:image/png;base64,"), false);
@@ -130,6 +167,57 @@ test("an incomplete atomic directory reservation is never treated as absent", as
     journal.reserve(identity()),
     (error) =>
       error instanceof RequestJournalError && error.code === "incomplete",
+  );
+});
+
+test("journal identities require the worker-owned request ID namespace", async (t) => {
+  const { journal } = await temporaryJournal(t);
+  await assert.rejects(
+    journal.reserve(identity("ordinary-client-journal-0001")),
+    (error) =>
+      error instanceof RequestJournalError && error.code === "invalid",
+  );
+});
+
+test("a schema-v1 reservation remains a fail-closed barrier", async (t) => {
+  const requestId = "smart-remarkable-schema-v1-reserved-0001";
+  const { journal, rootDirectory } = await temporaryJournal(t);
+  await journal.reserve(identity(requestId));
+  await rewriteEntryAsSchemaV1(rootDirectory, requestId);
+
+  const restarted = createRequestJournal({ rootDirectory, maxEntries: 10 });
+  await assert.rejects(
+    restarted.reserve(identity(requestId)),
+    (error) =>
+      error instanceof RequestJournalError && error.code === "incomplete",
+  );
+});
+
+test("a schema-v1 completion is never replayed and retains capacity", async (t) => {
+  const legacyId = "smart-remarkable-schema-v1-completed-0001";
+  const currentId = "smart-remarkable-schema-v2-current-0001";
+  const overflowId = "smart-remarkable-schema-v2-overflow-0001";
+  const { journal, rootDirectory } = await temporaryJournal(t, 2);
+  await journal.reserve(identity(legacyId));
+  await journal.complete({
+    ...identity(legacyId),
+    response: response(legacyId),
+  });
+  await rewriteEntryAsSchemaV1(rootDirectory, legacyId);
+
+  const restarted = createRequestJournal({ rootDirectory, maxEntries: 2 });
+  await assert.rejects(
+    restarted.reserve(identity(legacyId)),
+    (error) =>
+      error instanceof RequestJournalError && error.code === "incomplete",
+  );
+  assert.deepEqual(await restarted.reserve(identity(currentId)), {
+    kind: "reserved",
+  });
+  await assert.rejects(
+    restarted.reserve(identity(overflowId)),
+    (error) =>
+      error instanceof RequestJournalError && error.code === "capacity",
   );
 });
 

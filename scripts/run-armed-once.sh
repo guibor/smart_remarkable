@@ -64,10 +64,15 @@ cleanup() {
     fi
     rm -f \
         "$STATE_DIR/ready" \
+        "$STATE_DIR/bridge-ready" \
+        "$STATE_DIR/bridge-failed" \
         "$STATE_DIR/busy" \
+        "$STATE_DIR/selection_prepare_ack" \
+        "$STATE_DIR/selection_close_ack" \
         "$STATE_DIR/llm_button_trigger" \
         "$STATE_DIR/send_button_trigger" \
         "$STATE_DIR/draw_button_trigger"
+    rmdir "$STATE_DIR/selection-admission.lock" 2>/dev/null || true
     rm -rf "$SSH_HOME" "$APP_HOME"
     rmdir "$STATE_DIR" 2>/dev/null || true
 }
@@ -75,6 +80,39 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+publish_bridge_marker() {
+    marker_name=$1
+    marker_tmp="$STATE_DIR/.${marker_name}.$$"
+    marker_target="$STATE_DIR/$marker_name"
+    [ ! -e "$marker_tmp" ] && [ ! -L "$marker_tmp" ] || return 1
+    : > "$marker_tmp"
+    chmod 0600 "$marker_tmp"
+    chown root:root "$marker_tmp"
+    [ "$(stat -c %u:%g:%a "$marker_tmp")" = "0:0:600" ] || {
+        rm -f "$marker_tmp"
+        return 1
+    }
+    mv -f "$marker_tmp" "$marker_target"
+}
+
+# Preserve local QML acknowledgements when the tunnel fails during a capture.
+# A cold-start failure waits briefly for AppLoad to publish its request; once a
+# busy nonce has appeared, the worker gets time to observe bridge-failed and
+# release that exact request before the runner terminates it.
+wait_for_local_failure_handoff() {
+    handoff_i=0
+    handoff_saw_busy=0
+    while [ "$handoff_i" -lt 10 ] && kill -0 "$WORKER_PID" 2>/dev/null; do
+        if [ -f "$STATE_DIR/busy" ]; then
+            handoff_saw_busy=1
+        elif [ "$handoff_saw_busy" -eq 1 ]; then
+            return 0
+        fi
+        handoff_i=$((handoff_i + 1))
+        sleep 1
+    done
+}
 
 if [ "$OPENCLAW_IDENTITY" != "$EXPECTED_OPENCLAW_IDENTITY" ] ||
     [ ! -f "$OPENCLAW_IDENTITY" ] ||
@@ -113,10 +151,15 @@ chmod 0700 "$STATE_DIR"
 # first native-button request.
 rm -f \
     "$STATE_DIR/ready" \
+    "$STATE_DIR/bridge-ready" \
+    "$STATE_DIR/bridge-failed" \
     "$STATE_DIR/busy" \
+    "$STATE_DIR/selection_prepare_ack" \
+    "$STATE_DIR/selection_close_ack" \
     "$STATE_DIR/llm_button_trigger" \
     "$STATE_DIR/send_button_trigger" \
     "$STATE_DIR/draw_button_trigger"
+rmdir "$STATE_DIR/selection-admission.lock" 2>/dev/null || true
 test -f /home/root/.ssh/known_hosts
 test ! -L /home/root/.ssh/known_hosts
 test "$(stat -c %u:%g:%a /home/root/.ssh/known_hosts)" = "0:0:600"
@@ -133,6 +176,36 @@ test ! -L "$APP_HOME"
 mkdir -m 0700 -p "$APP_HOME"
 chown root:root "$APP_HOME"
 unset SSH_AUTH_SOCK DROPBEAR_PASSWORD DBCLIENT_PASSWORD
+
+# Local capture readiness does not depend on the private tunnel. Start the
+# listener first; it publishes /run/smart-remarkable/ready as soon as it can
+# accept a nonce-bound selection. Rust waits for bridge-ready only after the
+# exact crop has been captured and the stock selection has closed.
+cd "$HERE"
+# This split is safe: MODE_ARGS contains only fixed literals selected above.
+MODE_ARGS=
+if [ "$SMART_NO_LOOP" -eq 1 ]; then
+    MODE_ARGS=--no-loop
+fi
+# shellcheck disable=SC2086
+/usr/bin/env -i \
+    HOME="$APP_HOME" \
+    PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+    RUST_LOG="$RUST_LOG" \
+    OPENCLAW_BRIDGE_TOKEN="$OPENCLAW_BRIDGE_TOKEN" \
+    ./smart_remarkable \
+    --select-mode \
+    --trigger-corner "$SMART_TRIGGER_CORNER" \
+    --pen-hold-ms "$SMART_HOLD_MS" \
+    --pen-hold-radius-px "$SMART_HOLD_RADIUS_PX" \
+    --pen-min-extent-px "$SMART_MIN_EXTENT_PX" \
+    --engine openclaw \
+    --engine-base-url "http://127.0.0.1:${OPENCLAW_PORT}" \
+    --model "$SMART_REMARKABLE_MODEL" \
+    --prompt selection_openclaw.json \
+    --no-draw-progress \
+    $MODE_ARGS &
+WORKER_PID=$!
 
 /usr/bin/env -i \
     HOME="$SSH_HOME" \
@@ -160,40 +233,22 @@ while ! /usr/bin/env -i \
     i=$((i + 1))
     if ! kill -0 "$TUNNEL_PID" 2>/dev/null || [ "$i" -ge 15 ]; then
         echo "Unable to establish the private OpenClaw tunnel" >&2
+        rm -f "$STATE_DIR/bridge-ready"
+        publish_bridge_marker bridge-failed || true
+        wait_for_local_failure_handoff
         exit 1
     fi
     sleep 1
 done
 if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
     echo "OpenClaw tunnel exited during its health check" >&2
+    rm -f "$STATE_DIR/bridge-ready"
+    publish_bridge_marker bridge-failed || true
+    wait_for_local_failure_handoff
     exit 1
 fi
-
-cd "$HERE"
-# This split is safe: MODE_ARGS contains only fixed literals selected above.
-MODE_ARGS=
-if [ "$SMART_NO_LOOP" -eq 1 ]; then
-    MODE_ARGS=--no-loop
-fi
-# shellcheck disable=SC2086
-/usr/bin/env -i \
-    HOME="$APP_HOME" \
-    PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-    RUST_LOG="$RUST_LOG" \
-    OPENCLAW_BRIDGE_TOKEN="$OPENCLAW_BRIDGE_TOKEN" \
-    ./smart_remarkable \
-    --select-mode \
-    --trigger-corner "$SMART_TRIGGER_CORNER" \
-    --pen-hold-ms "$SMART_HOLD_MS" \
-    --pen-hold-radius-px "$SMART_HOLD_RADIUS_PX" \
-    --pen-min-extent-px "$SMART_MIN_EXTENT_PX" \
-    --engine openclaw \
-    --engine-base-url "http://127.0.0.1:${OPENCLAW_PORT}" \
-    --model "$SMART_REMARKABLE_MODEL" \
-    --prompt selection_openclaw.json \
-    --no-draw-progress \
-    $MODE_ARGS &
-WORKER_PID=$!
+rm -f "$STATE_DIR/bridge-failed"
+publish_bridge_marker bridge-ready
 
 # BusyBox ash on the supported firmware provides wait -n -p. Supervise both
 # children so the listener cannot keep advertising readiness after its private
@@ -206,6 +261,9 @@ else
 fi
 
 if [ "$EXITED_PID" = "$TUNNEL_PID" ]; then
+    rm -f "$STATE_DIR/bridge-ready"
+    publish_bridge_marker bridge-failed || true
+    wait_for_local_failure_handoff
     rm -f "$STATE_DIR/ready"
     kill "$WORKER_PID" 2>/dev/null || true
     wait "$WORKER_PID" 2>/dev/null || true

@@ -42,6 +42,7 @@ EXPECTED_ARCHIVE_SHA=$(printf 'a%.0s' {1..64})
 EXPECTED_BINARY_SHA=$new_app_sha
 EXPECTED_STAGED_MANIFEST_SHA=$(sha256sum "$STAGE/STAGED-FILES.sha256" | cut -d' ' -f1)
 EXPECTED_DEVICE_INSTALLER_SHA=$(sha256sum "$DEVICE_INSTALLER" | cut -d' ' -f1)
+EXPECTED_CONTRACT_SHA=$(printf 'c%.0s' {1..64})
 EXPECTED_DEVICE_SERIAL=0A247209DABC7917
 EXPECTED_FIRMWARE_VERSION=3.28.0.164
 EXPECTED_FIRMWARE_BUILD=20260702125656
@@ -49,6 +50,10 @@ EXPECTED_XOCHITL_SHA256=$(printf 'b%.0s' {1..64})
 HAD_APP=1
 CREATED_SETTINGS=0
 CREATED_RECOVERY_METADATA=0
+ACTIVE_QMD_STATE=legacy-functional
+ACTIVE_QMD_SHA=$(printf 'd%.0s' {1..64})
+PREVIOUS_APP_STAGED_MANIFEST_SHA=$(printf 'e%.0s' {1..64})
+PREVIOUS_APP_CONTRACT_SHA=unavailable
 SYNC_CALLS=0
 
 chown() {
@@ -74,6 +79,10 @@ test "$(grep -Fxc 'phase=prepared' "$RECOVERY_METADATA")" -eq 1
 test "$(grep -Fxc "stage_path=$STAGE" "$RECOVERY_METADATA")" -eq 1
 test "$(grep -Fxc "backup_path=$BACKUP" "$RECOVERY_METADATA")" -eq 1
 test "$(grep -Fxc 'had_previous_app=1' "$RECOVERY_METADATA")" -eq 1
+test "$(grep -Fxc "artifact_contract_sha256=$EXPECTED_CONTRACT_SHA" "$RECOVERY_METADATA")" -eq 1
+test "$(grep -Fxc 'active_qmd_state=legacy-functional' "$RECOVERY_METADATA")" -eq 1
+test "$(grep -Fxc "active_qmd_sha256=$ACTIVE_QMD_SHA" "$RECOVERY_METADATA")" -eq 1
+test "$(grep -Fxc 'rollback_order=qmd-before-app' "$RECOVERY_METADATA")" -eq 1
 prepared_record_sha=$(sha256sum "$RECOVERY_METADATA" | cut -d' ' -f1)
 
 # Simulated power loss after old_moved: the prepared record still identifies

@@ -13,11 +13,29 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                     id: smartRemarkableLlmButton
                     focusPolicy: Qt.NoFocus
                     type: tools.type
-                    // One pending mode shared by both buttons prevents a rapid
-                    // answer-here + agent double tap from creating two requests.
+                    // One pending snapshot shared by both buttons prevents a
+                    // rapid answer-here + agent double tap from creating two
+                    // requests. The root-only launcher binds this snapshot to
+                    // a kernel-random nonce; QML never invents security tokens.
                     property string pendingMode: ""
+                    property string pendingSnapshot: ""
+                    property bool pendingPrepared: false
                     iconSource: "qrc:/ark/icons/notebook_sparkles"
                     selected: pendingMode === "write_back"
+
+                    // The stock file already derives SelectionPreview.tinted,
+                    // border visibility, and menu visibility from
+                    // controlsAreVisible. Override only that stock-owned flag:
+                    // the selected strokes/images remain rendered while tint
+                    // and chrome disappear, and the original binding/value is
+                    // restored on every failure.
+                    Binding {
+                        target: selectionRoot
+                        property: "controlsAreVisible"
+                        value: false
+                        when: smartRemarkableLlmButton.pendingPrepared
+                        restoreMode: Binding.RestoreBindingOrValue
+                    }
 
                     Connections {
                         target: selectionRoot
@@ -37,21 +55,70 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         onTriggered: smartRemarkableLlmButton.clearPendingMode()
                     }
 
-                    // The worker sends this private chord only after the
-                    // selected crop has been accepted by the remote bridge.
-                    // Calling the stock close() path clears selection state
-                    // without copying or deleting the underlying strokes.
+                    // Phase one: immediately before capture, re-read the live
+                    // stock selection and hide its chrome only if geometry,
+                    // kind, and orientation still equal the tapped snapshot.
                     Shortcut {
-                        enabled: smartRemarkableLlmButton.pendingMode !== "" && selectionRoot.visible
+                        enabled: smartRemarkableLlmButton.pendingMode !== "" &&
+                            !smartRemarkableLlmButton.pendingPrepared &&
+                            selectionRoot.visible
+                        sequence: "Ctrl+Alt+Shift+8"
+                        onActivated: {
+                            var snapshot = smartRemarkableLlmButton.captureSnapshot()
+                            if (snapshot === "" || snapshot !==
+                                    smartRemarkableLlmButton.pendingSnapshot) {
+                                smartRemarkableLlmButton.clearPendingMode()
+                                return
+                            }
+                            smartRemarkableLlmButton.pendingPrepared = true
+                            Qt.callLater(function() {
+                                if (!smartRemarkableLlmButton.pendingPrepared ||
+                                        !selectionRoot.visible ||
+                                        smartRemarkableLlmButton.captureSnapshot() !==
+                                            snapshot ||
+                                        selectionRoot.controlsAreVisible !== false ||
+                                        !smartRemarkableLlmButton.launchArgument(
+                                            "--selection-prepare-ack=" + snapshot)) {
+                                    smartRemarkableLlmButton.clearPendingMode()
+                                }
+                            })
+                        }
+                    }
+
+                    // A local capture/validation failure restores the prepared
+                    // selection without closing it. This shortcut is disabled
+                    // once close() has hidden the handler.
+                    Shortcut {
+                        enabled: smartRemarkableLlmButton.pendingMode !== "" &&
+                            smartRemarkableLlmButton.pendingPrepared &&
+                            selectionRoot.visible
+                        sequence: "Ctrl+Alt+Shift+7"
+                        onActivated: smartRemarkableLlmButton.clearPendingMode()
+                    }
+
+                    // Phase two: after the immutable crop exists, revalidate
+                    // the same live selection again and call the exact stock
+                    // close() path. AppLoad publishes an acknowledgement only
+                    // after the handler is no longer visible.
+                    Shortcut {
+                        enabled: smartRemarkableLlmButton.pendingMode !== "" &&
+                            smartRemarkableLlmButton.pendingPrepared &&
+                            selectionRoot.visible
                         sequence: "Ctrl+Alt+Shift+9"
                         onActivated: {
-                            // Release the guard before close() changes visibility.
-                            // This also disables the shortcut immediately, so a
-                            // delayed chord cannot affect the next selection.
-                            smartRemarkableLlmButton.clearPendingMode()
+                            var snapshot = smartRemarkableLlmButton.captureSnapshot()
+                            if (snapshot === "" || snapshot !==
+                                    smartRemarkableLlmButton.pendingSnapshot) {
+                                smartRemarkableLlmButton.clearPendingMode()
+                                return
+                            }
+                            selectionRoot.close()
                             Qt.callLater(function() {
-                                if (selectionRoot.visible) {
-                                    selectionRoot.close()
+                                if (!selectionRoot.visible) {
+                                    smartRemarkableLlmButton.launchArgument(
+                                        "--selection-close-ack=" + snapshot)
+                                } else {
+                                    smartRemarkableLlmButton.clearPendingMode()
                                 }
                             })
                         }
@@ -59,6 +126,8 @@ AFFECT /qml/common/SceneSelectionHandler.qml
 
                     function clearPendingMode() {
                         smartRemarkablePendingReset.stop()
+                        pendingPrepared = false
+                        pendingSnapshot = ""
                         pendingMode = ""
                     }
 
@@ -70,14 +139,128 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                                 mode !== "whatsapp_only") {
                             return
                         }
+                        var snapshot = captureSnapshot()
+                        if (snapshot === "") {
+                            return
+                        }
+                        var descriptor = "v2," + mode + "," +
+                            snapshot.substring(3) + "," +
+                            Math.floor(Date.now())
                         pendingMode = mode
+                        pendingSnapshot = snapshot
+                        pendingPrepared = false
                         smartRemarkablePendingReset.restart()
-                        if (!launch(mode)) {
+                        if (!launchArgument(
+                                "--selection-button-descriptor=" + descriptor)) {
                             clearPendingMode()
                         }
                     }
 
-                    function launch(mode) {
+                    function captureSnapshot() {
+                        if (!controller || selectionRoot.width <= 0 ||
+                                selectionRoot.height <= 0) {
+                            return ""
+                        }
+
+                        var hasStroke =
+                            controller.selectionContainsStroke === true
+                        var hasImage =
+                            controller.selectionContainsImage === true
+                        var kind = ""
+                        if (hasStroke && hasImage) {
+                            kind = "mixed"
+                        } else if (hasStroke) {
+                            kind = "ink"
+                        } else if (hasImage) {
+                            kind = "image"
+                        } else {
+                            // Unknown/empty stock selections are not sent and
+                            // never fall back to framebuffer color detection.
+                            return ""
+                        }
+
+                        // Bind the descriptor to the stable transform from this
+                        // view into the physical scene. Fail closed for a 90°,
+                        // mirrored, sheared, or otherwise unknown transform.
+                        var rootOrigin = selectionRoot.mapToGlobal(0, 0)
+                        var rootX = selectionRoot.mapToGlobal(
+                            selectionRoot.width, 0)
+                        var rootY = selectionRoot.mapToGlobal(
+                            0, selectionRoot.height)
+                        var xDx = rootX.x - rootOrigin.x
+                        var xDy = rootX.y - rootOrigin.y
+                        var yDx = rootY.x - rootOrigin.x
+                        var yDy = rootY.y - rootOrigin.y
+                        // mapToGlobal may round a genuinely axis-aligned point
+                        // by a fraction of one logical pixel. Permit only that
+                        // bounded noise: a modest rotation or shear must not
+                        // be mislabelled as normal/rot180. The two finite,
+                        // positive axis scales must also describe one uniform
+                        // scene transform rather than an unknown distortion.
+                        var offAxisTolerance = 0.5
+                        var xScale = Math.abs(xDx) / selectionRoot.width
+                        var yScale = Math.abs(yDy) / selectionRoot.height
+                        var scaleTolerance = Math.max(
+                            0.001, Math.max(xScale, yScale) * 0.001)
+                        if (!isFinite(xDx) || !isFinite(xDy) ||
+                                !isFinite(yDx) || !isFinite(yDy) ||
+                                !isFinite(xScale) || !isFinite(yScale) ||
+                                xScale <= 0 || yScale <= 0 ||
+                                Math.abs(xDy) > offAxisTolerance ||
+                                Math.abs(yDx) > offAxisTolerance ||
+                                Math.abs(xScale - yScale) >
+                                    scaleTolerance) {
+                            return ""
+                        }
+                        var orientation = ""
+                        if (xDx > 0 && yDy > 0) {
+                            orientation = "normal"
+                        } else if (xDx < 0 && yDy < 0) {
+                            orientation = "rot180"
+                        } else {
+                            return ""
+                        }
+
+                        // Map all four selection corners into the full logical
+                        // view and transmit axis-aligned fixed-point bounds.
+                        var p0 = selection.mapToItem(selectionRoot, 0, 0)
+                        var p1 = selection.mapToItem(
+                            selectionRoot, selection.width, 0)
+                        var p2 = selection.mapToItem(
+                            selectionRoot, 0, selection.height)
+                        var p3 = selection.mapToItem(
+                            selectionRoot, selection.width, selection.height)
+                        var minX = Math.min(p0.x, p1.x, p2.x, p3.x)
+                        var minY = Math.min(p0.y, p1.y, p2.y, p3.y)
+                        var maxX = Math.max(p0.x, p1.x, p2.x, p3.x)
+                        var maxY = Math.max(p0.y, p1.y, p2.y, p3.y)
+                        if (!isFinite(minX) || !isFinite(minY) ||
+                                !isFinite(maxX) || !isFinite(maxY) ||
+                                minX < 0 || minY < 0 ||
+                                maxX > selectionRoot.width ||
+                                maxY > selectionRoot.height ||
+                                maxX <= minX || maxY <= minY) {
+                            return ""
+                        }
+
+                        var scale = 1000000
+                        var x0 = Math.round(
+                            minX * scale / selectionRoot.width)
+                        var y0 = Math.round(
+                            minY * scale / selectionRoot.height)
+                        var x1 = Math.round(
+                            maxX * scale / selectionRoot.width)
+                        var y1 = Math.round(
+                            maxY * scale / selectionRoot.height)
+                        if (x0 < 0 || y0 < 0 || x1 > scale ||
+                                y1 > scale || x1 <= x0 || y1 <= y0) {
+                            return ""
+                        }
+                        return "v2," + kind + "," + orientation + "," +
+                            x0 + "," + y0 + "," + x1 + "," + y1
+                    }
+
+                    function launchArgument(argument) {
                         // Resolve AppLoad only when tapped. Keeping the module
                         // out of the host file's static imports lets the stock
                         // selection component keep loading if AppLoad is ever
@@ -87,12 +270,12 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                             helper = Qt.createQmlObject(
                                 'import QtQuick;\n' +
                                 'import net.asivery.AppLoad 1.0;\n' +
-                                'QtObject { function go(mode) { AppLoadLauncher.launchApplication("external::smart-remarkable", ["--selection-button=" + mode], ({}), false) } }',
+                                'QtObject { function go(argument) { AppLoadLauncher.launchApplication("external::smart-remarkable", [argument], ({}), false) } }',
                                 selectionRoot,
                                 "smart_remarkable_appload_launcher"
                             )
                             if (helper) {
-                                helper.go(mode)
+                                helper.go(argument)
                                 helper.destroy()
                                 return true
                             } else {

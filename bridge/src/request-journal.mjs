@@ -2,17 +2,18 @@ import crypto from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { SMART_REMARKABLE_REQUEST_ID_PATTERN } from "./source-provenance.mjs";
 
 const ENVELOPE_VERSION = 1;
-const RECORD_VERSION = 1;
+const RECORD_VERSION = 2;
 const RECORD_FILE = "record.json";
 const SLOT_DIRECTORY = ".capacity-slots";
 const OWNERSHIP_FILE = ".smart-remarkable-request-journal-v1";
 const OWNERSHIP_MARKER = "smart-remarkable-request-journal-v1\n";
 const MAX_RECORD_BYTES = 128 * 1024;
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
 const MODES = new Set(["write_back", "whatsapp_only"]);
+const SELECTION_KINDS = new Set(["ink", "image", "mixed"]);
 const SLOT_PATTERN = /^\d{8}\.claim$/;
 
 export class RequestJournalError extends Error {
@@ -27,17 +28,28 @@ function journalError(code, message) {
   return new RequestJournalError(code, message);
 }
 
-function validateIdentity({ requestId, fingerprint, mode }) {
+function validateIdentity({
+  requestId,
+  fingerprint,
+  mode,
+  selectionKind,
+}) {
   if (
     typeof requestId !== "string" ||
-    !REQUEST_ID_PATTERN.test(requestId) ||
+    !SMART_REMARKABLE_REQUEST_ID_PATTERN.test(requestId) ||
     typeof fingerprint !== "string" ||
     !FINGERPRINT_PATTERN.test(fingerprint) ||
-    !MODES.has(mode)
+    !MODES.has(mode) ||
+    !SELECTION_KINDS.has(selectionKind)
   ) {
     throw journalError("invalid", "Invalid request journal identity");
   }
-  return Object.freeze({ requestId, fingerprint, mode });
+  return Object.freeze({
+    requestId,
+    fingerprint,
+    mode,
+    selectionKind,
+  });
 }
 
 function requestDigest(requestId) {
@@ -66,6 +78,8 @@ function validateStoredResponse(response, identity) {
   if (
     response?.x_smart_remarkable?.request_id !== identity.requestId ||
     response?.x_smart_remarkable?.response_mode !== identity.mode ||
+    response?.x_smart_remarkable?.selection_kind !==
+      identity.selectionKind ||
     !Array.isArray(response.choices) ||
     response.choices.length !== 1 ||
     !response.openclaw_delivery ||
@@ -78,9 +92,25 @@ function validateStoredResponse(response, identity) {
 
 function validateRecord(record, expectedRequestId) {
   assertPlainObject(record, "Request journal record is invalid");
-  const identity = validateIdentity(record);
+  if (record.schemaVersion === 1) {
+    throw journalError(
+      "incomplete",
+      "Legacy request journal entry cannot be safely replayed",
+    );
+  }
+  if (record.schemaVersion !== RECORD_VERSION) {
+    throw journalError("corrupt", "Request journal record version is invalid");
+  }
+  let identity;
+  try {
+    identity = validateIdentity(record);
+  } catch (error) {
+    if (error instanceof RequestJournalError && error.code === "invalid") {
+      throw journalError("corrupt", "Request journal identity is invalid");
+    }
+    throw error;
+  }
   if (
-    record.schemaVersion !== RECORD_VERSION ||
     identity.requestId !== expectedRequestId ||
     typeof record.createdAt !== "number" ||
     !Number.isSafeInteger(record.createdAt) ||
@@ -391,7 +421,8 @@ function sameIdentity(record, identity) {
   return (
     record.requestId === identity.requestId &&
     record.fingerprint === identity.fingerprint &&
-    record.mode === identity.mode
+    record.mode === identity.mode &&
+    record.selectionKind === identity.selectionKind
   );
 }
 
@@ -493,7 +524,7 @@ export function createRequestJournal({
         if (!sameIdentity(existing, identity)) {
           throw journalError(
             "conflict",
-            "Request ID was already used for different content or response mode",
+            "Request ID was already used for different content, response mode, or selection kind",
           );
         }
         if (existing.state === "completed") {
@@ -533,7 +564,7 @@ export function createRequestJournal({
         if (!sameIdentity(raced, identity)) {
           throw journalError(
             "conflict",
-            "Request ID was already used for different content or response mode",
+            "Request ID was already used for different content, response mode, or selection kind",
           );
         }
         if (raced.state === "completed") {
@@ -553,6 +584,7 @@ export function createRequestJournal({
         requestId: identity.requestId,
         fingerprint: identity.fingerprint,
         mode: identity.mode,
+        selectionKind: identity.selectionKind,
         state: "reserved",
         capacitySlot,
         createdAt: Date.now(),
@@ -592,6 +624,7 @@ export function createRequestJournal({
         requestId: identity.requestId,
         fingerprint: identity.fingerprint,
         mode: identity.mode,
+        selectionKind: identity.selectionKind,
         state: "completed",
         capacitySlot: existing.capacitySlot,
         createdAt: existing.createdAt,

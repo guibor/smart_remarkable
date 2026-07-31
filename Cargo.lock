@@ -2878,6 +2878,7 @@ dependencies = [
  "figment",
  "image",
  "imageproc",
+ "libc",
  "log",
  "reqwest",
  "resvg",

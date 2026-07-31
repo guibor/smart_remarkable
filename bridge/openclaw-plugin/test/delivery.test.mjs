@@ -8,9 +8,11 @@ import {
   CANONICAL_AGENT_ID,
   CANONICAL_SESSION_KEY,
   DELIVERY_METHOD,
+  REMARKABLE_CAPABILITIES_METHOD,
   createDeliveryHandler,
   default as deliveryPlugin,
   registerDeliveryMethod,
+  requireRemarkableHookPolicy,
 } from "../index.mjs";
 
 const REQUEST_ID = "smart-remarkable-plugin-test-0001";
@@ -207,6 +209,18 @@ test("the real plugin entry registers without requesting restricted keyed state"
   const runContexts = new Map();
   deliveryPlugin.register({
     id: "smart-remarkable-delivery",
+    config: {
+      plugins: {
+        entries: {
+          "smart-remarkable-delivery": {
+            hooks: {
+              allowPromptInjection: true,
+              allowConversationAccess: true,
+            },
+          },
+        },
+      },
+    },
     runtime,
     logger: { error() {} },
     agent: {
@@ -246,6 +260,7 @@ test("the real plugin entry registers without requesting restricted keyed state"
     registrations.map((entry) => entry.method),
     [
       DELIVERY_METHOD,
+      REMARKABLE_CAPABILITIES_METHOD,
       "smart_remarkable.bind_origin",
       "smart_remarkable.clear_origin",
     ],
@@ -254,6 +269,7 @@ test("the real plugin entry registers without requesting restricted keyed state"
     registrations.map((entry) => entry.options),
     [
       { scope: "operator.write" },
+      { scope: "operator.admin" },
       { scope: "operator.admin" },
       { scope: "operator.admin" },
     ],
@@ -269,11 +285,50 @@ test("the real plugin entry registers without requesting restricted keyed state"
   });
   assert.deepEqual(
     hooks.map((entry) => entry.name),
-    ["before_prompt_build", "before_tool_call"],
+    ["before_agent_run", "before_prompt_build", "before_tool_call"],
   );
   assert.deepEqual(
     hooks.map((entry) => entry.options),
-    [{ priority: 100 }, { priority: 100 }],
+    [{ priority: 100 }, { priority: 100 }, { priority: 100 }],
+  );
+});
+
+test("plugin registration requires both explicit hook permissions", () => {
+  assert.throws(
+    () =>
+      requireRemarkableHookPolicy({
+        id: "smart-remarkable-delivery",
+        config: {
+          plugins: {
+            entries: {
+              "smart-remarkable-delivery": {
+                hooks: {
+                  allowPromptInjection: true,
+                  allowConversationAccess: false,
+                },
+              },
+            },
+          },
+        },
+      }),
+    /requires explicit prompt-injection and conversation-access/,
+  );
+  assert.doesNotThrow(() =>
+    requireRemarkableHookPolicy({
+      id: "smart-remarkable-delivery",
+      config: {
+        plugins: {
+          entries: {
+            "smart-remarkable-delivery": {
+              hooks: {
+                allowPromptInjection: true,
+                allowConversationAccess: true,
+              },
+            },
+          },
+        },
+      },
+    }),
   );
 });
 
@@ -626,6 +681,7 @@ test("enforces bounded request IDs, kinds, and UTF-8 text", async () => {
   const { calls, handler } = handlerFixture();
   for (const overrides of [
     { requestId: "short" },
+    { requestId: "ordinary-client-delivery-0001" },
     { kind: "other" },
     { text: " " },
     { text: "x".repeat(32 * 1024 + 1) },

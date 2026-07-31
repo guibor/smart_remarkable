@@ -57,19 +57,47 @@ patch has passed its device canary, is:
      same WhatsApp acknowledgement/final sequence, with no tablet text, pen,
      or touch output.
 3. The chosen button highlights at once and shared pending state ignores
-   repeated taps. It asks AppLoad to deliver
-   `--selection-button=write_back` or
-   `--selection-button=whatsapp_only`. If no Smart session is active, AppLoad
-   starts the configured mode, waits for its readiness marker and a live
-   forwarded bridge health check, and signals the selection; otherwise it
-   signals the active healthy worker. A stale active worker is restarted once
-   and never receives a trigger until the fresh bridge is healthy.
-4. Smart captures the still-active selection, then clears the marquee/menu
-   through reMarkable's own selection-close path only after OpenClaw has
-   accepted the exact request. This does not copy, delete, move, or change the
-   selected ink. If capture, bridge authentication, or remote acceptance
-   fails, the selection stays visible. No pen hold or four-finger gesture is
-   involved.
+   repeated taps. The v2 QML records the live `ink`, `image`, or `mixed` kind,
+   fixed-point selection rectangle, stable `normal`/`rot180` orientation, and
+   capture time. AppLoad strictly parses that descriptor, starts the local
+   worker when necessary, adds a fresh kernel-random nonce, and publishes a
+   root-only busy marker before the trigger. Local capture readiness does not
+   wait for the SSH tunnel or bridge.
+4. Smart asks QML to re-read the same selection immediately before capture.
+   Only an exact match temporarily hides the stock tint, border, and menu via
+   the stock `controlsAreVisible` flag and returns a nonce-bound prepare
+   acknowledgement. Smart then captures only the descriptor rectangle with
+   the descriptor orientation. Handwriting keeps the established whitening
+   and enlargement; image and mixed selections preserve RGB and tonal detail.
+5. After the prepared crop exists only in memory, Smart asks QML to revalidate
+   once more, calls reMarkable's own selection-close path, and requires the
+   matching close acknowledgement before any remote submission. A pre-close
+   capture or validation failure restores the stock controls and leaves the
+   selection recoverable. This does not copy, delete, move, or change the
+   selected content. No pen hold or four-finger gesture is involved.
+6. The private tunnel starts in parallel and publishes separate remote
+   readiness. OpenClaw/WhatsApp work continues after the local marquee closes,
+   while the busy generation rejects later taps instead of queueing them. For
+   answer-here, Smart retains the complete normalized page captured while the
+   exact selection was still prepared, then requires the first post-close frame
+   to match those original bytes. A missing or changed original-page binding
+   preserves the canonical OpenClaw/WhatsApp result but suppresses tablet
+   insertion. The same fail-closed result applies unless Smart can verify the
+   stock Text tool, close and verify its palette, observe only the pinned
+   toolbar plus a narrow caret delta, confirm no current or new physical
+   contact, and emit the complete supported answer within the bounded keyboard
+   budget. Legacy and pen-lasso routes cannot prove this exact binding and
+   therefore do not type locally in this candidate.
+
+During app-first rollout only, the currently installed QMD hash
+`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`
+still calls `--selection-button=write_back` or
+`--selection-button=whatsapp_only`. The launcher accepts those exact old
+shapes as a separately tagged, random `legacy-v1` generation so the installed
+buttons do not break before the v2 QMD is reviewed and promoted. That path
+still uses historical marquee detection and remote-accepted close; it is a
+transition contract, not evidence that the v2 descriptor/acknowledgement path
+is installed or physically accepted.
 
 Both buttons are explicit triggers in all three modes. In `once`, the worker
 exits after the request; in either session mode it rearms for another one.
@@ -116,13 +144,24 @@ reMarkable cloud library. It reports what it read and what it did in WhatsApp.
 That delivery tool is execution-gated to the bound tablet run; typing similar
 words in a normal WhatsApp turn does not authorize it.
 
-The reviewed OpenClaw workspace plugin is version `0.2.2`. OpenClaw closes
-ordinary plugin API methods after registration, so late origin bind and clear
-calls use a registered synchronous agent-event adapter: only a random
-operation ID crosses the plugin-owned control stream, while host callback
-methods perform run-context get/set/clear and exact read-back. Origin bind and
-clear require `operator.admin`; any missing, delayed, mismatched, or failed
-receipt is unavailable rather than weakening provenance.
+For trusted `image` and `mixed` Capture selections, the candidate server hook
+resolves intent in this order: an explicit current user instruction; a
+specific still-active user instruction in canonical conversation; durable
+memory/preferences; then the captured content and immediate context. Captured
+or quoted text and assistant suggestions are context, not authority. If the
+intent remains ambiguous, OpenClaw should provide an in-depth explanation,
+background, and context for the selection—not a market scan, recommendations,
+or a generic clarification—and ambiguity never authorizes an external side
+effect.
+
+The deployed reviewed OpenClaw workspace plugin is version `0.2.2`; the local
+unpromoted candidate is version `0.3.0`. OpenClaw closes ordinary plugin API
+methods after registration, so late origin bind and clear calls use a
+registered synchronous agent-event adapter: only a random operation ID crosses
+the plugin-owned control stream, while host callback methods perform
+run-context get/set/clear and exact read-back. Origin bind and clear require
+`operator.admin`; any missing, delayed, mismatched, or failed receipt is
+unavailable rather than weakening provenance.
 
 The AppLoad tile starts a transient, non-boot
 `smart-remarkable-session.service` bound to `xochitl` and mutually exclusive
@@ -143,43 +182,38 @@ credentials, networking, model call, Draw action, kernel code, or boot action.
 ### Implementation and deployment status
 
 The 3.28.0.164 update is intentionally a reinstall, not an attempt to make
-Xovi survive firmware updates. The exact new functional QMD
-(`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`)
-and disabled canary
-(`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`)
-pass offline compatibility and compose with all seven supported ReMagic QMDs
-into 22 resources. Those exact bytes are installed: ReMagic's 30-second
-stock-rollback canary passed, inert transaction
-`20260730T184327Z-34344` committed the disabled QMD, and functional transaction
-`20260730T184443Z-34618` promoted it. All eight QMDs and AppLoad loaded;
-`xochitl` is stable on PID `9449` with zero restarts; root remains read-only;
-and all takeover/canary helpers are inactive. Gestik's final live settings and
-protected backup both match the standalone Mac preinstall hash. The complete
-repeatable procedure is
-in the
+Xovi survive firmware updates. The tablet is still on the separately pinned
+legacy-v1 functional QMD
+`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`,
+deployed worker
+`0bce9522c47aa2becc2f07171ed59ade012061ff33bd5cdbc11ec1c94eefde50`,
+and deployed plugin `0.2.2`. ReMagic's 30-second stock-rollback canary passed;
+inert transaction `20260730T184327Z-34344` and functional transaction
+`20260730T184443Z-34618` restored that exact installed generation. All eight
+QMDs and AppLoad loaded; the recorded final `xochitl` PID was `9449` with zero
+restarts, root was read-only, and takeover/canary helpers were inactive. The
+repeatable procedure is in the
 [Paper Pro Beta update recipe](https://github.com/guibor/remarkable-beta-os/blob/beta/pro/3.28.0.164/UPDATE-RECIPE.md).
-Physical handwritten acceptance through both icons remains pending.
 
-The two response destinations, three trigger modes, narrow bridge protocol,
-single-request admission, bounded plugin-owned origin admission, per-request
-cleanup, guarded QMLDiff artifacts, and
-exact-device coexistence policy are implemented and locally tested. The
-current reviewed plugin is version `0.2.2`. Its host run-context adapter and
-admin-scoped origin methods are deployed; physical acceptance remains separate
-from server/runtime promotion. The active 3.28.0.164 stock-icon functional QMD
-is
-`2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`;
-the matching disabled canary is
-`81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`.
+The new v2 generation is complete locally but has not been installed on the
+tablet or promoted to the server. Its exact functional source QMD is
+`130353dbba7fd31b764f0835b610d59d9c25c7f1cc2b2c52e9285379f23ec1b8`,
+compiled functional QMD is
+`28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`,
+and aarch64 worker is
+`c73586e65fe6acc5333b95c5934a9f5298ec5126de1069504ed09182c05e08a5`
+(build ID `63c2a311d60699e22a22ee54e90094cce2e587f8`, maximum GLIBC
+`2.28`, no RPATH/RUNPATH). The exact eight-QMD stack passes compatibility and
+composes into 22 resources; 88 applicable Rust tests, 145 Node tests, and all
+six device-free shell suites pass. This proves the local candidate and artifact
+contract, not device behavior. Fresh exact-firmware preflight, inert canary,
+human visual confirmation, functional watchdog/rollback, and physical
+ink/image/mixed acceptance through both icons remain mandatory.
 
-The loopback bridge/plugin and dedicated local-forward-only SSH account are
-live. The current worker
-`0bce9522c47aa2becc2f07171ed59ade012061ff33bd5cdbc11ec1c94eefde50`
-is installed under `/home`. Small selected crops are now transiently cleaned
-to black-on-white and enlarged before upload. OpenClaw's canonical final is a
-strict literal-transcription/answer envelope: WhatsApp receives one atomic
-`I read:` quote followed by the answer, while the sparkling notebook returns
-only the answer for stock-text insertion and the sparkles action returns no
+OpenClaw's candidate canonical final remains a strict
+literal-transcription/answer envelope: WhatsApp receives one atomic `I read:`
+quote followed by the answer, while the sparkling notebook returns only the
+answer for guarded stock-text insertion and the sparkles action returns no
 assistant text to the tablet.
 
 In the earlier 3.28.0.163 deployment, server source transaction
@@ -390,9 +424,11 @@ over SSH while you're learning the gesture.
 tool shows **LLM** and **Draw** buttons beside cut/copy/paste. That native
 extension is not the safe Paper Pro integration. The guarded 3.28.0.163
 candidate in `xovi-qmd/` adds the stock notebook-with-sparkles and sparkles
-actions, and it launches the corresponding AppLoad
-`--selection-button=...` action instead of talking to the Rust process
-directly.
+actions. The current v2 source launches a bounded descriptor containing mode,
+kind, orientation, geometry, and capture time, then uses AppLoad again for the
+same-snapshot prepare and close acknowledgements; it never talks to the Rust
+process directly. Historical `--selection-button=...` actions remain only for
+the pinned installed legacy-QMD transition described above.
 
 **Key CLI flags**
 
@@ -661,14 +697,21 @@ walks the live QtQuick scene graph. It is retained only as upstream source
 and is not compatible with the guarded Paper Pro path.
 
 The Paper Pro candidate instead uses firmware-specific QMLDiff artifacts in
-`xovi-qmd/`. The functional patch inserts one
-`ArkControls.ContextualMenu.Button` into the exact
+`xovi-qmd/`. The functional patch inserts two
+`ArkControls.ContextualMenu.Button` objects into the exact
 `SceneSelectionHandler.qml` resource and dynamically asks AppLoad to launch
-`external::smart-remarkable --selection-button`. AppLoad owns worker startup
-and writes the `/run` trigger; the QML has no credential, network, or model
-access. A separate disabled-button patch is the first visual canary. Neither
-artifact is activated until live hashes pass the exact allowlist and a
-bounded rollback transaction is available.
+a strict v2 selection descriptor. AppLoad owns worker startup, adds the random
+nonce, publishes the root-only busy/trigger generation, and relays exact
+prepare/close acknowledgements. The listener advertises local capture
+readiness independently from the runner's remote bridge-ready marker. QML has
+no credential, network, or model access. The v2 source rehashes to the pinned
+compiled candidate, and that candidate composes successfully with the seven
+exact co-resident QMDs. The old installed compiled QMD still uses
+transition-only `--selection-button=...` calls; the reviewed v2 candidate must
+still pass inert and functional device canaries plus physical acceptance before
+it replaces that artifact. A separate disabled-button patch remains the first
+visual canary, and activation still requires fresh live hashes plus a bounded
+rollback transaction.
 
 ## License
 

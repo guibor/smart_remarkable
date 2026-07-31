@@ -53,7 +53,8 @@ SERVICE_CONF="$SERVICE_DIR/qt-resource-rebuilder.conf"
 ACTIVE_DROPIN=/etc/systemd/system/xochitl.service.d
 STOCK_UNIT=/usr/lib/systemd/system/xochitl.service
 STOCK_OVERRIDE=/usr/lib/systemd/system/xochitl.service.d/xochitl-service-override.conf
-APP_MANIFEST=/home/root/xovi/exthome/appload/smart-remarkable/external.manifest.json
+APP_ROOT=/home/root/xovi/exthome/appload/smart-remarkable
+APP_MANIFEST="$APP_ROOT/external.manifest.json"
 
 ensure_private_dir() {
     directory=$1
@@ -695,53 +696,6 @@ acknowledge_main() {
     write_one_line "$ACK" "ack:$PHASE:$expected_pid"
 }
 
-load_allowlist() {
-    allowlist=$1
-    seen=" "
-    while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-            ""|\#*) continue ;;
-            [A-Z0-9_]*=*) ;;
-            *) return 1 ;;
-        esac
-        key=${line%%=*}
-        value=${line#*=}
-        case "$key" in
-            DEVICE_SERIAL|FIRMWARE_VERSION|FIRMWARE_BUILD|XOCHITL_SHA256|XOCHITL_BUILD_ID|\
-            HASHTAB_SHA256|XOVI_SHA256|QRR_SHA256|MESSAGE_BROKER_SHA256|APPLOAD_SHA256|\
-            STOCK_SCRIPT_SHA256|XOVI_XOCHITL_SERVICE_CONF_SHA256|\
-            ACTIVE_XOVI_DROPIN_SHA256|XOCHITL_UNIT_SHA256|XOCHITL_STOCK_OVERRIDE_SHA256|\
-            SCENE_SELECTION_HANDLER_RESOURCE_HASH|SELECTION_CONTEXTUAL_MENU_RESOURCE_HASH|\
-            PEN_LAYER_MEMORY_QMD_SHA256|QUICK_SETTINGS_TIMER_QMD_SHA256|\
-            BETTER_TOC_QMD_SHA256|BETTER_TOC_COLLAPSE_QMD_SHA256|\
-            GESTIK_QMD_SHA256|GHOSTBUSTER_QMD_SHA256|TOC_FROM_SELECTION_QMD_SHA256|\
-            PREVIOUS_BUTTON_QMD_SHA256|SOURCE_QMD_SHA256|BUTTON_QMD_SHA256|INERT_SOURCE_QMD_SHA256|\
-            INERT_BUTTON_QMD_SHA256) ;;
-            *) return 1 ;;
-        esac
-        case "$value" in ""|*[!A-Za-z0-9._-]*) return 1 ;; esac
-        case "$seen" in *" $key "*) return 1 ;; esac
-        seen="$seen$key "
-        printf -v "$key" '%s' "$value"
-    done <"$allowlist"
-    for key in \
-        DEVICE_SERIAL FIRMWARE_VERSION FIRMWARE_BUILD XOCHITL_SHA256 XOCHITL_BUILD_ID \
-        HASHTAB_SHA256 XOVI_SHA256 QRR_SHA256 MESSAGE_BROKER_SHA256 APPLOAD_SHA256 \
-        STOCK_SCRIPT_SHA256 XOVI_XOCHITL_SERVICE_CONF_SHA256 \
-        ACTIVE_XOVI_DROPIN_SHA256 XOCHITL_UNIT_SHA256 XOCHITL_STOCK_OVERRIDE_SHA256 \
-        SCENE_SELECTION_HANDLER_RESOURCE_HASH SELECTION_CONTEXTUAL_MENU_RESOURCE_HASH \
-        PEN_LAYER_MEMORY_QMD_SHA256 QUICK_SETTINGS_TIMER_QMD_SHA256 \
-        BETTER_TOC_QMD_SHA256 BETTER_TOC_COLLAPSE_QMD_SHA256 \
-        GESTIK_QMD_SHA256 GHOSTBUSTER_QMD_SHA256 TOC_FROM_SELECTION_QMD_SHA256 \
-        PREVIOUS_BUTTON_QMD_SHA256 SOURCE_QMD_SHA256 BUTTON_QMD_SHA256 INERT_SOURCE_QMD_SHA256 \
-        INERT_BUTTON_QMD_SHA256
-    do
-        case "$seen" in *" $key "*) ;; *) return 1 ;; esac
-        eval "value=\${$key-}"
-        [ -n "$value" ] || return 1
-    done
-}
-
 install_main() {
     archive_sha=${4:?archive sha required}
     confirmation=${5:?confirmation required}
@@ -775,7 +729,8 @@ install_main() {
     [ -f "$ARCHIVE" ]
     [ ! -L "$ARCHIVE" ]
     [ "$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" = "$archive_sha" ]
-    [ "$(tar -tf "$ARCHIVE")" = "$(printf 'compatibility.env\nbutton.qmd')" ]
+    [ "$(tar -tf "$ARCHIVE")" = \
+        "$(printf 'artifact-compatibility-contract.sh\ncompatibility.env\nbutton.qmd')" ]
 
     ensure_private_dir "$RECOVERY_BASE"
     ensure_private_dir "$RECOVERY_ROOT"
@@ -788,38 +743,28 @@ install_main() {
     chown root:root "$STAGE"
     chmod 0700 "$STAGE"
     tar -xf "$ARCHIVE" -C "$STAGE"
+    CONTRACT_HELPER="$STAGE/artifact-compatibility-contract.sh"
     ALLOWLIST="$STAGE/compatibility.env"
     BUTTON="$STAGE/button.qmd"
-    chown root:root "$ALLOWLIST" "$BUTTON"
+    chown root:root "$CONTRACT_HELPER" "$ALLOWLIST" "$BUTTON"
+    chmod 0755 "$CONTRACT_HELPER"
     chmod 0600 "$ALLOWLIST"
     chmod 0644 "$BUTTON"
+    [ -f "$CONTRACT_HELPER" ] && [ ! -L "$CONTRACT_HELPER" ]
     [ -f "$ALLOWLIST" ] && [ ! -L "$ALLOWLIST" ]
     [ -f "$BUTTON" ] && [ ! -L "$BUTTON" ]
-    load_allowlist "$ALLOWLIST"
+    # shellcheck disable=SC1090
+    . "$CONTRACT_HELPER"
+    smart_contract_load "$ALLOWLIST"
 
     case "$DEVICE_SERIAL" in *[!0-9A-F]*) exit 2 ;; esac
     [ "${#DEVICE_SERIAL}" -eq 16 ]
     case "$XOCHITL_BUILD_ID" in *[!0-9a-f]*) exit 2 ;; esac
     [ "${#XOCHITL_BUILD_ID}" -eq 40 ]
-    for value in \
-        "$XOCHITL_SHA256" "$HASHTAB_SHA256" "$XOVI_SHA256" "$QRR_SHA256" \
-        "$MESSAGE_BROKER_SHA256" "$APPLOAD_SHA256" "$STOCK_SCRIPT_SHA256" \
-        "$XOVI_XOCHITL_SERVICE_CONF_SHA256" "$ACTIVE_XOVI_DROPIN_SHA256" \
-        "$XOCHITL_UNIT_SHA256" "$XOCHITL_STOCK_OVERRIDE_SHA256" \
-        "$PEN_LAYER_MEMORY_QMD_SHA256" "$QUICK_SETTINGS_TIMER_QMD_SHA256" \
-        "$BETTER_TOC_QMD_SHA256" "$BETTER_TOC_COLLAPSE_QMD_SHA256" \
-        "$GESTIK_QMD_SHA256" "$GHOSTBUSTER_QMD_SHA256" "$TOC_FROM_SELECTION_QMD_SHA256" \
-        "$PREVIOUS_BUTTON_QMD_SHA256" \
-        "$SOURCE_QMD_SHA256" "$BUTTON_QMD_SHA256" \
-        "$INERT_SOURCE_QMD_SHA256" "$INERT_BUTTON_QMD_SHA256"
-    do
-        case "$value" in *[!0-9a-f]*) exit 2 ;; esac
-        [ "${#value}" -eq 64 ]
-    done
-
     if [ "$PHASE" = inert ] || [ "$PHASE" = refresh-inert ]; then
         EXPECTED_BUTTON_SHA=$INERT_BUTTON_QMD_SHA256
     else
+        smart_contract_require_complete
         EXPECTED_BUTTON_SHA=$BUTTON_QMD_SHA256
     fi
     [ "$(sha256sum "$BUTTON" | cut -d' ' -f1)" = "$EXPECTED_BUTTON_SHA" ]
@@ -848,6 +793,12 @@ install_main() {
     mod_files_are_exact "$PHASE"
     [ -f "$APP_MANIFEST" ] && [ ! -L "$APP_MANIFEST" ]
     grep -Fq '"id": "smart-remarkable"' "$APP_MANIFEST"
+    if [ "$PHASE" != inert ]; then
+        # Every transition away from an already active functional QMD is
+        # app-first. The exact staged contract must already be installed.
+        smart_contract_require_complete
+        smart_contract_installed_client_is_exact "$APP_ROOT"
+    fi
     root_is_read_only
     [ "$(systemctl show -p FragmentPath --value xochitl.service)" = /usr/lib/systemd/system/xochitl.service ]
     systemctl is-active --quiet xochitl.service
@@ -897,7 +848,14 @@ install_main() {
         chmod 0600 "$RECOVERY/previous-inert.qmd"
         printf '%s\n' PREVIOUS_STATE=inert >"$RECOVERY/previous-state"
     elif [ "$PHASE" = refresh-inert ]; then
-        file_is_exact_regular "$TARGET" "$PREVIOUS_BUTTON_QMD_SHA256"
+        [ -f "$TARGET" ] && [ ! -L "$TARGET" ]
+        [ "$(stat -c %u:%g:%a "$TARGET")" = 0:0:644 ]
+        CURRENT_FUNCTIONAL_SHA=$(sha256sum "$TARGET" | cut -d' ' -f1)
+        CURRENT_FUNCTIONAL_STATE=$(smart_contract_classify_qmd_sha "$CURRENT_FUNCTIONAL_SHA")
+        case "$CURRENT_FUNCTIONAL_STATE" in
+            legacy-functional|new-functional) ;;
+            *) exit 1 ;;
+        esac
         [ "$(stat -c %a "$TARGET")" = 644 ]
         # A refresh may follow either the original functional promotion or a
         # later refresh-functional promotion. Historical markers are retained
@@ -916,7 +874,7 @@ install_main() {
                     grep -Fqx "FIRMWARE_VERSION=$FIRMWARE_VERSION" "$FUNCTIONAL_MARKER" &&
                     grep -Fqx "FIRMWARE_BUILD=$FIRMWARE_BUILD" "$FUNCTIONAL_MARKER" &&
                     grep -Fqx "XOCHITL_SHA256=$XOCHITL_SHA256" "$FUNCTIONAL_MARKER" &&
-                    grep -Fqx "QMD_SHA256=$PREVIOUS_BUTTON_QMD_SHA256" "$FUNCTIONAL_MARKER" &&
+                    grep -Fqx "QMD_SHA256=$CURRENT_FUNCTIONAL_SHA" "$FUNCTIONAL_MARKER" &&
                     grep -Fqx "TRANSACTION_ID=$confirmation" "$FUNCTIONAL_MARKER"; then
                     FUNCTIONAL_MARKER_MATCHES=$((FUNCTIONAL_MARKER_MATCHES + 1))
                 fi
@@ -958,6 +916,11 @@ install_main() {
     # QMD rename. Any kill from this point is recoverable by the watchdog.
     systemctl is-active --quiet "$WATCHDOG_UNIT"
     lock_is_owned
+    if [ "$PHASE" != inert ]; then
+        # Repeat immediately before ARMED so a client swap cannot race the
+        # QMD authority transition while the shared deployment lock is held.
+        smart_contract_installed_client_is_exact "$APP_ROOT"
+    fi
     [ -f "$WATCHDOG_READY" ] && [ ! -L "$WATCHDOG_READY" ]
     [ "$(stat -c %u:%g:%a "$WATCHDOG_READY")" = 0:0:600 ]
     grep -Fqx "ID=$ID" "$WATCHDOG_READY"
@@ -1020,6 +983,10 @@ install_main() {
         exit 1
     fi
 
+    if [ "$PHASE" != inert ]; then
+        smart_contract_installed_client_is_exact "$APP_ROOT"
+    fi
+
     marker_tmp="$RECOVERY_ROOT/.$PHASE-qualified.$$"
     {
         printf 'DEVICE_SERIAL=%s\n' "$DEVICE_SERIAL"
@@ -1027,6 +994,16 @@ install_main() {
         printf 'FIRMWARE_BUILD=%s\n' "$FIRMWARE_BUILD"
         printf 'XOCHITL_SHA256=%s\n' "$XOCHITL_SHA256"
         printf 'QMD_SHA256=%s\n' "$EXPECTED_BUTTON_SHA"
+        printf 'ARTIFACT_CONTRACT_SHA256=%s\n' \
+            "$(sha256sum "$ALLOWLIST" | cut -d' ' -f1)"
+        if [ "$PHASE" != inert ]; then
+            printf 'SMART_REMARKABLE_SHA256=%s\n' "$SMART_REMARKABLE_SHA256"
+            printf 'APPLOAD_LAUNCHER_SHA256=%s\n' "$APPLOAD_LAUNCHER_SHA256"
+            printf 'RUN_ARMED_ONCE_SHA256=%s\n' "$RUN_ARMED_ONCE_SHA256"
+            printf 'SELECTION_PROTOCOL_SHA256=%s\n' "$SELECTION_PROTOCOL_SHA256"
+            printf 'APP_STAGED_MANIFEST_SHA256=%s\n' \
+                "$(sha256sum "$APP_ROOT/STAGED-FILES.sha256" | cut -d' ' -f1)"
+        fi
         printf 'TRANSACTION_ID=%s\n' "$ID"
         printf 'XOCHITL_PID=%s\n' "$NEW_PID"
     } >"$marker_tmp"

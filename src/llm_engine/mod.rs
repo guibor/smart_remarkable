@@ -7,6 +7,37 @@ use anyhow::Result;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
+/// What stock xochitl says the current native selection contains.
+///
+/// This is captured alongside the selection geometry and remains bound to the
+/// request so preprocessing and the OpenClaw bridge cannot silently reinterpret
+/// an image selection as handwriting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SelectionKind {
+    Ink,
+    Image,
+    Mixed,
+}
+
+impl SelectionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ink => "ink",
+            Self::Image => "image",
+            Self::Mixed => "mixed",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ink" => Some(Self::Ink),
+            "image" => Some(Self::Image),
+            "mixed" => Some(Self::Mixed),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelExecutionStatus {
     BuildingContext,
@@ -79,5 +110,8 @@ pub trait LLMEngine: Send {
     /// Set the response destination for the next execution. Non-OpenClaw
     /// engines retain their historical behavior through this default no-op.
     fn set_response_mode(&mut self, _mode: ResponseMode) {}
+    /// Bind the stock selection classification to the next execution.
+    /// Non-OpenClaw engines use it only through local preprocessing.
+    fn set_selection_kind(&mut self, _kind: Option<SelectionKind>) {}
     async fn execute(&mut self, cancellation: &SmartRemarkableCancellation, status_callback: Option<StatusCallback>) -> Result<()>;
 }

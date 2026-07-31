@@ -7,7 +7,7 @@ import {
 } from "../run-context-control.mjs";
 
 const RUN_ID = "smart-remarkable-control-run-0001";
-const NAMESPACE = "smart-remarkable-origin-v2";
+const NAMESPACE = "smart-remarkable-origin-v3";
 const SECRET_VALUE =
   '{"capability":"never-emit-this","bindingHandle":"also-private"}';
 

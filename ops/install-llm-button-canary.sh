@@ -132,6 +132,7 @@ esac
 
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ALLOWLIST="$REPO/xovi-qmd/compatibility-3.28.0.164.env"
+CONTRACT_HELPER="$REPO/ops/artifact-compatibility-contract.sh"
 DEVICE_SCRIPT="$REPO/ops/device-install-llm-button-canary.sh"
 QMLDIFF_BIN=${QMLDIFF_BIN:-}
 XOCHITL_REFERENCE=${XOCHITL_REFERENCE:-/private/tmp/xochitl-ferrari-3.28.0.164}
@@ -179,67 +180,15 @@ trap cleanup EXIT
 
 test -f "$ALLOWLIST"
 test ! -L "$ALLOWLIST"
+test -f "$CONTRACT_HELPER"
+test ! -L "$CONTRACT_HELPER"
 test -f "$DEVICE_SCRIPT"
 test ! -L "$DEVICE_SCRIPT"
 
-# Parse the allowlist as data. Only fixed keys and inert values are accepted.
-load_allowlist() {
-    seen=" "
-    while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-            ""|\#*) continue ;;
-            [A-Z0-9_]*=*) ;;
-            *) echo "Malformed allowlist line: $line" >&2; return 1 ;;
-        esac
-        key=${line%%=*}
-        value=${line#*=}
-        case "$key" in
-            DEVICE_SERIAL|FIRMWARE_VERSION|FIRMWARE_BUILD|XOCHITL_SHA256|XOCHITL_BUILD_ID|\
-            HASHTAB_SHA256|XOVI_SHA256|QRR_SHA256|MESSAGE_BROKER_SHA256|APPLOAD_SHA256|\
-            STOCK_SCRIPT_SHA256|XOVI_XOCHITL_SERVICE_CONF_SHA256|\
-            ACTIVE_XOVI_DROPIN_SHA256|XOCHITL_UNIT_SHA256|XOCHITL_STOCK_OVERRIDE_SHA256|\
-            SCENE_SELECTION_HANDLER_RESOURCE_HASH|SELECTION_CONTEXTUAL_MENU_RESOURCE_HASH|\
-            PEN_LAYER_MEMORY_QMD_SHA256|QUICK_SETTINGS_TIMER_QMD_SHA256|\
-            BETTER_TOC_QMD_SHA256|BETTER_TOC_COLLAPSE_QMD_SHA256|\
-            GESTIK_QMD_SHA256|GHOSTBUSTER_QMD_SHA256|TOC_FROM_SELECTION_QMD_SHA256|\
-            PREVIOUS_BUTTON_QMD_SHA256|SOURCE_QMD_SHA256|BUTTON_QMD_SHA256|INERT_SOURCE_QMD_SHA256|\
-            INERT_BUTTON_QMD_SHA256) ;;
-            *) echo "Unknown allowlist key: $key" >&2; return 1 ;;
-        esac
-        case "$value" in
-            ""|*[!A-Za-z0-9._-]*)
-                echo "Unsafe allowlist value for $key" >&2
-                return 1
-                ;;
-        esac
-        case "$seen" in
-            *" $key "*) echo "Duplicate allowlist key: $key" >&2; return 1 ;;
-        esac
-        seen="$seen$key "
-        printf -v "$key" '%s' "$value"
-    done <"$ALLOWLIST"
-
-    for key in \
-        DEVICE_SERIAL FIRMWARE_VERSION FIRMWARE_BUILD XOCHITL_SHA256 XOCHITL_BUILD_ID \
-        HASHTAB_SHA256 XOVI_SHA256 QRR_SHA256 MESSAGE_BROKER_SHA256 APPLOAD_SHA256 \
-        STOCK_SCRIPT_SHA256 XOVI_XOCHITL_SERVICE_CONF_SHA256 \
-        ACTIVE_XOVI_DROPIN_SHA256 XOCHITL_UNIT_SHA256 XOCHITL_STOCK_OVERRIDE_SHA256 \
-        SCENE_SELECTION_HANDLER_RESOURCE_HASH SELECTION_CONTEXTUAL_MENU_RESOURCE_HASH \
-        PEN_LAYER_MEMORY_QMD_SHA256 QUICK_SETTINGS_TIMER_QMD_SHA256 \
-        BETTER_TOC_QMD_SHA256 BETTER_TOC_COLLAPSE_QMD_SHA256 \
-        GESTIK_QMD_SHA256 GHOSTBUSTER_QMD_SHA256 TOC_FROM_SELECTION_QMD_SHA256 \
-        PREVIOUS_BUTTON_QMD_SHA256 SOURCE_QMD_SHA256 BUTTON_QMD_SHA256 INERT_SOURCE_QMD_SHA256 \
-        INERT_BUTTON_QMD_SHA256
-    do
-        case "$seen" in
-            *" $key "*) ;;
-            *) echo "Missing allowlist key: $key" >&2; return 1 ;;
-        esac
-        eval "value=\${$key-}"
-        [ -n "$value" ] || { echo "Empty allowlist key: $key" >&2; return 1; }
-    done
-}
-load_allowlist
+# Parse the compatibility file as inert data through the shared strict parser.
+# shellcheck disable=SC1090
+. "$CONTRACT_HELPER"
+smart_contract_load "$ALLOWLIST"
 
 [[ "$DEVICE_SERIAL" =~ ^[0-9A-F]{16}$ ]]
 [[ "$FIRMWARE_VERSION" =~ ^[0-9]+(\.[0-9]+){3}$ ]]
@@ -247,31 +196,27 @@ load_allowlist
 [[ "$XOCHITL_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]
 [[ "$SCENE_SELECTION_HANDLER_RESOURCE_HASH" =~ ^[0-9]+$ ]]
 [[ "$SELECTION_CONTEXTUAL_MENU_RESOURCE_HASH" =~ ^[0-9]+$ ]]
-for value in \
-    "$XOCHITL_SHA256" "$HASHTAB_SHA256" "$XOVI_SHA256" "$QRR_SHA256" \
-    "$MESSAGE_BROKER_SHA256" "$APPLOAD_SHA256" "$STOCK_SCRIPT_SHA256" \
-    "$XOVI_XOCHITL_SERVICE_CONF_SHA256" "$ACTIVE_XOVI_DROPIN_SHA256" \
-    "$XOCHITL_UNIT_SHA256" "$XOCHITL_STOCK_OVERRIDE_SHA256" \
-    "$PEN_LAYER_MEMORY_QMD_SHA256" "$QUICK_SETTINGS_TIMER_QMD_SHA256" \
-    "$BETTER_TOC_QMD_SHA256" "$BETTER_TOC_COLLAPSE_QMD_SHA256" \
-    "$GESTIK_QMD_SHA256" "$GHOSTBUSTER_QMD_SHA256" "$TOC_FROM_SELECTION_QMD_SHA256" \
-    "$PREVIOUS_BUTTON_QMD_SHA256" \
-    "$SOURCE_QMD_SHA256" "$BUTTON_QMD_SHA256" \
-    "$INERT_SOURCE_QMD_SHA256" "$INERT_BUTTON_QMD_SHA256"
-do
-    [[ "$value" =~ ^[0-9a-f]{64}$ ]]
-done
-
-if [ "$PHASE" = inert ] || [ "$PHASE" = refresh-inert ]; then
+if [ "$PHASE" = inert ]; then
     SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.164.source.qmd"
     BUTTON_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.164.qmd"
     EXPECTED_SOURCE_SHA=$INERT_SOURCE_QMD_SHA256
     EXPECTED_BUTTON_SHA=$INERT_BUTTON_QMD_SHA256
 else
-    SOURCE_QMD="$REPO/xovi-qmd/llm-button-3.28.0.164.source.qmd"
-    BUTTON_QMD="$REPO/xovi-qmd/llm-button-3.28.0.164.qmd"
-    EXPECTED_SOURCE_SHA=$SOURCE_QMD_SHA256
-    EXPECTED_BUTTON_SHA=$BUTTON_QMD_SHA256
+    smart_contract_require_complete || {
+        echo "QMD transition requires finalized app and QMD contract hashes" >&2
+        exit 1
+    }
+    if [ "$PHASE" = refresh-inert ]; then
+        SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.164.source.qmd"
+        BUTTON_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.164.qmd"
+        EXPECTED_SOURCE_SHA=$INERT_SOURCE_QMD_SHA256
+        EXPECTED_BUTTON_SHA=$INERT_BUTTON_QMD_SHA256
+    else
+        SOURCE_QMD="$REPO/xovi-qmd/llm-button-3.28.0.164.source.qmd"
+        BUTTON_QMD="$REPO/xovi-qmd/llm-button-3.28.0.164.qmd"
+        EXPECTED_SOURCE_SHA=$SOURCE_QMD_SHA256
+        EXPECTED_BUTTON_SHA=$BUTTON_QMD_SHA256
+    fi
 fi
 
 test -f "$SOURCE_QMD"
@@ -350,10 +295,13 @@ printf '%s\n' "$DUMP" |
 unset COMPATIBILITY_RESULT DUMP
 
 mkdir -m 0700 "$STAGE"
+install -m 0755 "$CONTRACT_HELPER" "$STAGE/artifact-compatibility-contract.sh"
 install -m 0600 "$ALLOWLIST" "$STAGE/compatibility.env"
 install -m 0644 "$BUTTON_QMD" "$STAGE/button.qmd"
-COPYFILE_DISABLE=1 tar -C "$STAGE" -cf "$ARCHIVE" compatibility.env button.qmd
-test "$(tar -tf "$ARCHIVE")" = "$(printf 'compatibility.env\nbutton.qmd')"
+COPYFILE_DISABLE=1 tar -C "$STAGE" -cf "$ARCHIVE" \
+    artifact-compatibility-contract.sh compatibility.env button.qmd
+test "$(tar -tf "$ARCHIVE")" = \
+    "$(printf 'artifact-compatibility-contract.sh\ncompatibility.env\nbutton.qmd')"
 ARCHIVE_SHA=$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')
 SCRIPT_SHA=$(shasum -a 256 "$DEVICE_SCRIPT" | awk '{print $1}')
 

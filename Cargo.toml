@@ -25,6 +25,7 @@ imageproc = "0.25.0"
 rust-embed = { version = "8.5.0", features = ["include-exclude", "compression"] }
 env_logger = "0.11.6"
 log = "0.4.22"
+libc = "0.2"
 figment = { version = "0.10", features = ["toml", "env"] }
 toml = "0.8"
 warp = "0.3"

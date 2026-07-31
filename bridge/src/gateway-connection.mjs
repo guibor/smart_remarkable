@@ -13,13 +13,38 @@ export async function createGatewayConnection({
   logger = console,
 }) {
   const listeners = new Set();
+  const connectionListeners = new Set();
   let readyResolve;
   let readyReject;
   let ready = false;
+  let nextConnectionGeneration = 0;
+  let connectionGeneration = null;
   const readyPromise = new Promise((resolve, reject) => {
     readyResolve = resolve;
     readyReject = reject;
   });
+
+  const notifyConnectionListeners = () => {
+    const snapshot = Object.freeze({
+      connected: connectionGeneration !== null,
+      generation: connectionGeneration,
+    });
+    for (const listener of connectionListeners) {
+      try {
+        listener(snapshot);
+      } catch {
+        logger.error?.("Gateway connection listener failed");
+      }
+    }
+  };
+
+  const invalidateConnection = () => {
+    if (connectionGeneration === null) {
+      return;
+    }
+    connectionGeneration = null;
+    notifyConnectionListeners();
+  };
 
   const client = new GatewayClient({
     url: config.gatewayUrl,
@@ -31,6 +56,8 @@ export async function createGatewayConnection({
     scopes: ["operator.admin"],
     deviceIdentity: null,
     onHelloOk: () => {
+      connectionGeneration = ++nextConnectionGeneration;
+      notifyConnectionListeners();
       ready = true;
       readyResolve();
     },
@@ -38,8 +65,12 @@ export async function createGatewayConnection({
       if (!ready) {
         readyReject(error);
       } else {
+        invalidateConnection();
         logger.error?.("OpenClaw Gateway connection error");
       }
+    },
+    onClose: () => {
+      invalidateConnection();
     },
     onEvent: (event) => {
       for (const listener of listeners) {
@@ -63,11 +94,36 @@ export async function createGatewayConnection({
     request(method, params, options) {
       return client.request(method, params, options);
     },
+    async requestForGeneration(generation, method, params, options) {
+      if (
+        !Number.isSafeInteger(generation) ||
+        generation <= 0 ||
+        generation !== connectionGeneration
+      ) {
+        throw new Error("OpenClaw Gateway connection generation is unavailable");
+      }
+      const result = await client.request(method, params, options);
+      if (generation !== connectionGeneration) {
+        throw new Error("OpenClaw Gateway connection changed during request");
+      }
+      return result;
+    },
+    getConnectionGeneration() {
+      return connectionGeneration;
+    },
+    subscribeConnection(listener) {
+      if (typeof listener !== "function") {
+        throw new Error("Gateway connection listener must be a function");
+      }
+      connectionListeners.add(listener);
+      return () => connectionListeners.delete(listener);
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
     async close() {
+      invalidateConnection();
       if (typeof client.stopAndWait === "function") {
         await client.stopAndWait();
       } else {

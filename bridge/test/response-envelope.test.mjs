@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  buildResponseEnvelopeProtocolInstruction,
   MAX_RECEIVED_TEXT_BYTES,
   MAX_RENDERED_RESPONSE_BYTES,
   parseResponseEnvelope,
@@ -26,7 +27,7 @@ function assertEnvelopeError(action, code) {
 }
 
 test("exports a versioned, self-contained protocol instruction", () => {
-  assert.match(RESPONSE_ENVELOPE_PROTOCOL_VERSION, /\.v1$/u);
+  assert.match(RESPONSE_ENVELOPE_PROTOCOL_VERSION, /\.v2$/u);
   assert.match(
     RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
     new RegExp(RESPONSE_ENVELOPE_PROTOCOL_VERSION.replaceAll(".", "\\."), "u"),
@@ -36,6 +37,22 @@ test("exports a versioned, self-contained protocol instruction", () => {
   assert.match(RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION, /\[unclear\]/u);
   assert.match(RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION, /nothing else/u);
   assert.match(RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION, /code fences/u);
+  const imageInstruction =
+    buildResponseEnvelopeProtocolInstruction("image");
+  const mixedInstruction =
+    buildResponseEnvelopeProtocolInstruction("mixed");
+  assert.match(imageInstruction, /factual description/u);
+  assert.match(imageInstruction, /no legible text/u);
+  assert.match(mixedInstruction, /handwritten and printed text/u);
+  assert.match(mixedInstruction, /non-text visual content/u);
+  assert.equal(
+    imageInstruction.includes("selected handwriting"),
+    false,
+  );
+  assert.throws(
+    () => buildResponseEnvelopeProtocolInstruction("photo"),
+    /must be ink, image, or mixed/u,
+  );
 });
 
 test("parses exact keys in either order and returns an immutable envelope", () => {
@@ -82,7 +99,7 @@ test("renders exact unclear sentinel as an explicit inability statement", () => 
   );
   assert.equal(
     rendered,
-    "I could not confidently read the selected handwriting.\n\nPlease write it again.",
+    "I could not confidently read the selection.\n\nPlease write it again.",
   );
   assert.doesNotMatch(rendered, /> \[unclear\]/u);
 

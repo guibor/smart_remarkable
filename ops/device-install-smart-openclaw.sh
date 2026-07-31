@@ -9,6 +9,7 @@ EXPECTED_BINARY_SHA=${3:?binary sha256 required}
 EXPECTED_BRIDGE_TOKEN_SHA=${4:?bridge token sha256 required}
 EXPECTED_STAGED_MANIFEST_SHA=${5:?staged manifest sha256 required}
 EXPECTED_DEVICE_INSTALLER_SHA=${6:?device installer sha256 required}
+EXPECTED_CONTRACT_SHA=${7:?artifact contract sha256 required}
 if [[ ! "$ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
     echo "Invalid deployment id" >&2
     exit 2
@@ -18,7 +19,8 @@ for expected_sha in \
     "$EXPECTED_BINARY_SHA" \
     "$EXPECTED_BRIDGE_TOKEN_SHA" \
     "$EXPECTED_STAGED_MANIFEST_SHA" \
-    "$EXPECTED_DEVICE_INSTALLER_SHA"
+    "$EXPECTED_DEVICE_INSTALLER_SHA" \
+    "$EXPECTED_CONTRACT_SHA"
 do
     case "$expected_sha" in
         *[!0-9a-f]*|"") echo "Invalid expected SHA-256" >&2; exit 2 ;;
@@ -44,10 +46,19 @@ BRIDGE_TOKEN_FILE="/home/root/.smart-remarkable.bridge-token-$ID"
 BRIDGE_TUNNEL_KEY=/home/root/.ssh/id_dropbear_smart_remarkable_bridge
 SETTINGS_DIR=/home/root/.config/smart-remarkable
 SETTINGS="$SETTINGS_DIR/settings.conf"
+QMD_TARGET=/home/root/xovi/exthome/qt-resource-rebuilder/smart-remarkable-llm.qmd
+COMPATIBILITY_STATE_DIR=/run/smart-remarkable-llm-button
+COMPATIBILITY_LOCK="$COMPATIBILITY_STATE_DIR/deployment.lock"
+COMPATIBILITY_LOCK_OWNER="app:$ID"
 SWAP_STARTED=0
 HAD_APP=0
 CREATED_SETTINGS=0
 CREATED_RECOVERY_METADATA=0
+COMPATIBILITY_LOCK_OWNED=0
+ACTIVE_QMD_STATE=unchecked
+ACTIVE_QMD_SHA=unchecked
+PREVIOUS_APP_STAGED_MANIFEST_SHA=absent
+PREVIOUS_APP_CONTRACT_SHA=absent
 EXPECTED_DEVICE_SERIAL=0A247209DABC7917
 EXPECTED_FIRMWARE_VERSION=3.28.0.164
 EXPECTED_FIRMWARE_BUILD=20260702125656
@@ -70,6 +81,56 @@ smart_process_running() {
         [ "${target##*/}" = "smart_remarkable" ] && return 0
     done
     return 1
+}
+
+acquire_compatibility_lock() {
+    if [ -e "$COMPATIBILITY_STATE_DIR" ] || [ -L "$COMPATIBILITY_STATE_DIR" ]; then
+        test -d "$COMPATIBILITY_STATE_DIR"
+        test ! -L "$COMPATIBILITY_STATE_DIR"
+        test "$(stat -c %u:%g:%a "$COMPATIBILITY_STATE_DIR")" = 0:0:700
+    else
+        mkdir -p "$COMPATIBILITY_STATE_DIR"
+        chown root:root "$COMPATIBILITY_STATE_DIR"
+        chmod 0700 "$COMPATIBILITY_STATE_DIR"
+    fi
+    mkdir "$COMPATIBILITY_LOCK"
+    COMPATIBILITY_LOCK_OWNED=1
+    chown root:root "$COMPATIBILITY_LOCK"
+    chmod 0700 "$COMPATIBILITY_LOCK"
+    printf '%s\n' "$COMPATIBILITY_LOCK_OWNER" >"$COMPATIBILITY_LOCK/owner"
+    chown root:root "$COMPATIBILITY_LOCK/owner"
+    chmod 0600 "$COMPATIBILITY_LOCK/owner"
+}
+
+release_compatibility_lock() {
+    if [ "$COMPATIBILITY_LOCK_OWNED" -eq 1 ]; then
+        if [ -e "$COMPATIBILITY_LOCK/owner" ] || [ -L "$COMPATIBILITY_LOCK/owner" ]; then
+            [ -f "$COMPATIBILITY_LOCK/owner" ] || return 1
+            [ ! -L "$COMPATIBILITY_LOCK/owner" ] || return 1
+            [ "$(cat "$COMPATIBILITY_LOCK/owner")" = "$COMPATIBILITY_LOCK_OWNER" ] || return 1
+            rm -f "$COMPATIBILITY_LOCK/owner"
+        fi
+        rmdir "$COMPATIBILITY_LOCK"
+    fi
+    COMPATIBILITY_LOCK_OWNED=0
+}
+
+classify_smart_qmd() {
+    if [ ! -e "$QMD_TARGET" ] && [ ! -L "$QMD_TARGET" ]; then
+        printf '%s\n' 'absent:absent'
+        return 0
+    fi
+    [ -f "$QMD_TARGET" ] || return 1
+    [ ! -L "$QMD_TARGET" ] || return 1
+    [ "$(stat -c %u:%g:%a "$QMD_TARGET")" = 0:0:644 ] || return 1
+    qmd_sha=$(sha256sum "$QMD_TARGET" | cut -d' ' -f1)
+    qmd_state=$(smart_contract_classify_qmd_sha "$qmd_sha") || return 1
+    printf '%s:%s\n' "$qmd_state" "$qmd_sha"
+}
+
+qmd_state_is_unchanged() {
+    current_qmd=$(classify_smart_qmd) || return 1
+    [ "$current_qmd" = "$ACTIVE_QMD_STATE:$ACTIVE_QMD_SHA" ]
 }
 
 write_recovery_metadata() {
@@ -103,6 +164,14 @@ write_recovery_metadata() {
         printf 'settings_created=%s\n' "$CREATED_SETTINGS"
         printf 'archive_sha256=%s\n' "$EXPECTED_ARCHIVE_SHA"
         printf 'binary_sha256=%s\n' "$EXPECTED_BINARY_SHA"
+        printf 'artifact_contract_sha256=%s\n' "$EXPECTED_CONTRACT_SHA"
+        printf 'active_qmd_state=%s\n' "$ACTIVE_QMD_STATE"
+        printf 'active_qmd_sha256=%s\n' "$ACTIVE_QMD_SHA"
+        printf 'previous_app_staged_manifest_sha256=%s\n' \
+            "$PREVIOUS_APP_STAGED_MANIFEST_SHA"
+        printf 'previous_app_artifact_contract_sha256=%s\n' \
+            "$PREVIOUS_APP_CONTRACT_SHA"
+        printf 'rollback_order=qmd-before-app\n'
         printf 'source_inputs_sha256=%s\n' "$source_inputs_sha"
         printf 'staged_manifest_sha256=%s\n' "$EXPECTED_STAGED_MANIFEST_SHA"
         printf 'device_installer_sha256=%s\n' "$EXPECTED_DEVICE_INSTALLER_SHA"
@@ -122,6 +191,8 @@ write_recovery_metadata() {
     test "$(grep -Fxc "phase=$phase" "$RECOVERY_METADATA")" -eq 1
     test "$(grep -Fxc "staged_manifest_sha256=$EXPECTED_STAGED_MANIFEST_SHA" "$RECOVERY_METADATA")" -eq 1
     test "$(grep -Fxc "device_installer_sha256=$EXPECTED_DEVICE_INSTALLER_SHA" "$RECOVERY_METADATA")" -eq 1
+    test "$(grep -Fxc "artifact_contract_sha256=$EXPECTED_CONTRACT_SHA" "$RECOVERY_METADATA")" -eq 1
+    test "$(grep -Fxc "rollback_order=qmd-before-app" "$RECOVERY_METADATA")" -eq 1
 }
 
 restore_previous() {
@@ -144,6 +215,7 @@ restore_previous() {
         "$ACTUAL_FILE_LIST" \
         "$MANIFEST_FILE_LIST"
     rm -f "$BRIDGE_TOKEN_FILE"
+    release_compatibility_lock
 }
 
 fail_and_restore() {
@@ -230,12 +302,15 @@ EXPECTED_ARCHIVE_MEMBERS=$(printf '%s\n' \
     './SOURCE-INPUTS.sha256' \
     './STAGED-FILES.sha256' \
     './appload-launch.sh' \
+    './compatibility.env' \
     './external.manifest.json' \
     './icon.png' \
+    './scripts/artifact-compatibility-contract.sh' \
     './scripts/mode-settings.sh' \
     './scripts/openclaw-runtime-env.sh' \
     './scripts/run-armed-once.sh' \
     './scripts/run-selected-once.sh' \
+    './scripts/selection-protocol.sh' \
     './selection_openclaw.json' \
     './selection_openclaw_whatsapp.json' \
     './smart_remarkable')
@@ -259,10 +334,13 @@ for required in \
     external.manifest.json \
     icon.png \
     appload-launch.sh \
+    compatibility.env \
+    scripts/artifact-compatibility-contract.sh \
     scripts/run-armed-once.sh \
     scripts/run-selected-once.sh \
     scripts/mode-settings.sh \
     scripts/openclaw-runtime-env.sh \
+    scripts/selection-protocol.sh \
     INSTALL-PROVENANCE.txt \
     SOURCE-INPUTS.sha256 \
     STAGED-FILES.sha256
@@ -324,10 +402,38 @@ find "$STAGE" -type f -exec chmod 0644 {} \;
 chmod 0755 \
     "$STAGE/smart_remarkable" \
     "$STAGE/appload-launch.sh" \
+    "$STAGE/scripts/artifact-compatibility-contract.sh" \
     "$STAGE/scripts/run-armed-once.sh" \
     "$STAGE/scripts/run-selected-once.sh" \
     "$STAGE/scripts/mode-settings.sh" \
-    "$STAGE/scripts/openclaw-runtime-env.sh"
+    "$STAGE/scripts/openclaw-runtime-env.sh" \
+    "$STAGE/scripts/selection-protocol.sh"
+
+test "$(sha256sum "$STAGE/compatibility.env" | cut -d' ' -f1)" = \
+    "$EXPECTED_CONTRACT_SHA"
+# The helper is covered by the verified staged manifest before it is sourced.
+# shellcheck disable=SC1090
+. "$STAGE/scripts/artifact-compatibility-contract.sh"
+smart_contract_load "$STAGE/compatibility.env"
+smart_contract_require_complete
+test "$DEVICE_SERIAL" = "$EXPECTED_DEVICE_SERIAL"
+test "$FIRMWARE_VERSION" = "$EXPECTED_FIRMWARE_VERSION"
+test "$FIRMWARE_BUILD" = "$EXPECTED_FIRMWARE_BUILD"
+test "$XOCHITL_SHA256" = "$EXPECTED_XOCHITL_SHA256"
+test "$EXPECTED_BINARY_SHA" = "$SMART_REMARKABLE_SHA256"
+smart_contract_installed_client_is_exact "$STAGE"
+if [ "$HAD_APP" -ne 0 ]; then
+    if [ -f "$APP/STAGED-FILES.sha256" ] && [ ! -L "$APP/STAGED-FILES.sha256" ]; then
+        PREVIOUS_APP_STAGED_MANIFEST_SHA=$(sha256sum "$APP/STAGED-FILES.sha256" | cut -d' ' -f1)
+    else
+        PREVIOUS_APP_STAGED_MANIFEST_SHA=unavailable
+    fi
+    if [ -f "$APP/compatibility.env" ] && [ ! -L "$APP/compatibility.env" ]; then
+        PREVIOUS_APP_CONTRACT_SHA=$(sha256sum "$APP/compatibility.env" | cut -d' ' -f1)
+    else
+        PREVIOUS_APP_CONTRACT_SHA=unavailable
+    fi
+fi
 
 BRIDGE_TOKEN=$(cat "$BRIDGE_TOKEN_FILE")
 case "$BRIDGE_TOKEN" in
@@ -405,12 +511,28 @@ esac
 # This exercises the dynamic loader and clap parser only. It does not open
 # the framebuffer or an input device because clap exits for --version.
 test "$("$STAGE/smart_remarkable" --version)" = "smart_remarkable 0.4.0"
+acquire_compatibility_lock
+ACTIVE_QMD=$(classify_smart_qmd)
+ACTIVE_QMD_STATE=${ACTIVE_QMD%%:*}
+ACTIVE_QMD_SHA=${ACTIVE_QMD#*:}
+case "$ACTIVE_QMD_STATE" in
+    absent|legacy-functional|new-inert) ;;
+    new-functional)
+        # A new functional QMD may never be paired, even transiently during
+        # automatic rollback, with an older application contract.
+        [ "$HAD_APP" -ne 0 ]
+        smart_contract_installed_client_is_exact "$APP"
+        ;;
+    *) fail_and_restore 1 ;;
+esac
+qmd_state_is_unchanged
 write_recovery_metadata prepared "$STAGE"
 
 if [ "$HAD_APP" -ne 0 ]; then
     test ! -e "$BACKUP"
     mv "$APP" "$BACKUP"
 fi
+qmd_state_is_unchanged
 SWAP_STARTED=1
 mv "$STAGE" "$APP"
 sync
@@ -424,6 +546,9 @@ test "$(sha256sum "$APP/STAGED-FILES.sha256" | cut -d' ' -f1)" = "$EXPECTED_STAG
 test "$(stat -c %u:%g:%a "$APP/smart_remarkable")" = "0:0:755"
 test "$(stat -c %u:%g:%a "$APP/.env")" = "0:0:600"
 test "$(stat -c %u:%g:%a "$SETTINGS")" = "0:0:600"
+smart_contract_load "$APP/compatibility.env"
+smart_contract_installed_client_is_exact "$APP"
+qmd_state_is_unchanged
 systemctl is-active --quiet xochitl.service
 if smart_process_running; then
     echo "Post-install smart_remarkable process unexpectedly active" >&2
@@ -433,8 +558,9 @@ test "$(findmnt -n -o OPTIONS / | tr ',' '\n' | grep -c '^ro$')" -eq 1
 
 write_recovery_metadata installed "$APP"
 
+release_compatibility_lock
+rm -f "$ARCHIVE" "$BRIDGE_TOKEN_FILE"
 SWAP_STARTED=0
 CREATED_SETTINGS=0
-rm -f "$ARCHIVE" "$BRIDGE_TOKEN_FILE"
 trap - ERR HUP INT TERM
 echo "Smart Remarkable installation complete"

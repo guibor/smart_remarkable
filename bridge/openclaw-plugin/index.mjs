@@ -4,6 +4,7 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createFileReceiptJournal } from "./file-receipt-journal.mjs";
 import { createRunContextControl } from "./run-context-control.mjs";
 import {
+  REMARKABLE_PLUGIN_ID,
   createOriginAdmissionRegistry,
   registerRemarkableOriginHooks,
   registerRemarkableOriginMethods,
@@ -13,9 +14,13 @@ import {
 export {
   DEFAULT_RM_SYNC_CONFIG,
   DEFAULT_RM_SYNC_PYTHON,
+  REMARKABLE_CAPABILITIES_METHOD,
   REMARKABLE_BIND_ORIGIN_METHOD,
   REMARKABLE_CLEAR_ORIGIN_METHOD,
+  REMARKABLE_PLUGIN_ID,
+  REMARKABLE_PLUGIN_VERSION,
   REMARKABLE_RUN_CONTEXT_NAMESPACE,
+  REMARKABLE_SELECTION_KINDS,
   REMARKABLE_UPLOAD_TOOL,
   createOriginAdmissionRegistry,
   createOriginBindingHandlers,
@@ -35,9 +40,24 @@ export const DELIVERY_METHOD = "smart_remarkable.deliver";
 export const CANONICAL_SESSION_KEY = "agent:main:main";
 export const CANONICAL_AGENT_ID = "main";
 
+export function requireRemarkableHookPolicy(api) {
+  const hooks =
+    api?.config?.plugins?.entries?.[REMARKABLE_PLUGIN_ID]?.hooks;
+  if (
+    api?.id !== REMARKABLE_PLUGIN_ID ||
+    hooks?.allowPromptInjection !== true ||
+    hooks?.allowConversationAccess !== true
+  ) {
+    throw new Error(
+      "Smart reMarkable requires explicit prompt-injection and conversation-access hook policy",
+    );
+  }
+}
+
 const DELIVERY_SCOPE = "operator.write";
 const MAX_TEXT_BYTES = 32 * 1024;
-const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
+const REQUEST_ID_PATTERN =
+  /^smart-remarkable-[A-Za-z0-9][A-Za-z0-9._:-]{0,110}$/;
 const ALLOWED_KINDS = new Set(["ack", "final"]);
 const EXACT_PARAM_KEYS = Object.freeze(["kind", "requestId", "text"]);
 
@@ -400,6 +420,7 @@ export default definePluginEntry({
   description:
     "Native WhatsApp continuity and safe reMarkable Cloud document delivery.",
   register(api) {
+    requireRemarkableHookPolicy(api);
     const runContext = createRunContextControl({ api });
     const admissionRegistry = createOriginAdmissionRegistry();
     registerDeliveryMethod(api);

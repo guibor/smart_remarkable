@@ -67,8 +67,18 @@ grep -F "printf 'source_inputs_sha256=%s" "$CONTROLLER" >/dev/null
 test "$(grep -h '^EXPECTED_ARCHIVE_MEMBERS=' "$CONTROLLER" "$DEVICE_INSTALLER" |
     wc -l | tr -d ' ')" -eq 2
 grep -F 'test "$(tar -tf "$ARCHIVE")" = "$EXPECTED_ARCHIVE_MEMBERS"' "$DEVICE_INSTALLER" >/dev/null
-grep -F "'\$STAGED_MANIFEST_SHA' '\$DEVICE_INSTALLER_SHA'" "$CONTROLLER" >/dev/null
+grep -F "'\$STAGED_MANIFEST_SHA' '\$DEVICE_INSTALLER_SHA' '\$CONTRACT_SHA'" \
+    "$CONTROLLER" >/dev/null
 grep -F 'EXPECTED_STAGED_MANIFEST_SHA=${5:?staged manifest sha256 required}' "$DEVICE_INSTALLER" >/dev/null
+grep -F 'EXPECTED_CONTRACT_SHA=${7:?artifact contract sha256 required}' "$DEVICE_INSTALLER" >/dev/null
+for bundled_contract_file in \
+    './compatibility.env' \
+    './scripts/artifact-compatibility-contract.sh' \
+    './scripts/selection-protocol.sh'
+do
+    grep -F "$bundled_contract_file" "$CONTROLLER" >/dev/null
+    grep -F "$bundled_contract_file" "$DEVICE_INSTALLER" >/dev/null
+done
 grep -F 'test "$(sha256sum "$0" | cut -d' "$DEVICE_INSTALLER" >/dev/null
 grep -F "find . -type f ! -path './STAGED-FILES.sha256'" "$DEVICE_INSTALLER" >/dev/null
 grep -F "printf 'staged_files_begin" "$DEVICE_INSTALLER" >/dev/null

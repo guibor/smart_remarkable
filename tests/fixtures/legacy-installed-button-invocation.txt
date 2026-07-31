@@ -1,0 +1,3 @@
+installed_qmd_sha256=2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d
+--selection-button=write_back
+--selection-button=whatsapp_only

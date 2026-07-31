@@ -1,4 +1,4 @@
-use super::{status_update, LLMEngine, ResponseMode, Tool};
+use super::{status_update, LLMEngine, ResponseMode, SelectionKind, Tool};
 use crate::cancellation::{with_cancellation, SmartRemarkableCancellation};
 use crate::util::{option_or_env, option_or_env_fallback, OptionMap};
 use anyhow::Result;
@@ -17,6 +17,7 @@ pub struct OpenAI {
     api_key: String,
     plain_text_response: bool,
     response_mode: ResponseMode,
+    selection_kind: Option<SelectionKind>,
     tools: Vec<Tool>,
     content: Vec<json>,
 }
@@ -56,6 +57,7 @@ impl OpenAI {
             api_key,
             plain_text_response: true,
             response_mode: ResponseMode::WriteBack,
+            selection_kind: None,
             tools: Vec::new(),
             content: Vec::new(),
         }
@@ -120,6 +122,12 @@ impl OpenAI {
                     self.response_mode.as_str(),
                 )
                 .header("x-smart-remarkable-request-id", request_id);
+            if let Some(kind) = self.selection_kind {
+                request = request.header(
+                    "x-smart-remarkable-selection-kind",
+                    kind.as_str(),
+                );
+            }
         }
 
         request.json(body)
@@ -127,6 +135,9 @@ impl OpenAI {
 
     fn validate_bridge_response(&self, response: &json, request_id: &str) -> Result<bool> {
         let metadata = &response["x_smart_remarkable"];
+        let expected_selection_kind = self.selection_kind.ok_or_else(|| {
+            anyhow::anyhow!("OpenClaw bridge request has no trusted selection kind")
+        })?;
         if metadata["request_id"].as_str() != Some(request_id) {
             return Err(anyhow::anyhow!(
                 "OpenClaw bridge response request ID mismatch"
@@ -135,6 +146,11 @@ impl OpenAI {
         if metadata["response_mode"].as_str() != Some(self.response_mode.as_str()) {
             return Err(anyhow::anyhow!(
                 "OpenClaw bridge response mode mismatch"
+            ));
+        }
+        if metadata["selection_kind"].as_str() != Some(expected_selection_kind.as_str()) {
+            return Err(anyhow::anyhow!(
+                "OpenClaw bridge response selection kind mismatch"
             ));
         }
         let replayed = metadata["replayed"].as_bool().ok_or_else(|| {
@@ -220,6 +236,7 @@ impl LLMEngine for OpenAI {
             api_key,
             plain_text_response: false,
             response_mode: ResponseMode::WriteBack,
+            selection_kind: None,
             tools: Vec::new(),
             content: Vec::new(),
         }
@@ -257,7 +274,16 @@ impl LLMEngine for OpenAI {
         self.response_mode = mode;
     }
 
+    fn set_selection_kind(&mut self, kind: Option<SelectionKind>) {
+        self.selection_kind = kind;
+    }
+
     async fn execute(&mut self, cancellation: &SmartRemarkableCancellation, mut status_callback: Option<super::StatusCallback>) -> Result<()> {
+        if self.plain_text_response && self.selection_kind.is_none() {
+            return Err(anyhow::anyhow!(
+                "OpenClaw bridge request has no trusted selection kind"
+            ));
+        }
         let body = self.request_body();
 
         debug!(
@@ -293,8 +319,7 @@ impl LLMEngine for OpenAI {
 
         // Wait only for response headers first. The OpenClaw bridge deliberately
         // flushes a successful status after Gateway chat.send's onAccepted
-        // event, while the final answer is still running. This is the earliest
-        // point at which the notebook selection can safely be dismissed.
+        // event, while the final answer is still running.
         let response = with_cancellation(
             async { Ok::<_, anyhow::Error>(request.send().await?) },
             cancellation,
@@ -370,7 +395,7 @@ impl LLMEngine for OpenAI {
 mod tests {
     use super::OpenAI;
     use crate::cancellation::SmartRemarkableCancellation;
-    use crate::llm_engine::{LLMEngine, ModelExecutionStatus, ResponseMode};
+    use crate::llm_engine::{LLMEngine, ModelExecutionStatus, ResponseMode, SelectionKind};
     use crate::util::OptionMap;
     use serde_json::json;
     use std::sync::{
@@ -408,6 +433,7 @@ mod tests {
     fn bridge_response(
         request_id: &str,
         response_mode: &str,
+        selection_kind: &str,
         delivery_status: &str,
     ) -> serde_json::Value {
         json!({
@@ -429,6 +455,7 @@ mod tests {
             "x_smart_remarkable": {
                 "request_id": request_id,
                 "response_mode": response_mode,
+                "selection_kind": selection_kind,
                 "replayed": false
             }
         })
@@ -451,6 +478,7 @@ mod tests {
         options.insert("user".to_string(), "must-be-ignored".to_string());
         let mut engine = OpenAI::new_openclaw(&options);
         engine.add_text_content("What is 7 + 3?");
+        engine.set_selection_kind(Some(SelectionKind::Image));
 
         let body = engine.request_body();
         assert_eq!(body["model"], "openclaw/main");
@@ -476,7 +504,40 @@ mod tests {
             request.headers()["x-smart-remarkable-request-id"],
             request_id
         );
+        assert_eq!(
+            request.headers()["x-smart-remarkable-selection-kind"],
+            "image"
+        );
         assert_eq!(request.url().as_str(), "http://127.0.0.1:18791/v1/chat/completions");
+    }
+
+    #[test]
+    fn direct_openai_request_does_not_receive_openclaw_selection_headers() {
+        let mut options = OptionMap::new();
+        options.insert("model".to_string(), "gpt-test".to_string());
+        options.insert("base_url".to_string(), "https://api.openai.example".to_string());
+        options.insert("api_key".to_string(), "test-key".to_string());
+        let mut engine = OpenAI::new(&options);
+        engine.set_selection_kind(Some(SelectionKind::Mixed));
+        engine.add_text_content("Describe this");
+        let body = engine.request_body();
+        let request = engine
+            .request_builder(
+                &reqwest::Client::new(),
+                &body,
+                "smart-remarkable-test-direct",
+            )
+            .build()
+            .unwrap();
+
+        assert!(request
+            .headers()
+            .get("x-smart-remarkable-selection-kind")
+            .is_none());
+        assert!(request
+            .headers()
+            .get("x-smart-remarkable-response-mode")
+            .is_none());
     }
 
     #[test]
@@ -484,7 +545,8 @@ mod tests {
         let request_id = "smart-remarkable-test-0002";
         let mut engine = OpenAI::new_openclaw(&openclaw_options());
         engine.set_response_mode(ResponseMode::WhatsappOnly);
-        let valid = bridge_response(request_id, "whatsapp_only", "sent");
+        engine.set_selection_kind(Some(SelectionKind::Image));
+        let valid = bridge_response(request_id, "whatsapp_only", "image", "sent");
         assert!(engine
             .validate_bridge_response(&valid, request_id)
             .is_ok_and(|replayed| !replayed));
@@ -492,25 +554,41 @@ mod tests {
         let wrong_id = bridge_response(
             "smart-remarkable-test-other",
             "whatsapp_only",
+            "image",
             "sent",
         );
         assert!(engine
             .validate_bridge_response(&wrong_id, request_id)
             .is_err());
 
-        let wrong_mode = bridge_response(request_id, "write_back", "sent");
+        let wrong_mode = bridge_response(request_id, "write_back", "image", "sent");
         assert!(engine
             .validate_bridge_response(&wrong_mode, request_id)
             .is_err());
 
+        let wrong_kind = bridge_response(request_id, "whatsapp_only", "ink", "sent");
+        assert!(engine
+            .validate_bridge_response(&wrong_kind, request_id)
+            .is_err());
+
+        let mut missing_kind =
+            bridge_response(request_id, "whatsapp_only", "image", "sent");
+        missing_kind["x_smart_remarkable"]
+            .as_object_mut()
+            .unwrap()
+            .remove("selection_kind");
+        assert!(engine
+            .validate_bridge_response(&missing_kind, request_id)
+            .is_err());
+
         let failed_delivery =
-            bridge_response(request_id, "whatsapp_only", "failed");
+            bridge_response(request_id, "whatsapp_only", "image", "failed");
         assert!(engine
             .validate_bridge_response(&failed_delivery, request_id)
             .is_err());
 
         let mut failed_ack =
-            bridge_response(request_id, "whatsapp_only", "sent");
+            bridge_response(request_id, "whatsapp_only", "image", "sent");
         failed_ack["openclaw_delivery"]["acknowledgement"]["status"] =
             json!("failed");
         assert!(engine
@@ -518,7 +596,7 @@ mod tests {
             .is_err());
 
         let merely_requested =
-            bridge_response(request_id, "whatsapp_only", "requested");
+            bridge_response(request_id, "whatsapp_only", "image", "requested");
         assert!(engine
             .validate_bridge_response(&merely_requested, request_id)
             .is_err());
@@ -638,6 +716,7 @@ mod tests {
         let mut options = openclaw_options();
         options.insert("base_url".to_string(), format!("http://{}", address));
         let mut engine = OpenAI::new_openclaw(&options);
+        engine.set_selection_kind(Some(SelectionKind::Ink));
         engine.add_text_content("test");
         let statuses = Arc::new(Mutex::new(Vec::new()));
         let callback_statuses = Arc::clone(&statuses);
@@ -673,6 +752,7 @@ mod tests {
             let response_body = bridge_response(
                 &request_id,
                 "whatsapp_only",
+                "mixed",
                 "delivered",
             )
             .to_string();
@@ -689,6 +769,7 @@ mod tests {
         options.insert("base_url".to_string(), format!("http://{}", address));
         let mut engine = OpenAI::new_openclaw(&options);
         engine.set_response_mode(ResponseMode::WhatsappOnly);
+        engine.set_selection_kind(Some(SelectionKind::Mixed));
         engine.add_text_content("test");
         let statuses = Arc::new(Mutex::new(Vec::new()));
         let callback_statuses = Arc::clone(&statuses);
@@ -711,5 +792,18 @@ mod tests {
             .position(|status| *status == ModelExecutionStatus::ProcessingResponse)
             .unwrap();
         assert!(accepted < processing);
+    }
+
+    #[tokio::test]
+    async fn openclaw_request_without_selection_kind_fails_before_transport() {
+        let mut engine = OpenAI::new_openclaw(&openclaw_options());
+        engine.add_text_content("test");
+        let error = engine
+            .execute(&SmartRemarkableCancellation::new(), None)
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("no trusted selection kind"));
     }
 }

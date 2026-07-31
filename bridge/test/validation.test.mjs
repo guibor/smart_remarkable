@@ -9,7 +9,12 @@ import {
   RESPONSE_ENVELOPE_PROTOCOL_VERSION,
 } from "../src/response-envelope.mjs";
 import {
+  OPENCLAW_PLUGIN_ID,
+  OPENCLAW_PLUGIN_VERSION,
   SOURCE_PROVENANCE_PROTOCOL_VERSION,
+  SMART_REMARKABLE_SELECTION_KINDS,
+  verifyOriginBinding,
+  verifyPluginCapabilities,
 } from "../src/source-provenance.mjs";
 import {
   authenticateRequest,
@@ -265,17 +270,91 @@ test("requires the narrow Bearer token in constant-length-safe form", () => {
   );
 });
 
+test("origin binding receipt must echo the authenticated selection kind", () => {
+  const receipt = {
+    protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
+    status: "bound",
+    runId: "smart-remarkable-receipt-0001",
+    source: "remarkable",
+    mode: "whatsapp_only",
+    selectionKind: "image",
+    expectedSessionId: "captured-session",
+    bindingHandle: "A".repeat(43),
+  };
+  assert.equal(
+    verifyOriginBinding(
+      receipt,
+      receipt.runId,
+      receipt.mode,
+      receipt.selectionKind,
+      receipt.expectedSessionId,
+    ),
+    receipt.bindingHandle,
+  );
+  assert.throws(
+    () =>
+      verifyOriginBinding(
+        { ...receipt, selectionKind: "mixed" },
+        receipt.runId,
+        receipt.mode,
+        "image",
+        receipt.expectedSessionId,
+      ),
+    /did not confirm the reMarkable origin binding/,
+  );
+  assert.throws(
+    () =>
+      verifyOriginBinding(
+        { ...receipt, runId: "ordinary-client-receipt-0001" },
+        "ordinary-client-receipt-0001",
+        receipt.mode,
+        receipt.selectionKind,
+        receipt.expectedSessionId,
+      ),
+    /did not confirm the reMarkable origin binding/,
+  );
+});
+
+test("startup capability receipt must match the exact plugin contract", () => {
+  const receipt = {
+    status: "ready",
+    pluginId: OPENCLAW_PLUGIN_ID,
+    pluginVersion: OPENCLAW_PLUGIN_VERSION,
+    originProtocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
+    selectionKinds: [...SMART_REMARKABLE_SELECTION_KINDS],
+  };
+  assert.doesNotThrow(() => verifyPluginCapabilities(receipt));
+  assert.throws(
+    () =>
+      verifyPluginCapabilities({
+        ...receipt,
+        selectionKinds: ["ink", "mixed", "image"],
+      }),
+    /capability contract mismatch/,
+  );
+  assert.throws(
+    () =>
+      verifyPluginCapabilities({
+        ...receipt,
+        pluginVersion: "0.2.2",
+      }),
+    /capability contract mismatch/,
+  );
+});
+
 test("requires strict request mode, ID, and fixed legacy routing", () => {
   assert.deepEqual(
     validateRequestHeaders({
       "x-smart-remarkable-response-mode": "write_back",
       "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
+      "x-smart-remarkable-selection-kind": "ink",
       "x-openclaw-session-key": "agent:main:main",
       "x-openclaw-message-channel": "whatsapp",
     }),
     {
       mode: "write_back",
       requestId: "smart-remarkable-valid-0001",
+      selectionKind: "ink",
     },
   );
   assert.throws(
@@ -283,6 +362,7 @@ test("requires strict request mode, ID, and fixed legacy routing", () => {
       validateRequestHeaders({
         "x-smart-remarkable-response-mode": "something_else",
         "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
+        "x-smart-remarkable-selection-kind": "ink",
       }),
     /must be write_back or whatsapp_only/,
   );
@@ -291,9 +371,64 @@ test("requires strict request mode, ID, and fixed legacy routing", () => {
       validateRequestHeaders({
         "x-smart-remarkable-response-mode": "write_back",
         "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
+        "x-smart-remarkable-selection-kind": "ink",
         "x-openclaw-session-key": "agent:other:main",
       }),
     /server-controlled/,
+  );
+  assert.throws(
+    () =>
+      validateRequestHeaders({
+        "x-smart-remarkable-response-mode": "write_back",
+        "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
+        "x-smart-remarkable-selection-kind": "photo",
+      }),
+    /must be ink, image, or mixed/,
+  );
+  for (const selectionKind of ["image", "mixed"]) {
+    assert.equal(
+      validateRequestHeaders({
+        "x-smart-remarkable-response-mode": "whatsapp_only",
+        "x-smart-remarkable-request-id":
+          `smart-remarkable-${selectionKind}-0001`,
+        "x-smart-remarkable-selection-kind": selectionKind,
+      }).selectionKind,
+      selectionKind,
+    );
+  }
+  assert.throws(
+    () =>
+      validateRequestHeaders({
+        "x-smart-remarkable-response-mode": "write_back",
+        "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
+      }),
+    /must be ink, image, or mixed/,
+  );
+  assert.throws(
+    () =>
+      validateRequestHeaders({
+        "x-smart-remarkable-response-mode": "write_back",
+        "x-smart-remarkable-request-id": "ordinary-client-request-0001",
+        "x-smart-remarkable-selection-kind": "ink",
+      }),
+    /Invalid x-smart-remarkable-request-id/,
+  );
+  assert.equal(
+    validateRequestHeaders({
+      "x-smart-remarkable-response-mode": "write_back",
+      "x-smart-remarkable-request-id": `smart-remarkable-${"a".repeat(111)}`,
+      "x-smart-remarkable-selection-kind": "ink",
+    }).requestId.length,
+    128,
+  );
+  assert.throws(
+    () =>
+      validateRequestHeaders({
+        "x-smart-remarkable-response-mode": "write_back",
+        "x-smart-remarkable-request-id": `smart-remarkable-${"a".repeat(112)}`,
+        "x-smart-remarkable-selection-kind": "ink",
+      }),
+    /Invalid x-smart-remarkable-request-id/,
   );
 });
 
@@ -315,9 +450,10 @@ test("accepts exactly one PNG and rejects client-supplied message types", () => 
       },
     ],
   };
-  const selection = validateOpenAiBody(valid);
+  const selection = validateOpenAiBody(valid, "ink");
   assert.equal(selection.promptText, "answer the handwriting");
   assert.equal(selection.imageBase64, PNG_BASE64);
+  assert.equal(selection.selectionKind, "ink");
   assert.equal(
     selection.fingerprint,
     crypto
@@ -328,6 +464,8 @@ test("accepts exactly one PNG and rejects client-supplied message types", () => 
       .update("\0")
       .update(PNG_BASE64)
       .update("\0")
+      .update("ink")
+      .update("\0")
       .update(RESPONSE_ENVELOPE_PROTOCOL_VERSION)
       .update("\0")
       .update(SOURCE_PROVENANCE_PROTOCOL_VERSION)
@@ -336,23 +474,43 @@ test("accepts exactly one PNG and rejects client-supplied message types", () => 
 
   assert.throws(
     () =>
-      validateOpenAiBody({
-        ...valid,
-        messages: [{ role: "system", content: valid.messages[0].content }],
-      }),
+      validateOpenAiBody(
+        {
+          ...valid,
+          messages: [
+            { role: "system", content: valid.messages[0].content },
+          ],
+        },
+        "ink",
+      ),
     /one multimodal user message/,
   );
   assert.throws(
     () =>
-      validateOpenAiBody({
-        ...valid,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: "missing image" }],
-          },
-        ],
-      }),
+      validateOpenAiBody(
+        {
+          ...valid,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "missing image" }],
+            },
+          ],
+        },
+        "ink",
+      ),
     /exactly one PNG/,
+  );
+  assert.notEqual(
+    validateOpenAiBody(valid, "image").fingerprint,
+    selection.fingerprint,
+  );
+  assert.notEqual(
+    validateOpenAiBody(valid, "mixed").fingerprint,
+    selection.fingerprint,
+  );
+  assert.throws(
+    () => validateOpenAiBody(valid, "photo"),
+    /must be ink, image, or mixed/,
   );
 });

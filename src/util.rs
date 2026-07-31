@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::device::DeviceModel;
 use crate::embedded_assets::{get_answer_font_data, get_uinput_module_data};
+use crate::llm_engine::SelectionKind;
 
 pub type OptionMap = HashMap<String, String>;
 
@@ -156,6 +157,20 @@ pub fn image_to_ink_bitmap(image_bytes: &[u8], max_dim: u32) -> Result<Vec<Vec<b
 /// Lanczos resize. Invalid input is a hard error: a selection must never fall
 /// back to silently sending unprepared or malformed bytes.
 pub fn prepare_selection_png_b64(b64: &str, min_long_edge: u32) -> Result<String> {
+    prepare_selection_png_b64_for_kind(b64, min_long_edge, SelectionKind::Ink)
+}
+
+/// Prepare a native selection according to its stock xochitl classification.
+///
+/// Ink selections include the stock gray selection tint, which is normalized
+/// back to white. Image and mixed selections must retain their color and light
+/// tonal detail, so they are only enlarged (when needed) with an
+/// aspect-preserving bounded resize.
+pub fn prepare_selection_png_b64_for_kind(
+    b64: &str,
+    min_long_edge: u32,
+    kind: SelectionKind,
+) -> Result<String> {
     use base64::prelude::*;
     if min_long_edge == 0 {
         anyhow::bail!("selection minimum dimension must be positive");
@@ -167,15 +182,23 @@ pub fn prepare_selection_png_b64(b64: &str, min_long_edge: u32) -> Result<String
         anyhow::bail!("selection image is empty");
     }
 
-    // The native marquee shades the selected paper around rgb(194). Preserve
-    // dark/anti-aliased ink while restoring that overlay and paper to white.
-    let mut gray = img.to_luma8();
-    for pixel in gray.pixels_mut() {
-        if pixel.0[0] > 150 {
-            pixel.0[0] = 255;
+    let img = match kind {
+        SelectionKind::Ink => {
+            // The native marquee shades transparent selected paper around
+            // rgb(194). Preserve dark/anti-aliased ink while restoring that
+            // overlay and paper to white.
+            let mut gray = img.to_luma8();
+            for pixel in gray.pixels_mut() {
+                if pixel.0[0] > 150 {
+                    pixel.0[0] = 255;
+                }
+            }
+            image::DynamicImage::ImageLuma8(gray)
         }
-    }
-    let img = image::DynamicImage::ImageLuma8(gray);
+        SelectionKind::Image | SelectionKind::Mixed => {
+            image::DynamicImage::ImageRgba8(img.to_rgba8())
+        }
+    };
 
     let prepared = if w.max(h) >= min_long_edge {
         img
@@ -192,7 +215,8 @@ pub fn prepare_selection_png_b64(b64: &str, min_long_edge: u32) -> Result<String
     let mut png = std::io::Cursor::new(Vec::new());
     prepared.write_to(&mut png, image::ImageFormat::Png)?;
     debug!(
-        "prepare_selection_png_b64: {}x{} -> {}x{}",
+        "prepare_selection_png_b64: kind={} {}x{} -> {}x{}",
+        kind.as_str(),
         w,
         h,
         prepared.width(),
@@ -510,6 +534,15 @@ mod tests {
         BASE64_STANDARD.encode(png.into_inner())
     }
 
+    fn encode_rgb_png(image: image::RgbImage) -> String {
+        use base64::prelude::*;
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        BASE64_STANDARD.encode(png.into_inner())
+    }
+
     #[test]
     fn prepares_small_gray_selection_deterministically() {
         let mut image =
@@ -553,6 +586,68 @@ mod tests {
         assert_eq!(decoded.dimensions(), (800, 200));
         assert_eq!(decoded.get_pixel(0, 0).0[0], 255);
         assert_eq!(decoded.get_pixel(400, 100).0[0], 0);
+    }
+
+    #[test]
+    fn image_selection_preserves_light_color_detail() {
+        let mut image =
+            image::RgbImage::from_pixel(120, 60, image::Rgb([194, 194, 194]));
+        for y in 15..30 {
+            for x in 15..35 {
+                image.put_pixel(x, y, image::Rgb([246, 231, 207]));
+            }
+        }
+        for y in 25..45 {
+            for x in 70..95 {
+                image.put_pixel(x, y, image::Rgb([17, 103, 211]));
+            }
+        }
+
+        let prepared = prepare_selection_png_b64_for_kind(
+            &encode_rgb_png(image),
+            240,
+            SelectionKind::Image,
+        )
+        .unwrap();
+        use base64::prelude::*;
+        let decoded = image::load_from_memory(
+            &BASE64_STANDARD.decode(prepared).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+
+        assert_eq!(decoded.dimensions(), (240, 120));
+        let light = decoded.get_pixel(40, 40).0;
+        assert!(
+            light[0] > light[1] && light[1] > light[2] && light[2] < 250,
+            "light warm detail must not be whitened: {light:?}"
+        );
+        let blue = decoded.get_pixel(160, 70).0;
+        assert!(
+            blue[2] > blue[1] && blue[1] > blue[0],
+            "color relationships must survive resizing: {blue:?}"
+        );
+    }
+
+    #[test]
+    fn mixed_selection_uses_color_preserving_path() {
+        let image =
+            image::RgbImage::from_pixel(800, 200, image::Rgb([194, 160, 120]));
+        let prepared = prepare_selection_png_b64_for_kind(
+            &encode_rgb_png(image),
+            768,
+            SelectionKind::Mixed,
+        )
+        .unwrap();
+        use base64::prelude::*;
+        let decoded = image::load_from_memory(
+            &BASE64_STANDARD.decode(prepared).unwrap(),
+        )
+        .unwrap()
+        .to_rgb8();
+
+        assert_eq!(decoded.dimensions(), (800, 200));
+        assert_eq!(decoded.get_pixel(0, 0).0, [194, 160, 120]);
     }
 
     #[test]
