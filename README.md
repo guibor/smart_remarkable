@@ -200,11 +200,12 @@ inference never authorizes an external side effect or an unsupported completion
 claim. `received_text` remains limited to the selected attachment, while the
 supporting page and filename may influence only `response_text`.
 
-The currently installed reviewed OpenClaw workspace plugin baseline is version
-`0.3.0`. The local, not-yet-promoted v3 candidate is plugin `0.4.0` with
-origin-v4, response envelope v3, request-journal schema v3, and exact
+The currently installed reviewed OpenClaw workspace plugin is version `0.4.0`
+with origin-v4, response envelope v3, request-journal schema v3, and exact
 `selection-page-v1` plus ordered `selection`/`current_page` capability
-receipts. Existing schema-v1 and schema-v2 journal records remain fail-closed
+receipts. The previous `0.3.0` plugin and bridge remain preserved as the
+transactional rollback preimage. Existing schema-v1 and schema-v2 journal
+records remain fail-closed
 barriers rather than being replayed under the new semantics. OpenClaw closes ordinary plugin API
 methods after registration, so late origin bind and clear calls use a
 registered synchronous agent-event adapter: only a random operation ID crosses
@@ -266,9 +267,10 @@ disabled QMD; application staged manifest
 then installed the unchanged worker, and refresh-functional transaction
 `20260731T222432Z-49869` committed the corrected QMD. The recorded final
 `xochitl` PID is `39042` with `NRestarts=0`. At that historical transaction the
-deployed server plugin was `0.2.2`; the current installed server baseline is
-now `0.3.0`. This proves exact installation and stock-process stability at that
-stage, not physical ink/image/mixed acceptance through both icons.
+deployed server plugin was `0.2.2`; a later `0.3.0` baseline has since been
+superseded by the current guarded `0.4.0` transaction documented below. This
+proves exact installation and stock-process stability at that stage, not
+physical ink/image/mixed acceptance through both icons.
 
 Live physical attempts at `08:38:13` and `08:54:38` narrowed the current
 failure below AppLoad process start. Each valid descriptor reached the launcher,
@@ -358,10 +360,11 @@ post-request check found no busy/trigger/ack residue, `xochitl` remained PID
 wand-to-OpenClaw path; the deliberate offline/reconnect case and wider physical
 matrix remain separate acceptance work.
 
-The `0.8.0-openclaw` candidate adds the strict v3 context bundle. Its
-application and disabled visual canary are now installed on the tablet, while
-the server and functional v3 buttons remain deliberately unpromoted pending
-visual confirmation. Its current exact-device contract pins aarch64 worker
+The deployed `0.8.0-openclaw` generation adds the strict v3 context bundle.
+Its application, server plugin and bridge, and functional v3 buttons are now
+installed; a physical wand request is still required before calling the new
+interaction accepted or tagging it as a release. Its exact-device contract
+pins aarch64 worker
 `4c9605f7f9e6be898230c3c5d607fa36fc1ce815ad85cc8f6f04e625be314f1e`
 with build ID `16bc36a982fbb2465375641a2006e3936b511394`, maximum
 GLIBC 2.28, and no RPATH/RUNPATH.
@@ -383,23 +386,40 @@ and staged manifest
 Guarded refresh-inert transaction `20260801T185306Z-95906` then committed and
 validated the exact disabled QMD on `xochitl` PID `84925` with
 `NRestarts=0`, inactive transaction/assistant units, no deployment lock, and a
-read-only root filesystem. This is tablet inert-checkpoint evidence, not
-server promotion, functional-button enablement, or physical request
-acceptance.
+read-only root filesystem.
 
-This resource-expanding migration uses a special no-taps, app-first sequence.
-First install `0.8.0-openclaw` while the exact deployed v2 functional QMD and
-old server remain; the new client deliberately retains a strict v2 adapter
-that sends the historical one-image request and suppresses v2 local write-back.
-Then use the new contract to move that exact
-`v2-migration-functional` QMD to the new inert canary. With the buttons inert,
-quiesce requests and promote plugin `0.4.0`, origin-v4, journal schema v3, and
-the matching bridge as one server transaction. Only after capability-backed
-server health may the exact v3 functional QMD pass the guarded functional
-canary, watchdog, rollback, stable-`xochitl`, and read-only-root checks. No tap
-is permitted between the app-first install and inert transition.
+Server transaction `20260801T213248Z-32250` then atomically promoted plugin
+`0.4.0` and the matching bridge from candidate manifest
+`bf68e941958508624102fc01f7a3e06c0dfe36fbb665ba098dacbc9326915859`.
+The current-process Gateway probe returned origin-v4,
+`selection-page-v1`, ordered `selection`/`current_page` roles, and all four
+Smart reMarkable RPCs. Independent readback found Gateway PID `763455`, bridge
+PID `764888`, zero service restarts, unchanged OpenClaw configuration hash,
+the same request-journal inode and 18 records, a completed fresh watchdog
+invocation, no plugin-inspector worker, and healthy loopback listeners only.
+Guarded refresh-functional transaction `20260801T213623Z-74175` then committed
+compiled v3 QMD
+`5cf5156df227a1ecdf3fb421b2cc57e55564bf31ab9d434a7f16c21b40ef0dc2`
+on `xochitl` PID `88214`. The installed app reports
+`smart_remarkable 0.8.0-openclaw`; its worker, staged manifest, and artifact
+contract match the hashes above; `NRestarts=0`, `/` remains read-only, the
+transaction and watchdog units are inactive, and every co-resident QMD,
+including BetterTOC r3, retains its pinned hash. This proves deployment and
+stock-process stability, not a physical selection-to-OpenClaw turn.
 
-OpenClaw's v3 candidate canonical final remains a strict response-envelope-v3
+This resource-expanding migration used a special no-taps, app-first sequence.
+It first installed `0.8.0-openclaw` while the exact deployed v2 functional QMD
+and old server remained; the new client deliberately retained a strict v2
+adapter that sends the historical one-image request and suppresses v2 local
+write-back.
+The new contract then moved that exact `v2-migration-functional` QMD to the
+inert canary. With the buttons inert, the guarded server transaction promoted
+plugin `0.4.0`, origin-v4, journal schema v3, and the matching bridge together.
+Only after capability-backed server health did the exact v3 functional QMD
+pass its guarded functional canary, watchdog, rollback, stable-`xochitl`, and
+read-only-root checks. No tap occurred during the app-first/inert interval.
+
+OpenClaw's deployed v3 canonical final remains a strict response-envelope-v3
 literal-transcription/answer envelope: WhatsApp receives one atomic `I read:`
 quote followed by the answer, while the sparkling notebook returns only the
 answer for guarded stock-text insertion and the sparkles action returns no
@@ -614,13 +634,13 @@ over SSH while you're learning the gesture.
 `xovi-ext/llmbutton` installed, lassoing text with xochitl's own selection
 tool shows **LLM** and **Draw** buttons beside cut/copy/paste. That native
 extension is not the safe Paper Pro integration. The guarded firmware-specific
-candidate in `xovi-qmd/` adds the stock notebook-with-sparkles and sparkles
-actions. The deployed v2 source prewarms and caches one dynamically imported,
-parent-owned `AppLoadLibrary`, then launches a bounded descriptor containing
+path in `xovi-qmd/` adds the stock notebook-with-sparkles and sparkles actions.
+The historical v2 source introduced one prewarmed, cached, dynamically
+imported, parent-owned `AppLoadLibrary`, then launched a bounded descriptor containing
 mode, kind, orientation, geometry, and capture time through that direct checked
-helper. It reuses the helper for the same-snapshot prepare and close
+helper. It reused the helper for the same-snapshot prepare and close
 acknowledgements; it never talks to the Rust process directly.
-The `0.8.0-openclaw` candidate patches both `DeviceSceneView` and
+The deployed `0.8.0-openclaw` generation patches both `DeviceSceneView` and
 `SceneSelectionHandler` so a v3 descriptor also binds exact document/page
 identity, page-view bounds, and completeness before producing the two-image
 `selection-page-v1` request.
@@ -894,7 +914,7 @@ walks the live QtQuick scene graph. It is retained only as upstream source
 and is not compatible with the guarded Paper Pro path.
 
 The Paper Pro integration instead uses firmware-specific QMLDiff artifacts in
-`xovi-qmd/`. The v3 candidate patches the exact `DeviceSceneView.qml` and
+`xovi-qmd/`. The deployed v3 generation patches the exact `DeviceSceneView.qml` and
 `SceneSelectionHandler.qml` resources and inserts two
 `ArkControls.ContextualMenu.Button` objects after Copy. It explicitly passes
 document/page identity from the owning scene view and prewarms one parent-owned
@@ -924,10 +944,9 @@ The first `0.8.0` refresh-inert attempt still expected r2, so it failed closed
 before `ARMED`, changed no QMD, and did not restart `xochitl`; the contract was
 then revised to preserve r3 rather than downgrade the tablet.
 
-The deployed `0.7.3-openclaw` path
-still uses compiled v2 QMD
+The historical `0.7.3-openclaw` path used compiled v2 QMD
 `495db83da318801d24ae3d4d63120c7e9d1568145e3298efccecea583f5c17c4`;
-the reviewed v3 candidate source/compiled pair is
+the current deployed v3 source/compiled pair is
 `1b01d2a123ac5d16763b140c2342c14bbd99243455fc81debdad85165707644d` /
 `5cf5156df227a1ecdf3fb421b2cc57e55564bf31ab9d434a7f16c21b40ef0dc2`.
 The earlier deployed compiled v2 QMD

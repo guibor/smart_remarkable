@@ -137,9 +137,10 @@ on menu visibility changes, timeout, failed or non-positive AppLoad launch, or
 local validation failure, so a failed attempt cannot latch the other icon or
 leave stock controls hidden.
 
-The canonical `0.8.0-openclaw` button path is protocol v3; the currently
-deployed `0.7.3-openclaw` path remains strict v2 until guarded promotion. At
-tap time the v3 QML derives the exact `ink`, `image`, or `mixed` kind, maps all
+The deployed `0.8.0-openclaw` button path is protocol v3. Its strict v2
+adapter remains only for the guarded app-first migration and rollback
+boundary; it is not a substitute for v3 context. At tap time the v3 QML
+derives the exact `ink`, `image`, or `mixed` kind, maps all
 four selection corners into the selection-root view, and records fixed-point
 axis-aligned bounds. It also maps the selection root into the physical scene
 and accepts only the stable `normal` or `rot180` transforms; 90-degree,
@@ -200,6 +201,31 @@ click, prepare acknowledgement, and close acknowledgement. A navigation or
 identity change therefore fails before remote submission. Protocol v2 remains
 strictly parseable only for the guarded app-first migration/rollback boundary
 and is never silently upgraded into a context-bearing request.
+
+### Guarded server promotion
+
+Plugin, bridge, and journal-protocol changes are promoted as one quiesced
+transaction while the tablet buttons are inert. The controller snapshots the
+exact previous bridge/plugin trees, immutable configuration hash, request and
+receipt journal trees, unit definitions, and restart counts before swapping
+same-filesystem paths. It starts the candidate Gateway and bridge only after
+on-server tests pass, then proves the already-running production Gateway with
+a hard-timeboxed direct `GatewayClient` capability query plus current-PID
+journal and exact-manifest evidence. It never runs OpenClaw's runtime plugin
+inspector because that command creates a second plugin registry and can leave
+resource-intensive workers. Any failed post-swap guard restores the exact
+preimages and re-proves the old runtime before service resumption.
+
+The system watchdog timer is `Persistent=true`. If it became overdue while
+paused, resuming it may legitimately launch the one-shot immediately instead
+of first reporting `SubState=waiting`. The guarded sequence therefore requires
+the timer to be enabled and active, observes both a fresh timer trigger and a
+fresh service invocation, requires clean one-shot completion, and only then
+requires the timer to be active/waiting again. Missing trigger evidence, a
+failed one-shot, or a non-waiting final timer still fails closed. Production
+transaction `20260801T213248Z-32250` installed plugin `0.4.0`, origin-v4,
+response-envelope v3, journal schema v3, and the matching bridge under this
+contract; the older `0.3.0` trees remain its rollback preimages.
 
 After the prepare acknowledgement, `processing_task` resolves the human-facing
 reMarkable document display name from the exact UUID's `.metadata` file below
@@ -691,9 +717,10 @@ read-only root, and no busy/trigger/ack residue. This accepts the ordinary wand
 path without claiming the deliberate tunnel-loss or complete orientation/kind
 matrix.
 
-The `0.8.0-openclaw` application and disabled visual canary are deployed, but
-the server and functional v3 QMD remain deliberately unpromoted pending the
-inert visual checkpoint. The candidate pins worker SHA-256
+The complete `0.8.0-openclaw` generation is deployed: application, visually
+accepted inert checkpoint, server plugin/bridge, and functional v3 QMD. A
+physical v3 wand request remains a separate acceptance gate. The generation
+pins worker SHA-256
 `4c9605f7f9e6be898230c3c5d607fa36fc1ce815ad85cc8f6f04e625be314f1e`
 and build ID `16bc36a982fbb2465375641a2006e3936b511394`.
 Its launcher, unchanged reconnecting runner, and v3 selection-protocol helper
@@ -716,9 +743,13 @@ Refresh-inert transaction `20260801T185306Z-95906` committed and independently
 validated inert compiled QMD
 `635752321485a4dfb702b24fdf9b1f836f329a1399ebcc06f4b19dc4035a625a`
 on `xochitl` PID `84925`, with zero restarts, no live deployment lock or
-assistant unit, and read-only root. The currently installed server baseline is
-still plugin `0.3.0`; plugin `0.4.0`, origin-v4, response envelope v3, journal
-schema v3, and the matching bridge remain an unpromoted paired candidate.
+assistant unit, and read-only root. Server transaction
+`20260801T213248Z-32250` installed plugin `0.4.0`, origin-v4, response envelope
+v3, journal schema v3, and the matching bridge with direct current-process
+capability proof and a completed fresh watchdog invocation. Functional
+transaction `20260801T213623Z-74175` then committed the exact compiled v3 QMD
+on `xochitl` PID `88214`, with `NRestarts=0`, inactive transaction/takeover
+units, unchanged co-resident QMD hashes, and read-only root.
 
 The historical firmware-recovery sequence first used disabled transaction
 `20260730T184327Z-34344` and functional transaction
@@ -784,8 +815,9 @@ those stock-process and filesystem invariants.
 The current two-button client passes its applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
 font-render output-path test filtered. The current local bridge and no-mirror
-delivery plugin suite contains 148 Node tests; this is candidate evidence only,
-not proof that plugin 0.4.0 has been promoted to the server. All six
+delivery plugin suite contains 148 Node tests; this is local behavior evidence,
+while server transaction `20260801T213248Z-32250` and its direct live probes
+separately prove plugin `0.4.0` deployment. All six
 settings/runtime/protocol/artifact shell suites pass. The native tests cover
 strict nonce/orientation/freshness parsing, exact acknowledgement binding,
 distinct legacy generations, explicit-orientation framebuffer normalization,
@@ -1088,7 +1120,7 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   only normalized provider receipts or fixed errors. Delivery remains
   `operator.write`; origin bind and clear require `operator.admin`. Origin binding stores a
   server-generated capability and separate cleanup handle as a scalar host
-  run-context record before model admission. The version-0.4.0 candidate
+  run-context record before model admission. The deployed version-0.4.0 generation
   requires explicit live prompt-injection and conversation-access policy, then reaches
   that host state after registration through its synchronous agent-event
   adapter. The event contains only a random operation ID; the complete bounded
@@ -1167,18 +1199,21 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   `--selection-button` arguments are accepted only as the explicit pinned-QMD
   `legacy-v1` migration route.
 - `xovi-qmd/`: contains the disabled visual-canary source/artifact, the
-  reviewable firmware-specific v2 functional source, the pinned legacy-v1
+  reviewable firmware-specific v3 functional source, the pinned v2/legacy-v1
   rollback artifact, and the immutable compatibility contract. The functional
   source rehashes through the pinned QMLDiff tool and exact firmware hashtable
   to the byte-identical compiled direct-launch artifact recorded by the
   finalized contract. That artifact and the seven exact co-resident QMDs pass
-  compatibility and compose to 22 resources. The currently deployed
-  direct-launch generation failed physical nonce creation; the
-  BusyBox/cached-helper replacement is now deployed through the guarded inert,
-  application, and functional transactions recorded above, and its later
-  lifecycle repair has passed two physical wand requests. Both menus place the firmware's stock
+  compatibility and compose to 22 resources. The earlier direct-launch
+  generation failed physical nonce creation; its BusyBox/cached-helper and
+  lifecycle repairs later passed two physical v2 wand requests. The v3
+  application, inert QMD, server generation, and functional QMD are now
+  deployed through transactions `20260801T185142Z`,
+  `20260801T185306Z-95906`, `20260801T213248Z-32250`, and
+  `20260801T213623Z-74175`, respectively. Physical v3 request acceptance is
+  still separate. Both menus place the firmware's stock
   notebook-with-sparkles answer-here action and stock sparkles agent action
-  immediately after Copy. The v2 source derives
+  immediately after Copy. The v3 source derives
   live kind, fixed-point view geometry, and stable scene orientation; rechecks
   that snapshot at both the prepare and close phases; hides only the stock
   `controlsAreVisible` flag through a reversible binding; and returns exact
