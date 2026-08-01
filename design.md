@@ -691,8 +691,9 @@ read-only root, and no busy/trigger/ack residue. This accepts the ordinary wand
 path without claiming the deliberate tunnel-loss or complete orientation/kind
 matrix.
 
-The locally completed, not-yet-deployed `0.8.0-openclaw` candidate pins worker
-SHA-256
+The `0.8.0-openclaw` application and disabled visual canary are deployed, but
+the server and functional v3 QMD remain deliberately unpromoted pending the
+inert visual checkpoint. The candidate pins worker SHA-256
 `4c9605f7f9e6be898230c3c5d607fa36fc1ce815ad85cc8f6f04e625be314f1e`
 and build ID `16bc36a982fbb2465375641a2006e3936b511394`.
 Its launcher, unchanged reconnecting runner, and v3 selection-protocol helper
@@ -706,10 +707,18 @@ The functional source/compiled QMD identities are
 the inert source/compiled identities are
 `85577aabce320c983de04ef0928851a9567839ba95494bd2d58dbf14f50b7b25` and
 `635752321485a4dfb702b24fdf9b1f836f329a1399ebcc06f4b19dc4035a625a`.
-These are local reviewed candidate identities, not live tablet evidence. The
-currently installed server baseline is plugin `0.3.0`; plugin `0.4.0`,
-origin-v4, response envelope v3, journal schema v3, and the matching bridge
-remain an unpromoted paired candidate.
+Application transaction `20260801T185142Z` installed that worker with
+r3-aware contract
+`9a847c23e2a25d4554d10072c7f3ba706c01ae7743922463767c2e968b374215`
+and staged manifest
+`54f2c2cb0b9c9d828ed7aaa429ac7f351cd4bb384d0d496ba46ae83417e7233a`.
+Refresh-inert transaction `20260801T185306Z-95906` committed and independently
+validated inert compiled QMD
+`635752321485a4dfb702b24fdf9b1f836f329a1399ebcc06f4b19dc4035a625a`
+on `xochitl` PID `84925`, with zero restarts, no live deployment lock or
+assistant unit, and read-only root. The currently installed server baseline is
+still plugin `0.3.0`; plugin `0.4.0`, origin-v4, response envelope v3, journal
+schema v3, and the matching bridge remain an unpromoted paired candidate.
 
 The historical firmware-recovery sequence first used disabled transaction
 `20260730T184327Z-34344` and functional transaction

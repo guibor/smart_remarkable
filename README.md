@@ -358,9 +358,10 @@ post-request check found no busy/trigger/ack residue, `xochitl` remained PID
 wand-to-OpenClaw path; the deliberate offline/reconnect case and wider physical
 matrix remain separate acceptance work.
 
-The locally completed `0.8.0-openclaw` candidate adds the strict v3 context
-bundle without changing that deployed state yet. Its current exact-device
-contract pins aarch64 worker
+The `0.8.0-openclaw` candidate adds the strict v3 context bundle. Its
+application and disabled visual canary are now installed on the tablet, while
+the server and functional v3 buttons remain deliberately unpromoted pending
+visual confirmation. Its current exact-device contract pins aarch64 worker
 `4c9605f7f9e6be898230c3c5d607fa36fc1ce815ad85cc8f6f04e625be314f1e`
 with build ID `16bc36a982fbb2465375641a2006e3936b511394`, maximum
 GLIBC 2.28, and no RPATH/RUNPATH.
@@ -374,8 +375,17 @@ The functional source/compiled QMD pair is
 the inert source/compiled pair is
 `85577aabce320c983de04ef0928851a9567839ba95494bd2d58dbf14f50b7b25` /
 `635752321485a4dfb702b24fdf9b1f836f329a1399ebcc06f4b19dc4035a625a`.
-These are local reviewed candidate identities, not evidence that the tablet or
-server has been upgraded.
+Application transaction `20260801T185142Z` installed the exact worker with
+revised r3-aware contract
+`9a847c23e2a25d4554d10072c7f3ba706c01ae7743922463767c2e968b374215`
+and staged manifest
+`54f2c2cb0b9c9d828ed7aaa429ac7f351cd4bb384d0d496ba46ae83417e7233a`.
+Guarded refresh-inert transaction `20260801T185306Z-95906` then committed and
+validated the exact disabled QMD on `xochitl` PID `84925` with
+`NRestarts=0`, inactive transaction/assistant units, no deployment lock, and a
+read-only root filesystem. This is tablet inert-checkpoint evidence, not
+server promotion, functional-button enablement, or physical request
+acceptance.
 
 This resource-expanding migration uses a special no-taps, app-first sequence.
 First install `0.8.0-openclaw` while the exact deployed v2 functional QMD and
