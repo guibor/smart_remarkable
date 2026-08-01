@@ -19,6 +19,8 @@ import {
   ORIGIN_BIND_METHOD,
   ORIGIN_CLEAR_METHOD,
   SOURCE_PROVENANCE_PROTOCOL_VERSION,
+  SMART_REMARKABLE_ATTACHMENT_ROLES,
+  SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   SMART_REMARKABLE_SELECTION_KINDS,
   SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
   SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
@@ -30,6 +32,9 @@ const DEFAULT_RECEIVED_TEXT = "What is six times seven?";
 const ORIGIN_BINDING_HANDLE = "A".repeat(43);
 const PNG_BASE64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]).toString("base64");
+const PAGE_PNG_BASE64 = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01,
 ]).toString("base64");
 
 const config = Object.freeze({
@@ -77,6 +82,8 @@ function exactCapabilities() {
     pluginId: OPENCLAW_PLUGIN_ID,
     pluginVersion: OPENCLAW_PLUGIN_VERSION,
     originProtocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
+    inputContextVersions: [SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION],
+    attachmentRoles: [...SMART_REMARKABLE_ATTACHMENT_ROLES],
     selectionKinds: [...SMART_REMARKABLE_SELECTION_KINDS],
   };
 }
@@ -207,6 +214,7 @@ class FakeGateway {
         source: "remarkable",
         mode: params.mode,
         selectionKind: params.selectionKind,
+        contextVersion: params.contextVersion,
         expectedSessionId: params.expectedSessionId,
         bindingHandle: ORIGIN_BINDING_HANDLE,
       });
@@ -400,13 +408,30 @@ function requestBody(prompt = "Read the handwriting and answer.") {
           { type: "text", text: prompt },
           {
             type: "image_url",
+            x_smart_remarkable_role: "selection",
             image_url: {
               url: `data:image/png;base64,${PNG_BASE64}`,
+            },
+          },
+          {
+            type: "image_url",
+            x_smart_remarkable_role: "current_page",
+            image_url: {
+              url: `data:image/png;base64,${PAGE_PNG_BASE64}`,
             },
           },
         ],
       },
     ],
+    x_smart_remarkable_context: {
+      version: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+      document_display_name: "Project Notes Confidential",
+      page_id: "page-0001",
+      page_index: 2,
+      page_number: 3,
+      page_image_scope: "current_page_view",
+      page_image_completeness: "full_page",
+    },
   };
 }
 
@@ -419,6 +444,7 @@ function post({
   requestId,
   mode,
   selectionKind = "ink",
+  contextVersion = SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   body = requestBody(),
   token = BRIDGE_TOKEN,
 }) {
@@ -438,6 +464,7 @@ function post({
         "x-smart-remarkable-response-mode": mode,
         "x-smart-remarkable-request-id": requestId,
         "x-smart-remarkable-selection-kind": selectionKind,
+        "x-smart-remarkable-context-version": contextVersion,
         "x-openclaw-session-key": "agent:main:main",
         "x-openclaw-message-channel": "whatsapp",
       },
@@ -584,6 +611,10 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   const result = await pending.body;
   assert.equal(result.json.choices[0].message.content, "The answer is 42.");
   assert.equal(result.json.x_smart_remarkable.selection_kind, "ink");
+  assert.equal(
+    result.json.x_smart_remarkable.context_version,
+    SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+  );
   assert.equal(result.json.openclaw_delivery.acknowledgement.status, "sent");
   assert.equal(result.json.openclaw_delivery.final.status, "sent");
 
@@ -610,6 +641,7 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
     requestId: "smart-remarkable-test-0001",
     mode: "write_back",
     selectionKind: "ink",
+    contextVersion: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
     expectedSessionId: "test-canonical-session",
   });
   assert.deepEqual(originClearCalls[0].params, {
@@ -679,7 +711,40 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   );
   assert.equal(chatCalls[0].params.message.includes("/verbose"), false);
   assert.equal(chatCalls[0].params.suppressCommandInterpretation, true);
-  assert.equal(chatCalls[0].params.attachments[0].content, PNG_BASE64);
+  assert.deepEqual(chatCalls[0].params.attachments, [
+    {
+      type: "image",
+      mimeType: "image/png",
+      fileName: "remarkable-selection.png",
+      content: PNG_BASE64,
+    },
+    {
+      type: "image",
+      mimeType: "image/png",
+      fileName: "remarkable-current-page.png",
+      content: PAGE_PNG_BASE64,
+    },
+  ]);
+  assert.match(
+    chatCalls[0].params.message,
+    /Trusted Smart reMarkable capture manifest selection-page-v1/,
+  );
+  assert.match(
+    chatCalls[0].params.message,
+    /"display_name":"Project Notes Confidential"/,
+  );
+  assert.match(
+    chatCalls[0].params.message,
+    /remarkable-selection\.png.*primary_user_focus/is,
+  );
+  assert.match(
+    chatCalls[0].params.message,
+    /remarkable-current-page\.png.*supporting_page_context/is,
+  );
+  assert.match(
+    chatCalls[0].params.message,
+    /received_text.*selection attachment.*Never transcribe/is,
+  );
   assert.equal(
     ackCalls[0].params.requestId,
     "smart-remarkable-test-0001",

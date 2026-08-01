@@ -1,4 +1,7 @@
-use super::{status_update, LLMEngine, ResponseMode, SelectionKind, Tool};
+use super::{
+    status_update, LLMEngine, ResponseMode, SelectionKind, SelectionPageContext,
+    Tool, SELECTION_PAGE_CONTEXT_VERSION,
+};
 use crate::cancellation::{with_cancellation, SmartRemarkableCancellation};
 use crate::util::{option_or_env, option_or_env_fallback, OptionMap};
 use anyhow::Result;
@@ -19,6 +22,7 @@ pub struct OpenAI {
     plain_text_response: bool,
     response_mode: ResponseMode,
     selection_kind: Option<SelectionKind>,
+    selection_page_context: Option<SelectionPageContext>,
     tools: Vec<Tool>,
     content: Vec<json>,
 }
@@ -59,6 +63,7 @@ impl OpenAI {
             plain_text_response: true,
             response_mode: ResponseMode::WriteBack,
             selection_kind: None,
+            selection_page_context: None,
             tools: Vec::new(),
             content: Vec::new(),
         }
@@ -76,13 +81,63 @@ impl OpenAI {
     }
 
     fn request_body(&self) -> json {
+        let content = if self.plain_text_response {
+            if let Some(context) = &self.selection_page_context {
+                let text_parts: Vec<_> = self
+                    .content
+                    .iter()
+                    .filter(|part| part["type"].as_str() == Some("text"))
+                    .cloned()
+                    .collect();
+                if text_parts.len() == 1 && self.content.len() == 1 {
+                    vec![
+                        text_parts[0].clone(),
+                        json!({
+                            "type": "image_url",
+                            "x_smart_remarkable_role": "selection",
+                            "image_url": {
+                                "url": format!("data:image/png;base64,{}", context.selection_image_base64)
+                            }
+                        }),
+                        json!({
+                            "type": "image_url",
+                            "x_smart_remarkable_role": "current_page",
+                            "image_url": {
+                                "url": format!("data:image/png;base64,{}", context.current_page_image_base64)
+                            }
+                        }),
+                    ]
+                } else {
+                    // execute() rejects this malformed local shape before it
+                    // can reach the transport.
+                    self.content.clone()
+                }
+            } else {
+                self.content.clone()
+            }
+        } else {
+            self.content.clone()
+        };
         let mut body = json!({
             "model": self.model,
             "messages": [{
                 "role": "user",
-                "content": self.content
+                "content": content
             }]
         });
+        if self.plain_text_response {
+            if let Some(context) = &self.selection_page_context {
+                body["x_smart_remarkable_context"] = json!({
+                    "version": SELECTION_PAGE_CONTEXT_VERSION,
+                    "document_display_name": context.document_display_name,
+                    "page_id": context.page_id,
+                    "page_index": context.page_index,
+                    "page_number": u64::from(context.page_index) + 1,
+                    "page_image_scope": "current_page_view",
+                    "page_image_completeness": context.page_image_completeness.as_str(),
+                });
+            }
+        }
         if !self.plain_text_response {
             body["tools"] = json!(self.tools.iter().map(Self::tool_definition_json).collect::<Vec<_>>());
             body["tool_choice"] = json!("required");
@@ -127,6 +182,12 @@ impl OpenAI {
                 request = request.header(
                     "x-smart-remarkable-selection-kind",
                     kind.as_str(),
+                );
+            }
+            if self.selection_page_context.is_some() {
+                request = request.header(
+                    "x-smart-remarkable-context-version",
+                    SELECTION_PAGE_CONTEXT_VERSION,
                 );
             }
         }
@@ -192,6 +253,7 @@ impl OpenAI {
         api_key: String,
         response_mode: ResponseMode,
         selection_kind: SelectionKind,
+        context_version: Option<&str>,
         body: &json,
         request_id: &str,
         cancellation: &SmartRemarkableCancellation,
@@ -200,7 +262,7 @@ impl OpenAI {
         let deadline = tokio::time::Instant::now() + OPENCLAW_TRANSPORT_RECOVERY_TIMEOUT;
         let mut remote_accepted = false;
         let mut attempt = 0_u32;
-        let request_template = client
+        let mut request_builder = client
             .post(format!("{}/v1/chat/completions", base_url))
             .bearer_auth(&api_key)
             .header("Content-Type", "application/json")
@@ -212,7 +274,14 @@ impl OpenAI {
             .header(
                 "x-smart-remarkable-selection-kind",
                 selection_kind.as_str(),
-            )
+            );
+        if let Some(context_version) = context_version {
+            request_builder = request_builder.header(
+                "x-smart-remarkable-context-version",
+                context_version,
+            );
+        }
+        let request_template = request_builder
             .json(body)
             .build()?;
 
@@ -292,7 +361,12 @@ impl OpenAI {
         }
     }
 
-    fn validate_bridge_response(&self, response: &json, request_id: &str) -> Result<bool> {
+    fn validate_bridge_response(
+        &self,
+        response: &json,
+        request_id: &str,
+        expected_context_version: Option<&str>,
+    ) -> Result<bool> {
         let metadata = &response["x_smart_remarkable"];
         let expected_selection_kind = self.selection_kind.ok_or_else(|| {
             anyhow::anyhow!("OpenClaw bridge request has no trusted selection kind")
@@ -311,6 +385,13 @@ impl OpenAI {
             return Err(anyhow::anyhow!(
                 "OpenClaw bridge response selection kind mismatch"
             ));
+        }
+        if let Some(expected_context_version) = expected_context_version {
+            if metadata["context_version"].as_str() != Some(expected_context_version) {
+                return Err(anyhow::anyhow!(
+                    "OpenClaw bridge response context version mismatch"
+                ));
+            }
         }
         let replayed = metadata["replayed"].as_bool().ok_or_else(|| {
             anyhow::anyhow!("OpenClaw bridge response has invalid replay metadata")
@@ -396,6 +477,7 @@ impl LLMEngine for OpenAI {
             plain_text_response: false,
             response_mode: ResponseMode::WriteBack,
             selection_kind: None,
+            selection_page_context: None,
             tools: Vec::new(),
             content: Vec::new(),
         }
@@ -427,6 +509,7 @@ impl LLMEngine for OpenAI {
 
     fn clear_content(&mut self) {
         self.content.clear();
+        self.selection_page_context = None;
     }
 
     fn set_response_mode(&mut self, mode: ResponseMode) {
@@ -437,18 +520,47 @@ impl LLMEngine for OpenAI {
         self.selection_kind = kind;
     }
 
+    fn set_selection_page_context(&mut self, context: Option<SelectionPageContext>) {
+        self.selection_page_context = context;
+    }
+
     async fn execute(&mut self, cancellation: &SmartRemarkableCancellation, mut status_callback: Option<super::StatusCallback>) -> Result<()> {
         if self.plain_text_response && self.selection_kind.is_none() {
             return Err(anyhow::anyhow!(
                 "OpenClaw bridge request has no trusted selection kind"
             ));
         }
+        if self.plain_text_response && self.selection_page_context.is_some() {
+            let valid_local_shape = self.content.len() == 1
+                && self.content[0]["type"].as_str() == Some("text")
+                && self.content[0]["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty());
+            if !valid_local_shape {
+                return Err(anyhow::anyhow!(
+                    "OpenClaw selection-page request must contain exactly one non-empty text part"
+                ));
+            }
+        }
+        let expected_context_version = self
+            .selection_page_context
+            .as_ref()
+            .map(|_| SELECTION_PAGE_CONTEXT_VERSION);
         let body = self.request_body();
+        let content_items = body["messages"][0]["content"]
+            .as_array()
+            .map_or(0, Vec::len);
+        if self.plain_text_response {
+            // The immutable serialized body below owns the images for every
+            // replay. Drop the engine's second copy before network I/O.
+            self.content.clear();
+            self.selection_page_context = None;
+        }
 
         debug!(
             "OpenAI-compatible request prepared (model={}, content_items={}, tool_count={})",
             self.model,
-            self.content.len(),
+            content_items,
             self.tools.len()
         );
 
@@ -487,6 +599,7 @@ impl LLMEngine for OpenAI {
                 self.api_key.clone(),
                 self.response_mode,
                 selection_kind,
+                expected_context_version,
                 &body,
                 &request_id,
                 cancellation,
@@ -520,7 +633,11 @@ impl LLMEngine for OpenAI {
         status_update!(status_callback, super::ModelExecutionStatus::ProcessingResponse);
 
         if self.plain_text_response {
-            let replayed = self.validate_bridge_response(&json, &request_id)?;
+            let replayed = self.validate_bridge_response(
+                &json,
+                &request_id,
+                expected_context_version,
+            )?;
             return self.handle_plain_text_response(
                 &json,
                 &mut status_callback,
@@ -570,7 +687,11 @@ impl LLMEngine for OpenAI {
 mod tests {
     use super::OpenAI;
     use crate::cancellation::SmartRemarkableCancellation;
-    use crate::llm_engine::{LLMEngine, ModelExecutionStatus, ResponseMode, SelectionKind};
+    use crate::llm_engine::{
+        LLMEngine, ModelExecutionStatus, ResponseMode, SelectionKind,
+        SelectionPageContext, SELECTION_PAGE_CONTEXT_VERSION,
+    };
+    use crate::touch::PageImageCompleteness;
     use crate::util::OptionMap;
     use serde_json::json;
     use std::sync::{
@@ -634,6 +755,34 @@ mod tests {
                 "replayed": false
             }
         })
+    }
+
+    fn bridge_response_with_context(
+        request_id: &str,
+        response_mode: &str,
+        selection_kind: &str,
+        delivery_status: &str,
+    ) -> serde_json::Value {
+        let mut response = bridge_response(
+            request_id,
+            response_mode,
+            selection_kind,
+            delivery_status,
+        );
+        response["x_smart_remarkable"]["context_version"] =
+            json!(SELECTION_PAGE_CONTEXT_VERSION);
+        response
+    }
+
+    fn selection_page_context() -> SelectionPageContext {
+        SelectionPageContext {
+            selection_image_base64: "c2VsZWN0aW9u".to_string(),
+            current_page_image_base64: "Y3VycmVudC1wYWdl".to_string(),
+            document_display_name: "Project notes".to_string(),
+            page_id: "page-1".to_string(),
+            page_index: 4,
+            page_image_completeness: PageImageCompleteness::ViewportOnly,
+        }
     }
 
     fn request_header(request: &[u8], name: &str) -> String {
@@ -723,6 +872,57 @@ mod tests {
     }
 
     #[test]
+    fn selection_page_request_has_exact_context_and_role_order() {
+        let mut engine = OpenAI::new_openclaw(&openclaw_options());
+        engine.set_selection_kind(Some(SelectionKind::Mixed));
+        engine.set_selection_page_context(Some(selection_page_context()));
+        engine.add_text_content("Use the selected region as the focal input.");
+
+        let body = engine.request_body();
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Use the selected region as the focal input.");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["x_smart_remarkable_role"], "selection");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,c2VsZWN0aW9u");
+        assert_eq!(content[2]["type"], "image_url");
+        assert_eq!(content[2]["x_smart_remarkable_role"], "current_page");
+        assert_eq!(content[2]["image_url"]["url"], "data:image/png;base64,Y3VycmVudC1wYWdl");
+        assert_eq!(
+            body["x_smart_remarkable_context"],
+            json!({
+                "version": "selection-page-v1",
+                "document_display_name": "Project notes",
+                "page_id": "page-1",
+                "page_index": 4,
+                "page_number": 5,
+                "page_image_scope": "current_page_view",
+                "page_image_completeness": "viewport_only",
+            })
+        );
+
+        let request = engine
+            .request_builder(
+                &reqwest::Client::new(),
+                &body,
+                "smart-remarkable-context-test",
+            )
+            .build()
+            .unwrap();
+        assert_eq!(
+            request.headers()["x-smart-remarkable-context-version"],
+            SELECTION_PAGE_CONTEXT_VERSION
+        );
+
+        engine.clear_content();
+        assert!(engine
+            .request_body()
+            .get("x_smart_remarkable_context")
+            .is_none());
+    }
+
+    #[test]
     fn only_expected_transient_bridge_statuses_are_retryable() {
         for status in [502, 503, 504] {
             assert!(OpenAI::is_retryable_openclaw_status(
@@ -748,6 +948,7 @@ mod tests {
         options.insert("api_key".to_string(), "test-key".to_string());
         let mut engine = OpenAI::new(&options);
         engine.set_selection_kind(Some(SelectionKind::Mixed));
+        engine.set_selection_page_context(Some(selection_page_context()));
         engine.add_text_content("Describe this");
         let body = engine.request_body();
         let request = engine
@@ -767,6 +968,11 @@ mod tests {
             .headers()
             .get("x-smart-remarkable-response-mode")
             .is_none());
+        assert!(request
+            .headers()
+            .get("x-smart-remarkable-context-version")
+            .is_none());
+        assert!(body.get("x_smart_remarkable_context").is_none());
     }
 
     #[test]
@@ -777,7 +983,7 @@ mod tests {
         engine.set_selection_kind(Some(SelectionKind::Image));
         let valid = bridge_response(request_id, "whatsapp_only", "image", "sent");
         assert!(engine
-            .validate_bridge_response(&valid, request_id)
+            .validate_bridge_response(&valid, request_id, None)
             .is_ok_and(|replayed| !replayed));
 
         let wrong_id = bridge_response(
@@ -787,17 +993,17 @@ mod tests {
             "sent",
         );
         assert!(engine
-            .validate_bridge_response(&wrong_id, request_id)
+            .validate_bridge_response(&wrong_id, request_id, None)
             .is_err());
 
         let wrong_mode = bridge_response(request_id, "write_back", "image", "sent");
         assert!(engine
-            .validate_bridge_response(&wrong_mode, request_id)
+            .validate_bridge_response(&wrong_mode, request_id, None)
             .is_err());
 
         let wrong_kind = bridge_response(request_id, "whatsapp_only", "ink", "sent");
         assert!(engine
-            .validate_bridge_response(&wrong_kind, request_id)
+            .validate_bridge_response(&wrong_kind, request_id, None)
             .is_err());
 
         let mut missing_kind =
@@ -807,13 +1013,13 @@ mod tests {
             .unwrap()
             .remove("selection_kind");
         assert!(engine
-            .validate_bridge_response(&missing_kind, request_id)
+            .validate_bridge_response(&missing_kind, request_id, None)
             .is_err());
 
         let failed_delivery =
             bridge_response(request_id, "whatsapp_only", "image", "failed");
         assert!(engine
-            .validate_bridge_response(&failed_delivery, request_id)
+            .validate_bridge_response(&failed_delivery, request_id, None)
             .is_err());
 
         let mut failed_ack =
@@ -821,13 +1027,51 @@ mod tests {
         failed_ack["openclaw_delivery"]["acknowledgement"]["status"] =
             json!("failed");
         assert!(engine
-            .validate_bridge_response(&failed_ack, request_id)
+            .validate_bridge_response(&failed_ack, request_id, None)
             .is_err());
 
         let merely_requested =
             bridge_response(request_id, "whatsapp_only", "image", "requested");
         assert!(engine
-            .validate_bridge_response(&merely_requested, request_id)
+            .validate_bridge_response(&merely_requested, request_id, None)
+            .is_err());
+    }
+
+    #[test]
+    fn selection_page_response_requires_the_exact_context_echo() {
+        let request_id = "smart-remarkable-test-context";
+        let mut engine = OpenAI::new_openclaw(&openclaw_options());
+        engine.set_response_mode(ResponseMode::WhatsappOnly);
+        engine.set_selection_kind(Some(SelectionKind::Image));
+        let valid = bridge_response_with_context(
+            request_id,
+            "whatsapp_only",
+            "image",
+            "sent",
+        );
+        assert!(engine
+            .validate_bridge_response(
+                &valid,
+                request_id,
+                Some(SELECTION_PAGE_CONTEXT_VERSION),
+            )
+            .is_ok());
+        let missing = bridge_response(request_id, "whatsapp_only", "image", "sent");
+        assert!(engine
+            .validate_bridge_response(
+                &missing,
+                request_id,
+                Some(SELECTION_PAGE_CONTEXT_VERSION),
+            )
+            .is_err());
+        let mut wrong = valid;
+        wrong["x_smart_remarkable"]["context_version"] = json!("selection-page-v0");
+        assert!(engine
+            .validate_bridge_response(
+                &wrong,
+                request_id,
+                Some(SELECTION_PAGE_CONTEXT_VERSION),
+            )
             .is_err());
     }
 
@@ -939,7 +1183,7 @@ mod tests {
             let (mut second, _) = listener.accept().await.unwrap();
             let second_request = read_http_request(&mut second).await;
             let second_id = request_header(&second_request, "x-smart-remarkable-request-id");
-            let response_body = bridge_response(
+            let response_body = bridge_response_with_context(
                 &second_id,
                 "whatsapp_only",
                 "ink",
@@ -960,6 +1204,7 @@ mod tests {
         let mut engine = OpenAI::new_openclaw(&options);
         engine.set_response_mode(ResponseMode::WhatsappOnly);
         engine.set_selection_kind(Some(SelectionKind::Ink));
+        engine.set_selection_page_context(Some(selection_page_context()));
         engine.add_text_content("test");
 
         engine
@@ -975,6 +1220,10 @@ mod tests {
         assert_eq!(
             request_header(&first_request, "x-smart-remarkable-selection-kind"),
             request_header(&second_request, "x-smart-remarkable-selection-kind")
+        );
+        assert_eq!(
+            request_header(&first_request, "x-smart-remarkable-context-version"),
+            request_header(&second_request, "x-smart-remarkable-context-version")
         );
         assert_eq!(
             request_body_bytes(&first_request),

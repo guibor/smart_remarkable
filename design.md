@@ -137,14 +137,18 @@ on menu visibility changes, timeout, failed or non-positive AppLoad launch, or
 local validation failure, so a failed attempt cannot latch the other icon or
 leave stock controls hidden.
 
-The canonical button path is protocol v2. At tap time QML derives the exact
-`ink`, `image`, or `mixed` kind, maps all four selection corners into the
-selection-root view, and records fixed-point axis-aligned bounds. It also maps
-the selection root into the physical scene and accepts only the stable
-`normal` or `rot180` transforms; 90-degree, mirrored, sheared, non-finite,
-empty, degenerate, or out-of-bounds selections fail closed. The initial
-descriptor contains version, response mode, kind, orientation, bounds, and
-capture time. `scripts/selection-protocol.sh` strictly parses this data, and
+The canonical `0.8.0-openclaw` button path is protocol v3; the currently
+deployed `0.7.3-openclaw` path remains strict v2 until guarded promotion. At
+tap time the v3 QML derives the exact `ink`, `image`, or `mixed` kind, maps all
+four selection corners into the selection-root view, and records fixed-point
+axis-aligned bounds. It also maps the selection root into the physical scene
+and accepts only the stable `normal` or `rot180` transforms; 90-degree,
+mirrored, sheared, non-finite, empty, degenerate, or out-of-bounds selections
+fail closed. `DeviceSceneView` supplies the exact document UUID, page id/index,
+mapped page-view bounds, and honest `full_page`/`viewport_only` completeness.
+The initial descriptor contains those fields plus version, response mode,
+kind, orientation, selection bounds, and capture time.
+`scripts/selection-protocol.sh` strictly parses this data, and
 the root-owned AppLoad launcher reads 32 bytes from `/dev/urandom` through the
 device-proven `/usr/bin/hexdump -n 32 -v -e '1/1 "%02x"'` interface, accepts
 only exactly 64 lowercase hexadecimal characters, and adds that fresh 256-bit
@@ -161,7 +165,7 @@ descriptor, geometry, nonce, recognized text, image bytes, or selected content.
 
 Capture and close form a two-phase, same-nonce local transaction. Rust first
 emits `Ctrl+Alt+Shift+8`. QML immediately re-reads the live kind, transform,
-and bounds; only an exact match hides the stock chrome by reversibly binding
+selection bounds, and v3 document/page snapshot; only an exact match hides the stock chrome by reversibly binding
 `selectionRoot.controlsAreVisible=false`, which leaves the selected content
 rendered without tint, border, or menu. QML then returns the exact snapshot to
 AppLoad, which can acknowledge it only against the active nonce-bearing busy
@@ -182,6 +186,82 @@ Handshake modifier/key releases are one balanced evdev batch with no embedded
 `SYN_REPORT`; `VirtualDevice::emit` owns the single terminating sync. Every
 reported prepare emission failure is treated as potentially side-effecting and
 immediately attempts the idempotent restore chord before returning.
+
+### Selection and current-page context bundle
+
+The richer OpenClaw input is the canonical v3 result of that local transaction,
+not a second capture path. The exact 3.28.0.164 QMLDiff patches both the stock
+`DeviceSceneView.qml` owner and `SceneSelectionHandler.qml` consumer. The owner
+passes the current document UUID, page id, zero-based page index, and mapped
+page-view bounds explicitly; the selection handler does not walk its parent
+tree or guess an active document. Protocol v3 binds those values alongside
+kind, orientation, selection bounds, capture time, and the launcher nonce at
+click, prepare acknowledgement, and close acknowledgement. A navigation or
+identity change therefore fails before remote submission. Protocol v2 remains
+strictly parseable only for the guarded app-first migration/rollback boundary
+and is never silently upgraded into a context-bearing request.
+
+After the prepare acknowledgement, `processing_task` resolves the human-facing
+reMarkable document display name from the exact UUID's `.metadata` file below
+the fixed xochitl data directory. The reader accepts only a canonical UUID and
+a bounded, stable, owner-matching regular file opened without following links;
+it parses only the required JSON field, normalizes and bounds the UTF-8 value,
+and rejects control characters. The UUID remains in root-only volatile
+handshake state. The display name exists only in request memory and is neither
+logged nor written to the tablet.
+
+One `Screenshot` read produces both visual inputs before the stock selection
+closes:
+
+- `selected_region` is the exact descriptor crop and the primary user input.
+  It receives the existing kind-aware preparation: ink whitening and bounded
+  enlargement, or RGB-preserving image/mixed enlargement.
+- `current_page_view` is encoded from the same normalized frame without ink
+  whitening. When the complete mapped page bounds fit inside the framebuffer,
+  those bounds are cropped and metadata says `full_page`; otherwise the
+  current visible framebuffer is sent and metadata says `viewport_only`.
+  Smart never zooms, navigates, exports, or performs another screenshot to
+  pretend an off-screen logical page was captured.
+
+The OpenClaw transport serializes one exact `selection-page-v1` body: a single
+text frame, one role-tagged selection PNG, one role-tagged current-page PNG,
+and bounded document/page metadata (`document_display_name`, `page_id`,
+zero-based `page_index`, one-based `page_number`, `page_image_scope`, and
+`page_image_completeness`). A matching header prevents an old bridge from
+accepting the new body. The local duplicate fingerprint and the bridge's
+idempotency fingerprint bind both PNGs and every canonical metadata field;
+transport retries reuse the exact serialized body and request id. Engine
+cleanup releases both images and the metadata on every terminal path, while
+the durable server journal retains only the resulting digest, status, and safe
+response—not either image or the display name.
+
+The bridge accepts exactly that content order and two fixed roles, applies
+per-image and aggregate limits, and constructs the Gateway attachments itself
+as `remarkable-selection.png` and `remarkable-current-page.png`. Its trusted
+capture manifest explains that the selection is the focal request and the
+page/title are supporting user data, never authority. The server-owned
+OpenClaw hook uses page context, the title, canonical conversation, and durable
+memory to resolve references and make a strong useful best-effort response. It
+does not default to a generic clarification, restatement, or market scan when
+a reasonable harmless interpretation exists. Ambiguous context still cannot
+authorize an upload, message, or other external side effect, and completion
+claims still require evidence. The strict response envelope remains
+selection-attributed: `received_text` describes only the lasso; surrounding
+page/title context can influence only `response_text`.
+
+This feature expands the firmware-specific QML surface by one exact stock
+resource, so it uses a paired generation and a special no-taps app-first
+migration. First, install the `0.8.0-openclaw` application while the exact v2
+functional QMD and old server remain. The new app deliberately accepts only
+the allowlisted `v2-migration-functional` QMD in this state, preserves its
+historical one-image request shape, and suppresses v2 local write-back because
+v2 cannot prove document/page identity. Before any tap, the new contract then
+moves that exact v2 functional QMD to the new inert canary. Requests are
+quiesced while plugin `0.4.0`, origin-v4, journal schema v3, and the matching
+bridge are promoted together. Only after capability-backed server readiness may
+the v3 functional QMD pass offline composition, refresh-functional canary,
+watchdog, and rollback. No stock binary, system partition, boot state, or
+persistent vendor-root service changes.
 
 App-first staging retains one deliberately separate rollback/migration route
 for the historical QMD hash
@@ -210,8 +290,8 @@ the separate
 is only the historical 3.28.0.163
 recovery reference and is never used to classify the active migration state.
 
-The guarded forward order is a compatible functional app/QMD, inert QMD, then
-the next functional QMD. For this direct-launch refresh, an isolated old-HEAD
+The normal guarded forward order is a compatible functional app/QMD, inert
+QMD, then the next functional QMD. For this direct-launch refresh, an isolated old-HEAD
 worktree retained the old contract that classified deployed QMD
 `28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`
 as its exact `new-functional`; guarded transaction
@@ -220,10 +300,12 @@ as its exact `new-functional`; guarded transaction
 before the new contract or application installer was allowed to run. This
 avoids weakening the new contract with an extra predecessor classification.
 Both device installers share `/run/smart-remarkable-llm-button/deployment.lock`.
-The application installer accepts only an absent, exact legacy-functional,
-exact new-inert, or exact new-functional Smart QMD; if new-functional is
-active, the existing app must already match the same complete contract so an
-automatic install rollback cannot restore a skewed client. Conversely, every
+The `0.8.0-openclaw` application installer additionally accepts the exact
+`v2-migration-functional` Smart QMD for the bounded app-first v3 transition; it
+also accepts absent, exact legacy-functional, exact new-inert, or exact
+new-functional state. If new-functional is active, the existing app must
+already match the same complete contract so an automatic install rollback
+cannot restore a skewed client. Conversely, every
 non-initial QMD transition rechecks the exact installed client, including its
 complete staged manifest, immediately before `ARMED`. Intentional rollback is
 the reverse: first restore a contract-approved legacy/inert/absent QMD state,
@@ -244,7 +326,9 @@ For an admitted selection, screenshot processing groups every contiguous
 Paper Pro `/dev/dri/card0` mapping and includes large detached anonymous
 allocations, probes bounded frame-header chains, and reads the accepted frame.
 Legacy pen and transition routes may still detect the active marquee, while
-v2 buttons use only their revalidated kind/orientation/rectangle descriptor.
+v3 buttons use only their revalidated kind/orientation/selection plus
+document/page descriptor. The allowlisted v2 migration route retains only its
+strict kind/orientation/rectangle descriptor and cannot gain v3 authority.
 The raw crop is never sent directly: `ink` is converted to luma, its gray
 selection fill is whitened without erasing dark ink, and it is boundedly
 Lanczos-upscaled; `image` and `mixed` preserve RGB and tonal detail while using
@@ -252,15 +336,15 @@ the same aspect-preserving enlargement. The selection kind is bound into the
 fingerprint and remote request. Neither source nor prepared crop is written to
 a tablet file. Full-screen input remains unchanged.
 
-While the v2 selection is prepared and before it closes, `write_back` retains
+While the v3 selection is prepared and before it closes, `write_back` retains
 the complete normalized full-page bytes in memory. The first post-close capture
 must exactly equal that prepared original; a page reached during close is never
 accepted as a replacement baseline. If this rebind is unavailable or differs,
 canonical OpenClaw/WhatsApp work continues with the guard left `Required`, but
 local insertion is suppressed. Every production insertion callback accepts
-only an `Exact` v2 guard; legacy-v1 and pen-lasso routes cannot prove the
-prepared-original binding and therefore remain WhatsApp-only in this
-generation.
+only an `Exact` v3 guard; v2 migration, legacy-v1, and pen-lasso routes cannot
+prove the full document/page binding and therefore remain locally
+write-suppressed in this generation.
 
 Immediately before insertion, Smart recaptures with the trusted orientation,
 requires exact page identity, and verifies the firmware-pinned stock Text
@@ -284,19 +368,23 @@ OpenClaw server. The tablet authenticates with a narrow bridge token; the full
 Gateway operator credential and the WhatsApp target never leave the server.
 The bridge refuses WhatsApp destination overrides and derives the target only
 from the direct `agent:main:main` origin in OpenClaw's canonical session store.
-The tablet sends the existing OpenAI-compatible image/body shape plus strict
-response-mode and `ink`/`image`/`mixed` selection-kind headers and a unique
+The v3 tablet sends one strict `selection-page-v1` OpenAI-shaped body: one
+non-empty text part followed by the role-tagged selected-region and
+current-page PNGs, plus exact document/page metadata. Headers bind that context
+version, response mode, `ink`/`image`/`mixed` selection kind, and a unique
 request id in the exact `smart-remarkable-` namespace. Before reserving journal
-capacity, the bridge requires the exact plugin-0.3/origin-v3 capability receipt
-for the current authenticated Gateway connection generation. Disconnect or
+capacity, the bridge requires the exact plugin-0.4/origin-v4 capability receipt
+for the current authenticated Gateway connection generation, including ordered
+`selection-page-v1`, `selection`/`current_page`, and selection-kind arrays. Disconnect or
 reconnect invalidates readiness; `/health` and the next admission re-probe, and
 all request-specific RPCs stay pinned to the admitted generation. The bridge
-then converts the request to native Gateway `chat.send` with the cropped PNG as an attachment,
+then converts the request to native Gateway `chat.send` with fixed-name
+`remarkable-selection.png` and `remarkable-current-page.png` attachments,
 `sessionKey=agent:main:main`, explicit server-owned WhatsApp routing,
 `deliver=false`, disabled command interpretation, and the request id as its
 idempotency key. Before that call, the bridge invokes
-`smart_remarkable.bind_origin` with the protocol version, same request id,
-response mode, trusted selection kind, and captured transcript. The plugin stores one immutable
+`smart_remarkable.bind_origin` with origin-v4, the same request id, response
+mode, trusted selection kind, `selection-page-v1`, and captured transcript. The plugin stores one immutable
 pending admission as a realm-neutral JSON string in OpenClaw's host run
 context and activates it only when the prompt hook sees the exact request run,
 canonical route, and preflight-captured transcript. This host-owned scalar is
@@ -305,7 +393,7 @@ registries.
 
 OpenClaw closes ordinary plugin API methods after registration, so late bind
 and clear Gateway handlers do not call the public run-context facade directly.
-Plugin version 0.3.0 registers a private agent-event control subscription
+Plugin version 0.4.0 registers a private agent-event control subscription
 during `register`. Each late get, set, or clear stays in the originating
 plugin instance's bounded private map while the adapter emits only a random
 operation ID on its plugin-owned stream. The synchronous subscription callback
@@ -354,7 +442,7 @@ successful-but-remapped run without broad transcript scanning or unsafe
 repinning.
 
 This `chat.send` run is the only owner of canonical transcript entries. The
-bridge appends a fixed, versioned response protocol that requires
+bridge appends response-envelope v3, a fixed versioned protocol that requires
 the canonical assistant final to contain exactly two bounded strings:
 `{"received_text":"...","response_text":"..."}`. `received_text` is a literal
 literal kind-aware account of the selected content and uses `[unclear]` rather
@@ -385,15 +473,17 @@ provider receipt. This avoids duplicate delivery-mirror transcript messages,
 does not rely on unverified automatic delivery, and does not change the
 canonical session's persistent verbose setting.
 
-For a verified reMarkable run, the plugin's prompt hook treats `ink` as the
-direct request. For `image` and `mixed`, it resolves intent from an explicit
-current instruction, a specific still-active canonical user instruction,
-durable memory/preferences, then the captured content and immediate context;
-newer task-specific user instructions override older general ones. Captured or
-quoted text and assistant suggestions remain context rather than authority.
-Ambiguity defaults to an in-depth explanation, background, and context—not a
-market scan, recommendations, or a generic clarification—and never authorizes
-side effects.
+For every verified v3 reMarkable run, the plugin's prompt hook treats the lasso
+as the focal request and uses its kind, same-frame page view, document-id-bound name,
+specific still-active canonical user instructions, and durable memory to
+resolve references and likely intent. It makes the strongest reasonable
+harmless interpretation, carries it to a concrete useful result, states a
+consequential assumption and close alternative when helpful, and asks only
+when materially different interpretations require a real user choice. It does
+not merely acknowledge, restate, default to a market scan, or ask a generic
+clarification. Captured or quoted text, page/title data, and assistant
+suggestions remain context rather than authority. Inference never authorizes a
+side effect, and no action is reported complete without evidence.
 When an explicit governing instruction asks to create, export, send, or place
 a document, produce a PDF or EPUB inside the OpenClaw workspace and use
 `remarkable_deliver_document`. The tool is registered only for the canonical
@@ -431,13 +521,14 @@ crop/image slots, request mode, and tool state are cleared before admission is
 released for another request.
 
 The persistent bridge journal validates the same request-id namespace and uses
-schema v2 to bind fingerprint, response mode, and selection kind. A completed
-v2 response can replay without new Gateway work. Any schema-v1 reservation or
-completion remains a capacity-consuming HTTP-409 barrier: it is never replayed,
-resubmitted, deleted, or treated as absent. Origin-v3/plugin-0.3 and the
-schema-v2 bridge therefore require one quiesced guarded server promotion; the
-current-generation capability probe is the readiness gate after Gateway
-reload.
+schema v3 to bind the fingerprint, response mode, selection kind, exact
+`selection-page-v1` context, both images, and canonical metadata. A completed
+schema-v3 response can replay without new Gateway work. Any schema-v1 or
+schema-v2 reservation or completion remains a capacity-consuming HTTP-409
+barrier: it is never replayed, resubmitted, deleted, or treated as absent.
+Origin-v4/plugin-0.4 and the schema-v3 bridge therefore require one quiesced
+guarded server promotion while the tablet buttons are inert; the
+current-generation capability probe is the readiness gate after Gateway reload.
 
 For firmware 3.28.0.164, the deployed native-button integration is a two-button
 QMLDiff patch rather than the upstream raw `llmbutton.so`.
@@ -463,7 +554,16 @@ message-broker, AppLoad, artifact, and target-resource hashes.
 The safe activation design is staged: fresh read-only live fingerprint,
 device-side compatibility check, inert visual canary, bounded xochitl health
 monitoring with a preserved `/home` rollback, then functional promotion only
-after the inert phase remains healthy. The live fingerprint also requires
+after the inert phase remains healthy. On the host,
+`ops/install-llm-button-canary.sh` requires regular non-symlink stock
+`SceneSelectionHandler.qml` and `DeviceSceneView.qml` inputs beneath the
+explicit `QML_REFERENCE_ROOT`, then runs the compiled QMD through
+`qmldiff apply-diffs` with the SHA-pinned live hashtable. Both expected patched
+resources must emerge as regular, non-symlink, nonempty files in the
+transaction's private temporary directory and each must parse successfully via
+local `qmlformat --ignore-settings` before any remote write. This
+parser/application gate is intentionally stronger than hashtable compatibility
+alone. The live fingerprint also requires
 Xovi's generated `extensions.d` and `exthome` symlinks to be root-owned,
 point at their exact `/home/root/xovi` targets, and be the only non-metadata
 entries beside the two exact `.conf` files. Any mismatch or unhealthy restart
@@ -532,7 +632,7 @@ hashtable SHA-256 is
 `75c4e7b7353fdc4c3ee8840adfa42f61f19a02111a7c1492a99b7cfb57e12236`.
 The approved legacy-v1 rollback QMD is
 `2b9188af0c3fd726743e36ee1a3c86244cf6327ad22eeef1aa7a291a7add059d`;
-the disabled canary is
+its historical disabled canary was
 `81b6050a739cd79e60b71bc78e504fae6d30ac996e6d0dde9970859bccdaadd5`.
 The prior v2 functional source/compiled pair is
 `130353dbba7fd31b764f0835b610d59d9c25c7f1cc2b2c52e9285379f23ec1b8`
@@ -582,6 +682,26 @@ worked. Post-request state retained `xochitl` PID `57254`, `NRestarts=0`,
 read-only root, and no busy/trigger/ack residue. This accepts the ordinary wand
 path without claiming the deliberate tunnel-loss or complete orientation/kind
 matrix.
+
+The locally completed, not-yet-deployed `0.8.0-openclaw` candidate pins worker
+SHA-256
+`4c9605f7f9e6be898230c3c5d607fa36fc1ce815ad85cc8f6f04e625be314f1e`
+and build ID `16bc36a982fbb2465375641a2006e3936b511394`.
+Its launcher, unchanged reconnecting runner, and v3 selection-protocol helper
+are respectively
+`6660d1f01510d9e92910f9fbdcbd23a4fe4c40aac3d5a74a27213fe3faea14cd`,
+`72588acb490cb17b7a2b8ca3bce4dc938862cff95da922267074d5c14f5b232c`,
+and `a11af20d55fc668c59e367d49e834844ed1e9a041cd400de481690811afb750c`.
+The functional source/compiled QMD identities are
+`1b01d2a123ac5d16763b140c2342c14bbd99243455fc81debdad85165707644d` and
+`5cf5156df227a1ecdf3fb421b2cc57e55564bf31ab9d434a7f16c21b40ef0dc2`;
+the inert source/compiled identities are
+`85577aabce320c983de04ef0928851a9567839ba95494bd2d58dbf14f50b7b25` and
+`635752321485a4dfb702b24fdf9b1f836f329a1399ebcc06f4b19dc4035a625a`.
+These are local reviewed candidate identities, not live tablet evidence. The
+currently installed server baseline is plugin `0.3.0`; plugin `0.4.0`,
+origin-v4, response envelope v3, journal schema v3, and the matching bridge
+remain an unpromoted paired candidate.
 
 The historical firmware-recovery sequence first used disabled transaction
 `20260730T184327Z-34344` and functional transaction
@@ -644,11 +764,11 @@ The final request-free tunnel smoke test left the Smart session inactive,
 request acceptance completed two one-tap/one-turn ink requests while preserving
 those stock-process and filesystem invariants.
 
-The current two-button client passes 88 applicable native tests across the
+The current two-button client passes its applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
-font-render test filtered. The current local bridge and no-mirror delivery
-plugin suite contains 145 Node tests; this is candidate evidence only, not
-proof that plugin 0.3.0 has been promoted to the server. All six
+font-render output-path test filtered. The current local bridge and no-mirror
+delivery plugin suite contains 148 Node tests; this is candidate evidence only,
+not proof that plugin 0.4.0 has been promoted to the server. All six
 settings/runtime/protocol/artifact shell suites pass. The native tests cover
 strict nonce/orientation/freshness parsing, exact acknowledgement binding,
 distinct legacy generations, explicit-orientation framebuffer normalization,
@@ -660,14 +780,16 @@ real marquee fixture. The protocol shell test supplies deterministic structural
 latency coverage: the launcher contains no bridge probe or remote marker gate,
 the runner starts the worker before SSH and the health probe, and
 prepare/capture/close all precede Rust's bridge-ready wait. This is device-free
-ordering evidence; physical UI timing remains part of the v2 acceptance gate.
+ordering evidence; physical UI timing remains part of the v3 acceptance gate.
 The bridge tests include strict transcription/answer envelopes, exact atomic
 WhatsApp rendering, answer-only writeback, missing-live-final history
 recovery, user-anchor attribution barriers, durable pre-`chat.send`
 reservation, cross-process races, per-caller replay labeling, a hard
 no-eviction capacity, ownership-marker races, an eagerly writable private
 systemd state directory, explicit provider `sent` receipts, the strict request
-namespace, schema-v1 migration barriers, explicit sensitive-hook policy,
+namespace, schema-v1/schema-v2 migration barriers, exact two-image role/order
+and metadata validation, selection-page fingerprints, response-envelope v3,
+explicit sensitive-hook policy,
 final-prompt admission gating, current-generation capability re-probing,
 reconnect-race refusal, and dynamic health failure before journal reservation.
 The deployed v2 aarch64 worker SHA-256 is
@@ -818,26 +940,35 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   validation. It also supervises trigger-listener lifetime; listener failure
   cancels and settles/aborts processing before the idempotent QML restore.
 - `src/coordinator.rs`: runs the trigger, screenshot, model, progress, and
-  tool-execution pipeline. It distinguishes strict v2 descriptor selections,
+  tool-execution pipeline. It distinguishes canonical v3, strict v2-migration,
   pinned legacy button generations, manual touch, and pen-lasso input; owns
   single-request admission; performs the prepare/capture/close acknowledgement
-  transaction; retains the prepared full-page view and exact-rebinds the first
-  post-close view; continues canonical delivery with insertion suppressed when
-  rebind fails; clears per-request scratch state; and keeps a worker armed after
-  a no-marquee pen candidate. Legacy and pen-lasso paths remain `Required`
-  rather than receiving an unprovable exact write-back guard.
+  transaction; creates the focal selection and faithful page view from one
+  immutable framebuffer; installs the bounded document/page context; retains
+  the prepared full-page view and exact-rebinds the first post-close view;
+  continues canonical delivery with insertion suppressed when rebind fails;
+  and clears both images, metadata, and tool scratch state on every terminal
+  path. V2 migration, legacy, and pen-lasso paths remain locally
+  write-suppressed rather than receiving an unprovable exact guard.
 - `src/touch.rs`: reads real touch events, classifies eligible release or
   held-endpoint Paper Pro pen contacts without grabbing the stylus device,
-  strictly consumes root-only nonce-bearing v2 or `legacy-v1` trigger files,
-  validates exact prepare/close acknowledgements, waits for separate bridge
-  readiness, verifies/removes the matching busy generation last, and owns local
-  readiness through an RAII guard. It also verifies the stock Text/palette
-  state and provides the nonexclusive write-back input monitor, including
-  current pen-button and all multitouch-slot state before output.
+  strictly consumes root-only nonce-bearing v3, v2-migration, or `legacy-v1`
+  trigger files, validates exact prepare/close acknowledgements including the
+  v3 document/page snapshot, waits for separate bridge readiness,
+  verifies/removes the matching busy generation last, and owns local readiness
+  through an RAII guard. It also verifies the stock Text/palette state and
+  provides the nonexclusive write-back input monitor, including current
+  pen-button and all multitouch-slot state before output.
+- `src/document_context.rs`: resolves only the v3 descriptor's exact
+  document-UUID `.metadata` file below the fixed xochitl data root. It rejects
+  symlinks, unexpected owner/mode/link count, unstable identity or size,
+  oversized/invalid JSON, and empty, non-NFC, control-bearing, or oversized
+  `visibleName` values; it returns only the bounded display name and logs no
+  UUID or title.
 - `src/screenshot.rs`: groups all of `xochitl`'s Paper Pro graphics mappings,
   includes detached anonymous frame allocations, validates bounded
   frame-header candidates and full-frame readability without modifying process
-  memory, normalizes the accepted frame to 768x1024, applies a trusted v2
+  memory, normalizes the accepted frame to 768x1024, applies the trusted
   `normal`/`rot180` orientation without the screenshot-corner heuristic, and
   retains exact normalized-view bytes used by write-back. Its delta helpers
   prove that changes are confined to disjoint firmware-pinned chrome/caret
@@ -854,14 +985,21 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   restore. Guarded body-style and per-character output use balanced batches,
   reject unsupported/over-budget answers before the first key, and never use a
   touch coordinate to dismiss the selection.
-- `src/llm_engine/`: implements OpenClaw, OpenAI, Anthropic, and Google transports behind the common `LLMEngine` interface. Provider debug logs report only model/item counts and response-block sizes, never selected-page image payloads or model text.
+- `src/llm_engine/`: implements OpenClaw, OpenAI, Anthropic, and Google
+  transports behind the common `LLMEngine` interface. `SelectionPageContext`
+  carries the two same-frame images and bounded document/page metadata only for
+  OpenClaw; direct providers retain their historical single-image shape.
+  Provider debug logs report only model/item counts and response-block sizes,
+  never selected-page image payloads, metadata, or model text.
 - Google transport failures are mapped to URL-free messages before they reach
   the coordinator because that provider places its API key in the request
   query string.
 - `src/llm_engine/openai.rs`: provides both the direct OpenAI tool-call
   transport and a narrow OpenClaw-bridge mode. Bridge mode authenticates only
   with `OPENCLAW_BRIDGE_TOKEN`, sends an exact `smart-remarkable-` request ID
-  plus explicit response-mode and trusted selection-kind headers, never
+  plus explicit response-mode, trusted selection-kind, and
+  `selection-page-v1` headers; serializes one text part followed by the ordered
+  role-tagged selection and page PNGs plus exact metadata; never
   accepts client-controlled session/channel routing, emits the historical
   remote-accepted status when successful HTTP headers arrive, validates
   request/mode/kind/delivery metadata in the final JSON, and dispatches the
@@ -869,7 +1007,7 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   response-body interruptions are retried through a separate transport window
   of at most fifteen minutes with the exact same serialized request and request
   ID. Together with the preceding, independently bounded fifteen-minute bridge
-  readiness wait, this can retain one crop in RAM for roughly thirty minutes
+  readiness wait, this can retain one context bundle in RAM for roughly thirty minutes
   in the worst case. Pre-acceptance 502, 503, and 504 responses use that same
   retry identity with capped backoff. Redirects are disabled so neither crop
   nor sensitive bearer can leave the pinned loopback route, and only exact
@@ -880,8 +1018,10 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   final view/placement/activation guard before typing.
 - `src/config.rs` and `prompts/`: merge runtime configuration and define provider/tool instructions. `selection_openclaw.json` asks OpenClaw for concise plain text that is safe to type into a stock text box; `selection_openclaw_whatsapp.json` asks for an ordinary canonical OpenClaw response when no notebook insertion is requested; `selection_print.json` remains the direct-provider print prompt.
 - `bridge/`: implements the loopback-only, narrow-token HTTP adapter. It
-  validates the one-prompt/one-PNG request, exact request-ID namespace, and
-  trusted selection kind. It proves the exact plugin capability contract for
+  validates the strict one-prompt/two-role-PNG `selection-page-v1` request,
+  bounded document/page metadata, exact request-ID namespace, and trusted
+  selection kind. It proves the exact plugin `0.4.0`/origin-v4 capability
+  contract for
   the current authenticated Gateway generation before persistently reserving
   the request identity, then captures the current transcript as an exact recovery and authority
   locator, binds trusted reMarkable origin/session state, and submits one canonical
@@ -894,9 +1034,11 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   and reconciles either same-session current history or the exact active/reset
   captured transcript. It refuses to resubmit any incomplete reservation after
   restart and uses the plugin-owned no-mirror delivery method for the ordered
-  acknowledgement and final. The schema-v2 request journal stores hashes,
-  mode, selection kind, state, and a bounded cached response but never the
-  selected PNG. Schema-v1 entries remain fail-closed capacity barriers. Its atomically
+  acknowledgement and final. The schema-v3 request journal stores hashes,
+  mode, selection kind, context version, state, and a bounded cached response
+  but never either PNG, the prompt, or the raw document-display-name request
+  field. The cached safe response may naturally mention that title. Schema-v1 and
+  schema-v2 entries remain fail-closed capacity barriers. Its atomically
   claimed fixed-capacity slots are never automatically evicted; a leaked slot
   safely reduces capacity. The production bridge is a system service that
   drops to `User=mdf`, eagerly prepares its single private writable
@@ -929,7 +1071,7 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   only normalized provider receipts or fixed errors. Delivery remains
   `operator.write`; origin bind and clear require `operator.admin`. Origin binding stores a
   server-generated capability and separate cleanup handle as a scalar host
-  run-context record before model admission. The version-0.3.0 candidate
+  run-context record before model admission. The version-0.4.0 candidate
   requires explicit live prompt-injection and conversation-access policy, then reaches
   that host state after registration through its synchronous agent-event
   adapter. The event contains only a random operation ID; the complete bounded
@@ -1174,17 +1316,22 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   reading another session's transcript.
 - `createOriginBindingHandlers` and `createRemarkableOriginHooks` in
   `bridge/openclaw-plugin/remarkable-upload.mjs`: store the server-generated
-  per-run authority plus selection kind and captured transcript identity, add
-  kind-aware capture-intent/document guidance only when the prompt hook reports
-  that exact transcript, recheck the exact active identity and final guidance
-  in `before_agent_run`, and authorize the upload tool only at the exact
-  run/transcript/agent/session-key boundary.
+  per-run authority plus selection kind, `selection-page-v1`, and captured
+  transcript identity; add proactive capture/page/title/history/memory guidance
+  only when the prompt hook reports that exact transcript; recheck the exact
+  active identity and final guidance in `before_agent_run`; and authorize the
+  upload tool only at the exact run/transcript/agent/session-key boundary.
 - `createRemarkableUploadTool` in
   `bridge/openclaw-plugin/remarkable-upload.mjs`: validates and privately
   snapshots a workspace PDF or EPUB, invokes the pinned reMarkable Cloud CLI
   without a shell or unrelated credentials, validates its receipt, and uses a
   durable fail-closed artifact journal to avoid duplicate uploads.
-- `OpenAI::request_builder` in `src/llm_engine/openai.rs`: attaches only the strict namespaced request ID, response-mode, and trusted selection-kind headers in bridge mode and leaves direct provider requests unchanged.
+- `OpenAI::request_builder` in `src/llm_engine/openai.rs`: for v3 bridge mode,
+  emits the strict namespaced request ID, response mode, selection kind, and
+  `selection-page-v1` header plus one text part, ordered role-tagged selection
+  and current-page images, and exact document/page metadata. The strict v2
+  migration adapter retains its one-image body, and direct provider requests
+  remain unchanged.
 - `acquire_lifecycle_lock` in `remagic/appload-launch.sh`: validates a
   root-only `/run` lock file and takes an auto-releasing fd lock around the
   complete inspect/stop/start/button-admission transition so concurrent
@@ -1199,7 +1346,9 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   descriptor can be published.
 - `captureSnapshot` in the firmware-pinned QML source: derives the live
   selection kind, maps all four selection corners into fixed-point view bounds,
-  and accepts only the stable `normal` or `rot180` scene transform.
+  accepts only the stable `normal` or `rot180` scene transform, and binds the
+  explicit `DeviceSceneView` document UUID, page id/index, mapped page-view
+  bounds, and honest page-image completeness.
 - `requestMode`, `ensureAppLoadHelper`, and `launchArgument` in the
   firmware-pinned QML source: commit and revalidate one pending snapshot across
   a deferred paint turn, prewarm and cache one parent-owned dynamic AppLoad
@@ -1213,9 +1362,11 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   through the device-proven `hexdump` formatter and accepts only their exact
   64-character lowercase-hex representation.
 - `SelectionDescriptor::parse_at` and `SelectionRequest::parse_at` in
-  `src/touch.rs`: enforce canonical v2 nonce/kind/orientation/geometry/time or
-  the deliberately distinct pinned-QMD `legacy-v1` generation. V2 descriptors
-  never fall back to legacy or marquee-derived geometry.
+  `src/touch.rs`: enforce canonical v3 nonce/kind/orientation/geometry,
+  document UUID, page identity/index, page-view bounds/completeness, and time;
+  retain strict v2 only for the allowlisted app-first migration; and keep the
+  pinned-QMD `legacy-v1` generation deliberately distinct. No generation falls
+  back to another or to marquee-derived geometry.
 - `wait_for_selection_acknowledgement` and `wait_for_bridge_ready` in
   `src/touch.rs`: consume exact nonce-bound
   prepare/close acknowledgements and, only after local close, wait for the
@@ -1233,20 +1384,29 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   exact busy generation after in-process admission has reopened, so a button
   tap cannot queue across the busy-to-idle transition.
 - `trigger_task` in `src/coordinator.rs`: waits for a trigger, uses `try_admit`
-  to atomically admit at most one request, and emits a strict v2 selection,
-  explicit legacy transition selection, or source-aware physical event. Its
-  channel has capacity one and contacts begun while busy are discarded rather
-  than queued.
+  to atomically admit at most one request, and emits a canonical v3 selection,
+  strict v2-migration selection, explicit legacy transition selection, or
+  source-aware physical event. Its channel has capacity one and contacts begun
+  while busy are discarded rather than queued.
 - `should_collect_selection_taps` in `src/coordinator.rs`: permits four-corner collection only for real physical touch triggers; native LLM/Draw trigger files reuse the active stock selection.
-- `processing_task` in `src/coordinator.rs`: executes the v2
-  prepare-ack/capture/close-ack transaction, uses descriptor geometry and
-  orientation for the immutable crop, retains the prepared full-page view,
-  exact-rebinds the first post-close view, waits for remote readiness,
-  suppresses repeated pen submission, calls the model, and clears
-  engine/image/tool scratch state on completion. Failed rebind continues
-  canonical delivery with insertion suppressed. Only the pinned legacy route
-  uses marquee detection and remote-accepted close, and it never receives an
-  exact local write-back guard.
+- `processing_task` in `src/coordinator.rs`: executes the nonce-bound
+  prepare-ack/capture/close-ack transaction; for v3, obtains the focal crop and
+  faithful current-page view from one framebuffer, resolves the bounded display
+  name, assembles `SelectionPageContext`, and rejects debug screenshot
+  persistence. It retains the prepared full-page view, exact-rebinds the first
+  post-close view, waits for remote readiness, suppresses repeated pen
+  submission, calls the model, and clears both images, metadata, and tool state
+  on completion. Failed rebind continues canonical delivery with insertion
+  suppressed. V2 migration preserves the historical one-image bridge request
+  but forces WhatsApp-only; only the pinned legacy route uses marquee detection
+  and remote-accepted close.
+- `load_document_display_name` in `src/document_context.rs`: performs the
+  stable, bounded, owner-checked, no-follow metadata read for the exact v3
+  document UUID and returns only a non-empty NFC `visibleName`.
+- `Screenshot::base64_selection_and_page` in `src/screenshot.rs`: encodes the
+  selection and current page-view rectangles from the same immutable frame;
+  selection preprocessing happens later and the page image remains visually
+  faithful.
 - `bind_verified_post_close_view` in `src/coordinator.rs`: compares the first
   post-close normalized bytes with the prepared original and never blesses a
   newly reached page as a replacement baseline.
@@ -1273,7 +1433,7 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
 - `take_button_trigger` in `src/touch.rs`: atomically consumes an LLM/Draw trigger file before the next hardware-event wait, preventing busy touch streams from starving one-shot activation.
 - `Screenshot::take_screenshot` in `src/screenshot.rs`: resolves the live stock-UI framebuffer independently of `card0` allocation order, reads it, and normalizes it.
 - `Screenshot::take_screenshot_with_orientation` in `src/screenshot.rs`:
-  normalizes an explicit v2 frame using the trusted QML `normal` or `rot180`
+  normalizes an explicit descriptor frame using the trusted QML `normal` or `rot180`
   transform instead of inferring orientation from screenshot corner content.
 - `Screenshot::normalized_view`,
   `NormalizedView::changed_pixels_are_confined`, and

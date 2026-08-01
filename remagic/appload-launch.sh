@@ -60,7 +60,7 @@ case "${1:-}" in
         RESPONSE_MODE=$SMART_SELECTION_MODE
         REQUEST_SNAPSHOT=$SMART_SELECTION_SNAPSHOT
         REQUEST_CAPTURED_MS=$SMART_SELECTION_CAPTURED_MS
-        REQUEST_PROTOCOL=v2
+        REQUEST_PROTOCOL=${SMART_SELECTION_SNAPSHOT%%,*}
         ACTION=selection-button
         ;;
     # App-first staging compatibility for the currently installed 2b9188 QMD.
@@ -259,8 +259,8 @@ deliver_selection_button_locked() {
     fi
     smart_log_stage nonce-created
     case "$REQUEST_PROTOCOL" in
-        v2)
-            selection_descriptor="v2,$SMART_SELECTION_NONCE,${REQUEST_SNAPSHOT#v2,},$REQUEST_CAPTURED_MS"
+        v2|v3)
+            selection_descriptor="$REQUEST_PROTOCOL,$SMART_SELECTION_NONCE,${REQUEST_SNAPSHOT#??,},$REQUEST_CAPTURED_MS"
             ;;
         legacy-v1)
             smart_capture_epoch_ms || return 1

@@ -135,6 +135,8 @@ ALLOWLIST="$REPO/xovi-qmd/compatibility-3.28.0.164.env"
 CONTRACT_HELPER="$REPO/ops/artifact-compatibility-contract.sh"
 DEVICE_SCRIPT="$REPO/ops/device-install-llm-button-canary.sh"
 QMLDIFF_BIN=${QMLDIFF_BIN:-}
+QMLFORMAT_BIN=${QMLFORMAT_BIN:-$(command -v qmlformat 2>/dev/null || true)}
+QML_REFERENCE_ROOT=${QML_REFERENCE_ROOT:-/private/tmp/rmpp-3280164-resource-extract/resources}
 XOCHITL_REFERENCE=${XOCHITL_REFERENCE:-/private/tmp/xochitl-ferrari-3.28.0.164}
 READELF=${READELF:-/opt/homebrew/bin/aarch64-linux-gnu-readelf}
 ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -142,6 +144,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/smart-remarkable-llm-canary.XXXXXX")
 STAGE="$WORK/stage"
 ARCHIVE="$WORK/llm-button-canary.tar"
 LIVE_HASHTAB="$WORK/live-hashtab"
+QML_APPLY_OUTPUT="$WORK/qml-apply-output"
 REMOTE_ARCHIVE="/home/root/.smart-remarkable-llm-canary-$ID.tar"
 REMOTE_SCRIPT="/home/root/.smart-remarkable-llm-canary-$ID.sh"
 STATE_DIR=/run/smart-remarkable-llm-button
@@ -195,6 +198,7 @@ smart_contract_load "$ALLOWLIST"
 [[ "$FIRMWARE_BUILD" =~ ^[0-9]{14}$ ]]
 [[ "$XOCHITL_BUILD_ID" =~ ^[0-9a-f]{40}$ ]]
 [[ "$SCENE_SELECTION_HANDLER_RESOURCE_HASH" =~ ^[0-9]+$ ]]
+[[ "$DEVICE_SCENE_VIEW_RESOURCE_HASH" =~ ^[0-9]+$ ]]
 [[ "$SELECTION_CONTEXTUAL_MENU_RESOURCE_HASH" =~ ^[0-9]+$ ]]
 if [ "$PHASE" = inert ]; then
     SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.164.source.qmd"
@@ -226,6 +230,45 @@ test ! -L "$BUTTON_QMD"
 test "$(shasum -a 256 "$SOURCE_QMD" | awk '{print $1}')" = "$EXPECTED_SOURCE_SHA"
 test "$(shasum -a 256 "$BUTTON_QMD" | awk '{print $1}')" = "$EXPECTED_BUTTON_SHA"
 
+SCENE_SELECTION_HANDLER_REL=qml/common/SceneSelectionHandler.qml
+DEVICE_SCENE_VIEW_REL=qml/device/view/documentview/DeviceSceneView.qml
+
+require_stock_qml_references() {
+    local relative_path reference_path
+    if [ ! -d "$QML_REFERENCE_ROOT" ] || [ -L "$QML_REFERENCE_ROOT" ]; then
+        echo "QML reference root is not a regular directory: $QML_REFERENCE_ROOT" >&2
+        exit 1
+    fi
+    for relative_path in \
+        "$SCENE_SELECTION_HANDLER_REL" \
+        "$DEVICE_SCENE_VIEW_REL"
+    do
+        reference_path="$QML_REFERENCE_ROOT/$relative_path"
+        if [ ! -f "$reference_path" ] || [ -L "$reference_path" ]; then
+            echo "Missing regular stock QML reference: $reference_path" >&2
+            exit 1
+        fi
+    done
+}
+
+require_applied_qml_outputs() {
+    local relative_path output_path
+    for relative_path in \
+        "$SCENE_SELECTION_HANDLER_REL" \
+        "$DEVICE_SCENE_VIEW_REL"
+    do
+        output_path="$QML_APPLY_OUTPUT/$relative_path"
+        if [ ! -f "$output_path" ] || [ -L "$output_path" ] || [ ! -s "$output_path" ]; then
+            echo "QMD did not produce a regular nonempty QML resource: $output_path" >&2
+            exit 1
+        fi
+        if ! "$QMLFORMAT_BIN" --ignore-settings "$output_path" >/dev/null; then
+            echo "QMD produced QML that qmlformat cannot parse: $output_path" >&2
+            exit 1
+        fi
+    done
+}
+
 # The tablet has no readelf. Verify build ID on a local byte-for-byte reference,
 # then require the same complete SHA-256 again on-device immediately pre-mutation.
 test -f "$XOCHITL_REFERENCE"
@@ -253,6 +296,14 @@ fi
     echo "A local qmldiff binary is required; set QMLDIFF_BIN" >&2
     exit 1
 }
+[ -n "$QMLFORMAT_BIN" ] && [ -x "$QMLFORMAT_BIN" ] || {
+    echo "A local qmlformat binary is required; set QMLFORMAT_BIN" >&2
+    exit 1
+}
+
+# Fail locally before the first device connection if the exact extracted stock
+# resources needed for a real parser/application check are unavailable.
+require_stock_qml_references
 
 # Preliminary read-only gate. The device transaction repeats the complete
 # fingerprint immediately before it writes ARMED or the QMD.
@@ -285,9 +336,22 @@ COMPATIBILITY_RESULT=$(
     "$QMLDIFF_BIN" check-compatibility "$LIVE_HASHTAB" "$BUTTON_QMD"
 )
 test "$COMPATIBILITY_RESULT" = 'No compatibility errors found.'
+
+# check-compatibility validates resource identities but does not parse and
+# apply the patch. Exercise the exact compiled QMD against both extracted stock
+# resources, using the SHA-pinned live hashtab, before any remote write.
+mkdir -m 0700 "$QML_APPLY_OUTPUT"
+"$QMLDIFF_BIN" apply-diffs \
+    --hashtab "$LIVE_HASHTAB" \
+    "$QML_REFERENCE_ROOT" "$QML_APPLY_OUTPUT" "$BUTTON_QMD"
+require_applied_qml_outputs
+
 DUMP=$("$QMLDIFF_BIN" dump-hashtab "$LIVE_HASHTAB")
 printf '%s\n' "$DUMP" |
     grep -Fx "/qml/common/SceneSelectionHandler.qml = $SCENE_SELECTION_HANDLER_RESOURCE_HASH" \
+        >/dev/null
+printf '%s\n' "$DUMP" |
+    grep -Fx "/qml/device/view/documentview/DeviceSceneView.qml = $DEVICE_SCENE_VIEW_RESOURCE_HASH" \
         >/dev/null
 printf '%s\n' "$DUMP" |
     grep -Fx "/qml/common/SelectionContextualMenu.qml = $SELECTION_CONTEXTUAL_MENU_RESOURCE_HASH" \

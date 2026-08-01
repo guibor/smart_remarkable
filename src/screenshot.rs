@@ -983,6 +983,21 @@ impl Screenshot {
         Ok(general_purpose::STANDARD.encode(png_data))
     }
 
+    /// Produce the focal selection and current page-view crops from this one
+    /// immutable captured frame. The method takes no new framebuffer read and
+    /// keeps the page visually faithful; kind-aware preprocessing is applied
+    /// later to the selection only.
+    pub fn base64_selection_and_page(
+        &self,
+        selection: crate::touch::Rect,
+        page_view: crate::touch::Rect,
+    ) -> Result<(String, String)> {
+        Ok((
+            self.base64_cropped(selection)?,
+            self.base64_cropped(page_view)?,
+        ))
+    }
+
     pub fn base64(&self) -> Result<String> {
         match &self.mode {
             ScreenshotMode::Simulated { simulator } => simulator.get_base64_image(),
@@ -1335,6 +1350,28 @@ ffffa0180000-ffffa032d000 rw-s 00000000 00:06 273 /dev/dri/card0
         assert_eq!(image.width().max(image.height()), 768);
         assert!(image.pixels().any(|pixel| pixel.0[0] < 64), "handwriting must remain visible");
         assert!(image.pixels().any(|pixel| pixel.0[0] == 255), "selection-gray background must become white");
+    }
+
+    #[test]
+    fn selection_and_page_crops_are_from_one_frame_and_page_stays_faithful() {
+        let data = std::fs::read("tests/fixtures/rmpp_selection.png").unwrap();
+        let ss = Screenshot::from_png_data(data);
+        let selection = ss.detect_selection_rect().expect("marquee should be detected");
+        let page = crate::touch::Rect {
+            x: 40,
+            y: 80,
+            w: 680,
+            h: 860,
+        };
+        let (selection_image, page_image) =
+            ss.base64_selection_and_page(selection, page).unwrap();
+        assert_eq!(selection_image, ss.base64_cropped(selection).unwrap());
+        assert_eq!(page_image, ss.base64_cropped(page).unwrap());
+
+        let prepared_selection =
+            crate::util::prepare_selection_png_b64(&selection_image, 768).unwrap();
+        assert_ne!(prepared_selection, selection_image);
+        assert_eq!(page_image, ss.base64_cropped(page).unwrap());
     }
 
     #[test]

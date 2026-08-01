@@ -8,9 +8,20 @@ import {
   createRequestJournal,
   RequestJournalError,
 } from "../src/request-journal.mjs";
+import { SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION } from "../src/source-provenance.mjs";
 
 const REQUEST_ID = "smart-remarkable-journal-test-0001";
-const FINGERPRINT = crypto.createHash("sha256").update("selection").digest("hex");
+const DOCUMENT_TITLE = "Private project title sentinel";
+const SELECTION_IMAGE_BASE64 = "iVBORw0KGgoAAA-selection-sentinel";
+const PAGE_IMAGE_BASE64 = "iVBORw0KGgoAAA-page-sentinel";
+const FINGERPRINT = crypto
+  .createHash("sha256")
+  .update(DOCUMENT_TITLE)
+  .update("\0")
+  .update(SELECTION_IMAGE_BASE64)
+  .update("\0")
+  .update(PAGE_IMAGE_BASE64)
+  .digest("hex");
 
 function identity(
   requestId = REQUEST_ID,
@@ -22,6 +33,7 @@ function identity(
     fingerprint,
     mode: "write_back",
     selectionKind,
+    contextVersion: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   };
 }
 
@@ -47,6 +59,7 @@ function response(requestId = REQUEST_ID, replayed = false) {
       request_id: requestId,
       response_mode: "write_back",
       selection_kind: "ink",
+      context_version: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
       replayed,
     },
   };
@@ -76,17 +89,27 @@ function responseDigest(value) {
     .digest("hex");
 }
 
-async function rewriteEntryAsSchemaV1(rootDirectory, requestId) {
+async function rewriteEntryAsLegacySchema(
+  rootDirectory,
+  requestId,
+  schemaVersion,
+) {
   const recordPath = path.join(
     rootDirectory,
     digest(requestId),
     "record.json",
   );
   const envelope = JSON.parse(await fs.readFile(recordPath, "utf8"));
-  envelope.record.schemaVersion = 1;
-  delete envelope.record.selectionKind;
+  envelope.record.schemaVersion = schemaVersion;
+  if (schemaVersion === 1) {
+    delete envelope.record.selectionKind;
+  }
+  delete envelope.record.contextVersion;
   if (envelope.record.state === "completed") {
-    delete envelope.record.response.x_smart_remarkable.selection_kind;
+    if (schemaVersion === 1) {
+      delete envelope.record.response.x_smart_remarkable.selection_kind;
+    }
+    delete envelope.record.response.x_smart_remarkable.context_version;
     envelope.record.responseHash = responseDigest(envelope.record.response);
   }
   await fs.writeFile(recordPath, `${JSON.stringify(envelope)}\n`, {
@@ -110,7 +133,7 @@ async function allRegularFileContents(rootDirectory) {
   return contents;
 }
 
-test("durably replays a completed response without persisting the selected PNG", async (t) => {
+test("durably replays a completed response without persisting the raw request title or either PNG", async (t) => {
   const { journal, rootDirectory } = await temporaryJournal(t);
   assert.deepEqual(await journal.reserve(identity()), { kind: "reserved" });
   await journal.complete({
@@ -138,13 +161,25 @@ test("durably replays a completed response without persisting the selected PNG",
 
   const persisted = (await allRegularFileContents(rootDirectory)).join("\n");
   assert.equal(persisted.includes("data:image/png;base64,"), false);
-  assert.equal(persisted.includes("iVBORw0KGgo"), false);
+  assert.equal(persisted.includes(DOCUMENT_TITLE), false);
+  assert.equal(persisted.includes(SELECTION_IMAGE_BASE64), false);
+  assert.equal(persisted.includes(PAGE_IMAGE_BASE64), false);
   const rootMode = (await fs.stat(rootDirectory)).mode & 0o777;
   assert.equal(rootMode, 0o700);
   const recordPath = path.join(
     rootDirectory,
     digest(REQUEST_ID),
     "record.json",
+  );
+  const recordEnvelope = JSON.parse(await fs.readFile(recordPath, "utf8"));
+  assert.equal(recordEnvelope.record.schemaVersion, 3);
+  assert.equal(
+    recordEnvelope.record.contextVersion,
+    SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+  );
+  assert.equal(
+    recordEnvelope.record.response.x_smart_remarkable.context_version,
+    SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   );
   assert.equal((await fs.stat(recordPath)).mode & 0o777, 0o600);
   assert.equal(
@@ -170,20 +205,52 @@ test("an incomplete atomic directory reservation is never treated as absent", as
   );
 });
 
-test("journal identities require the worker-owned request ID namespace", async (t) => {
+test("journal identities require the request namespace and exact context version", async (t) => {
   const { journal } = await temporaryJournal(t);
   await assert.rejects(
     journal.reserve(identity("ordinary-client-journal-0001")),
     (error) =>
       error instanceof RequestJournalError && error.code === "invalid",
   );
+  for (const contextVersion of [undefined, "selection-page-v0"]) {
+    await assert.rejects(
+      journal.reserve({ ...identity(), contextVersion }),
+      (error) =>
+        error instanceof RequestJournalError && error.code === "invalid",
+    );
+  }
 });
 
-test("a schema-v1 reservation remains a fail-closed barrier", async (t) => {
-  const requestId = "smart-remarkable-schema-v1-reserved-0001";
+test("schema-v1 and schema-v2 reservations remain fail-closed barriers", async (t) => {
+  const { journal, rootDirectory } = await temporaryJournal(t);
+  for (const schemaVersion of [1, 2]) {
+    const requestId =
+      `smart-remarkable-schema-v${schemaVersion}-reserved-0001`;
+    await journal.reserve(identity(requestId));
+    await rewriteEntryAsLegacySchema(
+      rootDirectory,
+      requestId,
+      schemaVersion,
+    );
+
+    const restarted = createRequestJournal({ rootDirectory, maxEntries: 10 });
+    await assert.rejects(
+      restarted.reserve(identity(requestId)),
+      (error) =>
+        error instanceof RequestJournalError && error.code === "incomplete",
+    );
+  }
+});
+
+test("a schema-v2 completion is never replayed", async (t) => {
+  const requestId = "smart-remarkable-schema-v2-completed-0001";
   const { journal, rootDirectory } = await temporaryJournal(t);
   await journal.reserve(identity(requestId));
-  await rewriteEntryAsSchemaV1(rootDirectory, requestId);
+  await journal.complete({
+    ...identity(requestId),
+    response: response(requestId),
+  });
+  await rewriteEntryAsLegacySchema(rootDirectory, requestId, 2);
 
   const restarted = createRequestJournal({ rootDirectory, maxEntries: 10 });
   await assert.rejects(
@@ -203,7 +270,7 @@ test("a schema-v1 completion is never replayed and retains capacity", async (t) 
     ...identity(legacyId),
     response: response(legacyId),
   });
-  await rewriteEntryAsSchemaV1(rootDirectory, legacyId);
+  await rewriteEntryAsLegacySchema(rootDirectory, legacyId, 1);
 
   const restarted = createRequestJournal({ rootDirectory, maxEntries: 2 });
   await assert.rejects(

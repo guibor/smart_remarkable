@@ -1,11 +1,17 @@
 export const SOURCE_PROVENANCE_PROTOCOL_VERSION =
-  "smart-remarkable-origin-v3";
+  "smart-remarkable-origin-v4";
+export const SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION =
+  "selection-page-v1";
 export const ORIGIN_CAPABILITIES_METHOD =
   "smart_remarkable.capabilities";
 export const ORIGIN_BIND_METHOD = "smart_remarkable.bind_origin";
 export const ORIGIN_CLEAR_METHOD = "smart_remarkable.clear_origin";
 export const OPENCLAW_PLUGIN_ID = "smart-remarkable-delivery";
-export const OPENCLAW_PLUGIN_VERSION = "0.3.0";
+export const OPENCLAW_PLUGIN_VERSION = "0.4.0";
+export const SMART_REMARKABLE_ATTACHMENT_ROLES = Object.freeze([
+  "selection",
+  "current_page",
+]);
 export const SMART_REMARKABLE_SELECTION_KINDS = Object.freeze([
   "ink",
   "image",
@@ -25,7 +31,7 @@ export const SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE = Object.freeze({
 export const SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION = [
   "[Trusted transport context added by Smart reMarkable; do not transcribe this block as handwriting.]",
   "This user turn originated from the user's reMarkable tablet. Continue the canonical WhatsApp conversation and report there what you read and what you do.",
-  "This transport block identifies source only. It does not classify capture intent or authorize any side effect; reMarkable-only action guidance and tool authority come from the authenticated server-side run context.",
+  "This transport block identifies source only. It does not classify capture intent or authorize any side effect; the server-built capture manifest identifies attachment roles and untrusted page metadata, while reMarkable-only action guidance and tool authority come from the authenticated server-side run context.",
 ].join("\n");
 
 export function verifyPluginCapabilities(result) {
@@ -35,6 +41,16 @@ export function verifyPluginCapabilities(result) {
     result?.pluginId !== OPENCLAW_PLUGIN_ID ||
     result?.pluginVersion !== OPENCLAW_PLUGIN_VERSION ||
     result?.originProtocol !== SOURCE_PROVENANCE_PROTOCOL_VERSION ||
+    !Array.isArray(result?.inputContextVersions) ||
+    result.inputContextVersions.length !== 1 ||
+    result.inputContextVersions[0] !==
+      SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION ||
+    !Array.isArray(result?.attachmentRoles) ||
+    result.attachmentRoles.length !==
+      SMART_REMARKABLE_ATTACHMENT_ROLES.length ||
+    result.attachmentRoles.some(
+      (role, index) => role !== SMART_REMARKABLE_ATTACHMENT_ROLES[index],
+    ) ||
     !Array.isArray(result?.selectionKinds) ||
     result.selectionKinds.length !== expectedKinds.length ||
     result.selectionKinds.some(
@@ -53,6 +69,7 @@ export function verifyOriginBinding(
   mode,
   selectionKind,
   expectedSessionId,
+  contextVersion,
 ) {
   if (
     typeof requestId !== "string" ||
@@ -65,6 +82,8 @@ export function verifyOriginBinding(
     result?.source !== "remarkable" ||
     result?.mode !== mode ||
     result?.selectionKind !== selectionKind ||
+    result?.contextVersion !== contextVersion ||
+    contextVersion !== SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION ||
     result?.expectedSessionId !== expectedSessionId ||
     typeof result?.bindingHandle !== "string" ||
     !/^[A-Za-z0-9_-]{43}$/.test(result.bindingHandle)

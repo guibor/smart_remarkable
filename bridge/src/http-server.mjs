@@ -77,20 +77,23 @@ export function createHttpServer({
     let requestId;
     let mode;
     let selectionKind;
+    let contextVersion;
     try {
       authenticateRequest(request.headers.authorization, bridgeToken);
-      ({ requestId, mode, selectionKind } = validateRequestHeaders(
+      ({ requestId, mode, selectionKind, contextVersion } = validateRequestHeaders(
         request.headers,
       ));
       const selection = validateOpenAiBody(
         await readJsonBody(request),
         selectionKind,
+        contextVersion,
       );
 
       const result = await service.submit({
         requestId,
         mode,
         selectionKind,
+        contextVersion,
         selection,
         onAccepted: () => writeAcceptedHeaders(response),
       });
@@ -126,6 +129,7 @@ export function createHttpServer({
               request_id: requestId ?? null,
               response_mode: mode ?? null,
               selection_kind: selectionKind ?? null,
+              context_version: contextVersion ?? null,
             },
           }),
         );

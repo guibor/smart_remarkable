@@ -15,6 +15,7 @@ export function buildSuccessResponse({
   requestId,
   mode,
   selectionKind,
+  contextVersion,
   text,
   ack,
   finalDelivery,
@@ -53,6 +54,7 @@ export function buildSuccessResponse({
       request_id: requestId,
       response_mode: mode,
       selection_kind: selectionKind,
+      context_version: contextVersion,
       replayed,
     },
   };
@@ -62,6 +64,7 @@ export function buildPostAcceptanceErrorResponse({
   requestId,
   mode,
   selectionKind,
+  contextVersion,
   ack,
   replayed,
   created = Math.floor(Date.now() / 1000),
@@ -97,6 +100,7 @@ export function buildPostAcceptanceErrorResponse({
       request_id: requestId,
       response_mode: mode,
       selection_kind: selectionKind,
+      context_version: contextVersion,
       replayed,
     },
   };

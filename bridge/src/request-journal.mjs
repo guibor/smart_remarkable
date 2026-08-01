@@ -2,10 +2,13 @@ import crypto from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { SMART_REMARKABLE_REQUEST_ID_PATTERN } from "./source-provenance.mjs";
+import {
+  SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+  SMART_REMARKABLE_REQUEST_ID_PATTERN,
+} from "./source-provenance.mjs";
 
 const ENVELOPE_VERSION = 1;
-const RECORD_VERSION = 2;
+const RECORD_VERSION = 3;
 const RECORD_FILE = "record.json";
 const SLOT_DIRECTORY = ".capacity-slots";
 const OWNERSHIP_FILE = ".smart-remarkable-request-journal-v1";
@@ -33,6 +36,7 @@ function validateIdentity({
   fingerprint,
   mode,
   selectionKind,
+  contextVersion,
 }) {
   if (
     typeof requestId !== "string" ||
@@ -40,7 +44,8 @@ function validateIdentity({
     typeof fingerprint !== "string" ||
     !FINGERPRINT_PATTERN.test(fingerprint) ||
     !MODES.has(mode) ||
-    !SELECTION_KINDS.has(selectionKind)
+    !SELECTION_KINDS.has(selectionKind) ||
+    contextVersion !== SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION
   ) {
     throw journalError("invalid", "Invalid request journal identity");
   }
@@ -49,6 +54,7 @@ function validateIdentity({
     fingerprint,
     mode,
     selectionKind,
+    contextVersion,
   });
 }
 
@@ -80,6 +86,8 @@ function validateStoredResponse(response, identity) {
     response?.x_smart_remarkable?.response_mode !== identity.mode ||
     response?.x_smart_remarkable?.selection_kind !==
       identity.selectionKind ||
+    response?.x_smart_remarkable?.context_version !==
+      identity.contextVersion ||
     !Array.isArray(response.choices) ||
     response.choices.length !== 1 ||
     !response.openclaw_delivery ||
@@ -92,7 +100,7 @@ function validateStoredResponse(response, identity) {
 
 function validateRecord(record, expectedRequestId) {
   assertPlainObject(record, "Request journal record is invalid");
-  if (record.schemaVersion === 1) {
+  if (record.schemaVersion === 1 || record.schemaVersion === 2) {
     throw journalError(
       "incomplete",
       "Legacy request journal entry cannot be safely replayed",
@@ -422,7 +430,8 @@ function sameIdentity(record, identity) {
     record.requestId === identity.requestId &&
     record.fingerprint === identity.fingerprint &&
     record.mode === identity.mode &&
-    record.selectionKind === identity.selectionKind
+    record.selectionKind === identity.selectionKind &&
+    record.contextVersion === identity.contextVersion
   );
 }
 
@@ -524,7 +533,7 @@ export function createRequestJournal({
         if (!sameIdentity(existing, identity)) {
           throw journalError(
             "conflict",
-            "Request ID was already used for different content, response mode, or selection kind",
+            "Request ID was already used for different content, context, response mode, or selection kind",
           );
         }
         if (existing.state === "completed") {
@@ -564,7 +573,7 @@ export function createRequestJournal({
         if (!sameIdentity(raced, identity)) {
           throw journalError(
             "conflict",
-            "Request ID was already used for different content, response mode, or selection kind",
+            "Request ID was already used for different content, context, response mode, or selection kind",
           );
         }
         if (raced.state === "completed") {
@@ -585,6 +594,7 @@ export function createRequestJournal({
         fingerprint: identity.fingerprint,
         mode: identity.mode,
         selectionKind: identity.selectionKind,
+        contextVersion: identity.contextVersion,
         state: "reserved",
         capacitySlot,
         createdAt: Date.now(),
@@ -625,6 +635,7 @@ export function createRequestJournal({
         fingerprint: identity.fingerprint,
         mode: identity.mode,
         selectionKind: identity.selectionKind,
+        contextVersion: identity.contextVersion,
         state: "completed",
         capacitySlot: existing.capacitySlot,
         createdAt: existing.createdAt,

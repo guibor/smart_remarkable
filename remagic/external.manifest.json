@@ -1,8 +1,8 @@
 {
   "id": "smart-remarkable",
   "name": "Smart Remarkable",
-  "version": "0.7.3-openclaw",
-  "description": "LLM write-back and WhatsApp-only Send buttons plus optional lasso modes.",
+  "version": "0.8.0-openclaw",
+  "description": "Context-aware OpenClaw write-back and WhatsApp-only selection buttons.",
   "application": "appload-launch.sh",
   "qtfb": false
 }

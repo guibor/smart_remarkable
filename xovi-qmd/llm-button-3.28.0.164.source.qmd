@@ -6,6 +6,14 @@ VERSION 3.28.0.164
 
 AFFECT /qml/common/SceneSelectionHandler.qml
     TRAVERSE Item#selectionRoot
+        LOCATE BEFORE SelectionContextualMenu#tools
+        INSERT {
+            // Exact DeviceSceneView bindings; no parent-chain discovery.
+            property string smartRemarkableDocumentId: ""
+            property string smartRemarkablePageId: ""
+            property int smartRemarkablePageIndex: -1
+        }
+
         TRAVERSE SelectionContextualMenu#tools
             LOCATE AFTER ArkControls.ContextualMenu.Button#selectionDuplicate
             INSERT {
@@ -161,7 +169,7 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                             console.warn("SR_WAND stage=snapshot-rejected")
                             return
                         }
-                        var descriptor = "v2," + mode + "," +
+                        var descriptor = "v3," + mode + "," +
                             snapshot.substring(3) + "," +
                             Math.floor(Date.now())
                         pendingMode = mode
@@ -303,8 +311,84 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                                 y1 > scale || x1 <= x0 || y1 <= y0) {
                             return ""
                         }
-                        return "v2," + kind + "," + orientation + "," +
-                            x0 + "," + y0 + "," + x1 + "," + y1
+
+                        // Device/page identity and visible page geometry are
+                        // explicit firmware-pinned bindings supplied by
+                        // DeviceSceneView. Arbitrary parent walking and title
+                        // inference are intentionally forbidden.
+                        var documentId = String(
+                            selectionRoot.smartRemarkableDocumentId)
+                        var pageId = String(
+                            selectionRoot.smartRemarkablePageId)
+                        var pageIndex =
+                            selectionRoot.smartRemarkablePageIndex
+                        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+                                    documentId) ||
+                                !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(
+                                    pageId) ||
+                                !isFinite(pageIndex) ||
+                                Math.floor(pageIndex) !== pageIndex ||
+                                pageIndex < 0 || pageIndex > 1000000) {
+                            return ""
+                        }
+                        var pageIdHex = ""
+                        for (var pageIdIndex = 0;
+                                pageIdIndex < pageId.length;
+                                pageIdIndex++) {
+                            var byteHex = pageId.charCodeAt(
+                                pageIdIndex).toString(16)
+                            if (byteHex.length !== 2) {
+                                return ""
+                            }
+                            pageIdHex += byteHex
+                        }
+
+                        var pageRect = selectionRoot.pageBounds
+                        if (!pageRect || !isFinite(pageRect.x) ||
+                                !isFinite(pageRect.y) ||
+                                !isFinite(pageRect.width) ||
+                                !isFinite(pageRect.height) ||
+                                pageRect.width <= 0 ||
+                                pageRect.height <= 0) {
+                            return ""
+                        }
+                        var pageLeft = Math.max(0, pageRect.x)
+                        var pageTop = Math.max(0, pageRect.y)
+                        var pageRight = Math.min(selectionRoot.width,
+                            pageRect.x + pageRect.width)
+                        var pageBottom = Math.min(selectionRoot.height,
+                            pageRect.y + pageRect.height)
+                        if (pageRight <= pageLeft ||
+                                pageBottom <= pageTop) {
+                            return ""
+                        }
+                        var pageX0 = Math.floor(
+                            pageLeft * scale / selectionRoot.width)
+                        var pageY0 = Math.floor(
+                            pageTop * scale / selectionRoot.height)
+                        var pageX1 = Math.ceil(
+                            pageRight * scale / selectionRoot.width)
+                        var pageY1 = Math.ceil(
+                            pageBottom * scale / selectionRoot.height)
+                        if (pageX0 < 0 || pageY0 < 0 ||
+                                pageX1 > scale || pageY1 > scale ||
+                                pageX1 <= pageX0 || pageY1 <= pageY0) {
+                            return ""
+                        }
+                        var pageCompleteness =
+                            pageRect.x >= 0 && pageRect.y >= 0 &&
+                            pageRect.x + pageRect.width <=
+                                selectionRoot.width &&
+                            pageRect.y + pageRect.height <=
+                                selectionRoot.height ?
+                                "full_page" : "viewport_only"
+
+                        return "v3," + kind + "," + orientation + "," +
+                            x0 + "," + y0 + "," + x1 + "," + y1 + "," +
+                            documentId + "," + pageIdHex + "," +
+                            pageIndex + "," + pageX0 + "," + pageY0 + "," +
+                            pageX1 + "," + pageY1 + "," +
+                            pageCompleteness
                     }
 
                     function ensureAppLoadHelper() {
@@ -382,6 +466,46 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         "whatsapp_only")
                 }
             }
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+    TRAVERSE FocusScope
+        TRAVERSE Component#selectionHandlerComponent
+            TRAVERSE SceneSelectionHandler#selectionHandler
+                LOCATE AFTER ALL
+                INSERT {
+                    function smartRemarkableBoundDocumentId() {
+                        if (!root.document ||
+                                root.document.id === undefined ||
+                                root.document.id === null) {
+                            return ""
+                        }
+                        return String(root.document.id)
+                    }
+
+                    function smartRemarkableBoundPageId() {
+                        if (root.pageId === undefined ||
+                                root.pageId === null) {
+                            return ""
+                        }
+                        return String(root.pageId)
+                    }
+
+                    function smartRemarkableBoundPageIndex() {
+                        return typeof root.page === "number" ?
+                            root.page : -1
+                    }
+
+                    pageBounds: root.pageBorderRect
+                    smartRemarkableDocumentId:
+                        smartRemarkableBoundDocumentId()
+                    smartRemarkablePageId: smartRemarkableBoundPageId()
+                    smartRemarkablePageIndex:
+                        smartRemarkableBoundPageIndex()
+                }
+            END TRAVERSE
         END TRAVERSE
     END TRAVERSE
 END AFFECT

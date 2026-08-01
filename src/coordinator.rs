@@ -11,9 +11,13 @@ use tokio::time::{sleep, Duration};
 
 use crate::cancellation::SmartRemarkableCancellation;
 use crate::config::Config;
+use crate::document_context::load_document_display_name;
 use crate::embedded_assets::load_config;
 use crate::keyboard::Keyboard;
-use crate::llm_engine::{LLMEngine, ModelExecutionStatus, ResponseMode, SelectionKind};
+use crate::llm_engine::{
+    LLMEngine, ModelExecutionStatus, ResponseMode, SelectionKind,
+    SelectionPageContext, SELECTION_PAGE_CONTEXT_VERSION,
+};
 use crate::screenshot::{NormalizedView, Screenshot};
 use crate::segmenter::ImageAnalyzer;
 use crate::simulation::SimulationConfig;
@@ -174,7 +178,12 @@ fn try_admit(admission: &AtomicBool) -> bool {
     admission.compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire).is_ok()
 }
 
-fn selection_fingerprint(base64_image: &str, selection: Rect, selection_kind: SelectionKind) -> u64 {
+fn selection_fingerprint(
+    base64_image: &str,
+    selection: Rect,
+    selection_kind: SelectionKind,
+    page_context: Option<&SelectionPageContext>,
+) -> u64 {
     let mut hasher = DefaultHasher::new();
     selection.x.hash(&mut hasher);
     selection.y.hash(&mut hasher);
@@ -182,11 +191,22 @@ fn selection_fingerprint(base64_image: &str, selection: Rect, selection_kind: Se
     selection.h.hash(&mut hasher);
     selection_kind.hash(&mut hasher);
     base64_image.hash(&mut hasher);
+    if let Some(context) = page_context {
+        SELECTION_PAGE_CONTEXT_VERSION.hash(&mut hasher);
+        context.hash(&mut hasher);
+    }
     hasher.finish()
 }
 
 fn should_suppress_duplicate(source: TriggerSource, current: Option<u64>, last_completed: Option<u64>) -> bool {
     source == TriggerSource::PenLasso && current.is_some() && current == last_completed
+}
+
+fn reject_context_debug_persistence(has_page_context: bool, save_screenshot: Option<&str>) -> Result<()> {
+    if has_page_context && save_screenshot.is_some() {
+        anyhow::bail!("Selection-page requests cannot persist a debug screenshot");
+    }
+    Ok(())
 }
 
 /// Map a physical trigger onto the response destination used by this request.
@@ -314,12 +334,17 @@ pub async fn trigger_task(
                     }
                 } else if matches!(source, TriggerSource::LlmButton | TriggerSource::SendButton) {
                     match selection_request {
-                        Some(SelectionRequest::V2(descriptor)) => TriggerEvent::UserSelection {
+                        Some(request @ (SelectionRequest::V3(_) | SelectionRequest::V2(_))) => {
+                            let descriptor = request
+                                .descriptor()
+                                .expect("explicit v2/v3 request has a descriptor");
+                            TriggerEvent::UserSelection {
                             selection: descriptor.rect,
                             placement: auto_placement(descriptor.rect),
                             source,
                             selection_kind: descriptor.kind,
-                            selection_request: Some(SelectionRequest::V2(descriptor)),
+                            selection_request: Some(request),
+                        }
                         },
                         Some(request @ SelectionRequest::Legacy { .. }) => TriggerEvent::UserLegacySelection {
                             source,
@@ -370,12 +395,16 @@ pub async fn trigger_task(
 #[cfg(test)]
 mod tests {
     use super::{
-        response_mode_for_trigger, selection_fingerprint, should_collect_selection_taps, should_dismiss_captured_selection,
-        should_dismiss_legacy_accepted_selection, should_suppress_duplicate, try_admit, verified_post_close_guard,
+        reject_context_debug_persistence, response_mode_for_trigger, selection_fingerprint,
+        should_collect_selection_taps, should_dismiss_captured_selection,
+        should_dismiss_legacy_accepted_selection, should_suppress_duplicate, try_admit,
+        verified_post_close_guard,
     };
-    use crate::llm_engine::{ModelExecutionStatus, ResponseMode, SelectionKind};
+    use crate::llm_engine::{
+        ModelExecutionStatus, ResponseMode, SelectionKind, SelectionPageContext,
+    };
     use crate::screenshot::NormalizedView;
-    use crate::touch::{Rect, SelectionOrientation, TriggerSource};
+    use crate::touch::{PageImageCompleteness, Rect, SelectionOrientation, TriggerSource};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
@@ -418,8 +447,8 @@ mod tests {
     #[test]
     fn pen_duplicate_is_suppressed_but_explicit_button_is_not() {
         let rect = Rect { x: 10, y: 20, w: 100, h: 50 };
-        let first = selection_fingerprint("image-a", rect, SelectionKind::Ink);
-        let changed = selection_fingerprint("image-b", rect, SelectionKind::Ink);
+        let first = selection_fingerprint("image-a", rect, SelectionKind::Ink, None);
+        let changed = selection_fingerprint("image-b", rect, SelectionKind::Ink, None);
         assert!(should_suppress_duplicate(TriggerSource::PenLasso, Some(first), Some(first)));
         assert!(!should_suppress_duplicate(TriggerSource::LlmButton, Some(first), Some(first)));
         assert!(!should_suppress_duplicate(TriggerSource::PenLasso, Some(changed), Some(first)));
@@ -461,8 +490,60 @@ mod tests {
     fn selection_fingerprint_binds_stock_selection_kind() {
         let rect = Rect { x: 10, y: 20, w: 100, h: 50 };
         assert_ne!(
-            selection_fingerprint("same-image", rect, SelectionKind::Ink),
-            selection_fingerprint("same-image", rect, SelectionKind::Image),
+            selection_fingerprint("same-image", rect, SelectionKind::Ink, None),
+            selection_fingerprint("same-image", rect, SelectionKind::Image, None),
+        );
+    }
+
+    #[test]
+    fn selection_page_context_rejects_debug_screenshot_persistence() {
+        assert!(reject_context_debug_persistence(true, Some("debug.png")).is_err());
+        assert!(reject_context_debug_persistence(true, None).is_ok());
+        assert!(reject_context_debug_persistence(false, Some("debug.png")).is_ok());
+    }
+
+    #[test]
+    fn selection_fingerprint_binds_page_image_title_and_metadata() {
+        let rect = Rect { x: 10, y: 20, w: 100, h: 50 };
+        let context = SelectionPageContext {
+            selection_image_base64: "same-image".to_string(),
+            current_page_image_base64: "page-a".to_string(),
+            document_display_name: "Notebook A".to_string(),
+            page_id: "page-1".to_string(),
+            page_index: 0,
+            page_image_completeness: PageImageCompleteness::FullPage,
+        };
+        let baseline = selection_fingerprint(
+            "same-image",
+            rect,
+            SelectionKind::Ink,
+            Some(&context),
+        );
+        let mut changed_page = context.clone();
+        changed_page.current_page_image_base64 = "page-b".to_string();
+        assert_ne!(
+            baseline,
+            selection_fingerprint(
+                "same-image",
+                rect,
+                SelectionKind::Ink,
+                Some(&changed_page),
+            )
+        );
+        let mut changed_title = context.clone();
+        changed_title.document_display_name = "Notebook B".to_string();
+        assert_ne!(
+            baseline,
+            selection_fingerprint(
+                "same-image",
+                rect,
+                SelectionKind::Ink,
+                Some(&changed_title),
+            )
+        );
+        assert_ne!(
+            baseline,
+            selection_fingerprint("same-image", rect, SelectionKind::Ink, None)
         );
     }
 
@@ -678,7 +759,21 @@ pub async fn processing_task(
             return Ok(ProcessingOutcome::NoSelection);
         }
     }
-    let response_mode = response_mode_for_trigger(trigger_source);
+    reject_context_debug_persistence(
+        selection_descriptor.is_some_and(|descriptor| descriptor.page.is_some()),
+        config.save_screenshot.as_deref(),
+    )?;
+    let requested_response_mode = response_mode_for_trigger(trigger_source);
+    // A strict v2 QMD is accepted only for app-first migration/paired
+    // rollback. It has no document/page identity, so it cannot authorize an
+    // Exact local insertion in the v3 application.
+    let response_mode = if matches!(selection_request, Some(SelectionRequest::V2(_)))
+        && requested_response_mode.writes_to_tablet()
+    {
+        ResponseMode::WhatsappOnly
+    } else {
+        requested_response_mode
+    };
 
     // The pen-up event reaches evdev just before xochitl finishes painting
     // the gray native-selection marquee. Give the stock UI a short head
@@ -717,7 +812,16 @@ pub async fn processing_task(
     let mut selection = selection;
     let mut selection_kind = selection_kind;
     let mut prepared_write_back_baseline = None;
+    let mut captured_page_context = None;
     let captured_image = if let Some(input_png) = &config.input_png {
+        if selection_descriptor.is_some_and(|descriptor| descriptor.page.is_some()) {
+            if selection_prepared {
+                restore_prepared_selection(&keyboard);
+            }
+            anyhow::bail!(
+                "A v3 selection-page request cannot use an unrelated input PNG fixture"
+            );
+        }
         match std::fs::read(input_png) {
             Ok(bytes) => BASE64_STANDARD.encode(bytes),
             Err(error) => {
@@ -756,7 +860,10 @@ pub async fn processing_task(
                 return Err(error);
             }
         }
-        if selection_descriptor.is_some() && response_mode.writes_to_tablet() && selection_prepared {
+        if selection_descriptor.is_some_and(|descriptor| descriptor.page.is_some())
+            && response_mode.writes_to_tablet()
+            && selection_prepared
+        {
             prepared_write_back_baseline = match screenshot.normalized_view() {
                 Ok(view) => Some(view),
                 Err(error) => {
@@ -800,7 +907,40 @@ pub async fn processing_task(
             }
         }
 
-        let image_result = if let Some((selection_rect, _)) = &selection {
+        let image_result = if let Some(page) =
+            selection_descriptor.and_then(|descriptor| descriptor.page.as_ref())
+        {
+            let selection_rect = selection
+                .map(|(selection_rect, _)| selection_rect)
+                .ok_or_else(|| anyhow::anyhow!("V3 page context has no selection rectangle"))?;
+            let (selection_image, current_page_image_base64) =
+                match screenshot.base64_selection_and_page(selection_rect, page.page_view_rect) {
+                    Ok(images) => images,
+                    Err(error) => {
+                        if selection_prepared {
+                            restore_prepared_selection(&keyboard);
+                        }
+                        return Err(error);
+                    }
+                };
+            let document_display_name = match load_document_display_name(&page.document_id) {
+                Ok(name) => name,
+                Err(error) => {
+                    if selection_prepared {
+                        restore_prepared_selection(&keyboard);
+                    }
+                    return Err(error);
+                }
+            };
+            captured_page_context = Some((
+                current_page_image_base64,
+                document_display_name,
+                page.page_id.clone(),
+                page.page_index,
+                page.completeness,
+            ));
+            Ok(selection_image)
+        } else if let Some((selection_rect, _)) = &selection {
             screenshot.base64_cropped(*selection_rect)
         } else {
             screenshot.base64()
@@ -834,6 +974,22 @@ pub async fn processing_task(
             return Err(error);
         }
     };
+    let selection_page_context = captured_page_context.map(
+        |(
+            current_page_image_base64,
+            document_display_name,
+            page_id,
+            page_index,
+            page_image_completeness,
+        )| SelectionPageContext {
+            selection_image_base64: base64_image.clone(),
+            current_page_image_base64,
+            document_display_name,
+            page_id,
+            page_index,
+            page_image_completeness,
+        },
+    );
 
     // Once the crop is immutable in memory, close the exact stock selection
     // before any remote work. Rust accepts the close only when AppLoad returns
@@ -863,7 +1019,7 @@ pub async fn processing_task(
         // Bind the closed view back to the exact full framebuffer captured
         // while this original selection was prepared. A navigation between
         // close and this read can never become the new blessed baseline.
-        if response_mode.writes_to_tablet() {
+        if response_mode.writes_to_tablet() && descriptor.page.is_some() {
             let baseline = prepared_write_back_baseline
                 .take()
                 .ok_or_else(|| anyhow::anyhow!("Prepared original-page framebuffer was unavailable for write-back binding"))?;
@@ -888,8 +1044,14 @@ pub async fn processing_task(
         }
     }
 
-    let request_fingerprint =
-        selection.map(|(selection_rect, _)| selection_fingerprint(&base64_image, selection_rect, effective_selection_kind.unwrap_or(SelectionKind::Ink)));
+    let request_fingerprint = selection.map(|(selection_rect, _)| {
+        selection_fingerprint(
+            &base64_image,
+            selection_rect,
+            effective_selection_kind.unwrap_or(SelectionKind::Ink),
+            selection_page_context.as_ref(),
+        )
+    });
     let last_completed = last_selection_fingerprint.lock().ok().and_then(|last| *last);
     if should_suppress_duplicate(trigger_source, request_fingerprint, last_completed) {
         info!("Ignoring duplicate pen trigger for the still-active selection");
@@ -1012,8 +1174,22 @@ pub async fn processing_task(
     engine_guard.set_response_mode(response_mode);
     engine_guard.set_selection_kind(effective_selection_kind);
     engine_guard.clear_content();
-    engine_guard.add_image_content(&base64_image);
-    engine_guard.add_text_content(&prompt);
+    if config.engine.as_deref() == Some("openclaw") {
+        if let Some(context) = selection_page_context {
+            engine_guard.set_selection_page_context(Some(context));
+            engine_guard.add_text_content(&prompt);
+        } else {
+            // V2/legacy paired rollback keeps the historical one-image body
+            // and never fabricates missing document context.
+            engine_guard.set_selection_page_context(None);
+            engine_guard.add_image_content(&base64_image);
+            engine_guard.add_text_content(&prompt);
+        }
+    } else {
+        engine_guard.set_selection_page_context(None);
+        engine_guard.add_image_content(&base64_image);
+        engine_guard.add_text_content(&prompt);
+    }
 
     // Create status callback that wraps model execution status in LlmState
     let progress_tx_clone = progress_tx.clone();

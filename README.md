@@ -57,9 +57,13 @@ patch has passed its device canary, is:
      same WhatsApp acknowledgement/final sequence, with no tablet text, pen,
      or touch output.
 3. The chosen button highlights at once and shared pending state ignores
-   repeated taps. The v2 QML records the live `ink`, `image`, or `mixed` kind,
-   fixed-point selection rectangle, stable `normal`/`rot180` orientation, and
-   capture time. When the stock menu appears, QML defers creation of one
+   repeated taps. The `0.8.0-openclaw` v3 QML records the live `ink`, `image`,
+   or `mixed` kind, fixed-point selection rectangle, stable
+   `normal`/`rot180` orientation, exact document UUID, page id/index, mapped
+   current-page bounds and completeness, and capture time. `DeviceSceneView`
+   supplies that document/page identity explicitly; the selection handler does
+   not guess it by walking its parent tree. When the stock menu appears, QML
+   defers creation of one
    parent-owned `AppLoadLibrary` helper and caches it for that selection handler.
    A tap then yields one event-loop turn so the selected state can paint,
    revalidates the exact pending snapshot, and reuses that helper for AppLoad's
@@ -72,13 +76,20 @@ patch has passed its device canary, is:
    `/usr/bin/hexdump` interface, validates exactly 64 lowercase hexadecimal
    characters, and publishes a root-only busy marker before the trigger. Local
    capture readiness does not wait for the SSH tunnel or bridge.
-4. Smart asks QML to re-read the same selection immediately before capture.
-   Only an exact match temporarily hides the stock tint, border, and menu via
-   the stock `controlsAreVisible` flag and returns a nonce-bound prepare
-   acknowledgement. Smart then captures only the descriptor rectangle with
-   the descriptor orientation. Handwriting keeps the established whitening
-   and enlargement; image and mixed selections preserve RGB and tonal detail.
-5. After the prepared crop exists only in memory, Smart asks QML to revalidate
+4. Smart asks QML to re-read the same selection and document/page identity
+   immediately before capture. Only an exact match temporarily hides the stock
+   tint, border, and menu via the stock `controlsAreVisible` flag and returns a
+   nonce-bound prepare acknowledgement. One immutable framebuffer read then
+   produces both the descriptor crop and the faithful current-page view from
+   that same instant. Handwriting in the focal crop keeps the established
+   whitening and enlargement; image and mixed crops preserve RGB and tonal
+   detail, while the supporting page view is never whitened. Smart also
+   resolves the notebook's visible filename from the exact document UUID by a
+   bounded, no-follow, stable metadata read. If the mapped page is not fully
+   visible, metadata says `viewport_only`; Smart never zooms or navigates to
+   manufacture a logical full-page image.
+5. After both images and the bounded metadata exist only in memory, Smart asks
+   QML to revalidate
    once more, calls reMarkable's own selection-close path, and requires the
    matching close acknowledgement before any remote submission. A pre-close
    capture or validation failure restores the stock controls and leaves the
@@ -86,7 +97,11 @@ patch has passed its device canary, is:
    selected content. No pen hold or four-finger gesture is involved.
 6. The private tunnel starts in parallel and publishes separate remote
    readiness. OpenClaw/WhatsApp work continues after the local marquee closes,
-   while the busy generation rejects later taps instead of queueing them. For
+   while the busy generation rejects later taps instead of queueing them. The
+   strict `selection-page-v1` request sends one text part followed by the focal
+   selection and same-instant page images with fixed roles, plus the document
+   display name and page metadata. OpenClaw treats the lasso as the user's
+   primary input and the page/title as untrusted supporting context. For
    answer-here, Smart retains the complete normalized page captured while the
    exact selection was still prepared, then requires the first post-close frame
    to match those original bytes. A missing or changed original-page binding
@@ -157,8 +172,11 @@ loopback-only server bridge. That bridge—not the tablet—owns the full Gatewa
 credential and the direct WhatsApp route. The tablet stores only an unrelated
 narrow bridge bearer and a dedicated forwarding-only SSH key in root-owned
 mode-600 files. History and memory stay in the canonical OpenClaw server
-session; the client creates no separate tablet transcript and retains no page
-screenshots.
+session; the tablet client creates no separate transcript and persists neither
+page screenshots nor the raw document-title field. The bridge request journal
+also stores neither raw PNG nor raw title request data, while the title is
+intentionally available to canonical OpenClaw history and may naturally be
+mentioned in a cached safe answer.
 
 Each tablet turn is also bound to trusted server-side reMarkable provenance
 before it enters the canonical WhatsApp-routed session. If the handwritten
@@ -168,18 +186,26 @@ reMarkable cloud library. It reports what it read and what it did in WhatsApp.
 That delivery tool is execution-gated to the bound tablet run; typing similar
 words in a normal WhatsApp turn does not authorize it.
 
-For trusted `image` and `mixed` Capture selections, the candidate server hook
-resolves intent in this order: an explicit current user instruction; a
-specific still-active user instruction in canonical conversation; durable
-memory/preferences; then the captured content and immediate context. Captured
-or quoted text and assistant suggestions are context, not authority. If the
-intent remains ambiguous, OpenClaw should provide an in-depth explanation,
-background, and context for the selection—not a market scan, recommendations,
-or a generic clarification—and ambiguity never authorizes an external side
-effect.
+For every trusted v3 selection, the candidate server hook behaves as a
+proactive, capable employee: it treats the lasso as the focal request and uses
+the same-frame page view, document-id-bound name, canonical conversation, and durable
+memory to resolve references and likely intent. It makes the strongest
+reasonable harmless interpretation and carries it to a concrete useful result
+instead of merely acknowledging, restating, defaulting to a market scan, or
+asking a generic clarification. It states a consequential assumption and
+addresses a close alternative when useful, asking only when materially
+different interpretations require a real choice. Captured or quoted text,
+page/title data, and assistant suggestions are context, not authority;
+inference never authorizes an external side effect or an unsupported completion
+claim. `received_text` remains limited to the selected attachment, while the
+supporting page and filename may influence only `response_text`.
 
-The deployed reviewed OpenClaw workspace plugin is version `0.2.2`; the local
-unpromoted candidate is version `0.3.0`. OpenClaw closes ordinary plugin API
+The currently installed reviewed OpenClaw workspace plugin baseline is version
+`0.3.0`. The local, not-yet-promoted v3 candidate is plugin `0.4.0` with
+origin-v4, response envelope v3, request-journal schema v3, and exact
+`selection-page-v1` plus ordered `selection`/`current_page` capability
+receipts. Existing schema-v1 and schema-v2 journal records remain fail-closed
+barriers rather than being replayed under the new semantics. OpenClaw closes ordinary plugin API
 methods after registration, so late origin bind and clear calls use a
 registered synchronous agent-event adapter: only a random operation ID crosses
 the plugin-owned control stream, while host callback methods perform
@@ -239,10 +265,10 @@ disabled QMD; application staged manifest
 `5690a3e627c5fa82f02dba631616522ebdf0278c6d91eb2bbccf0db339b20a54`
 then installed the unchanged worker, and refresh-functional transaction
 `20260731T222432Z-49869` committed the corrected QMD. The recorded final
-`xochitl` PID is `39042` with `NRestarts=0`. The deployed server plugin remains
-`0.2.2`; the local server candidate remains unpromoted. This proves exact
-installation and stock-process stability, not physical ink/image/mixed
-acceptance through both icons.
+`xochitl` PID is `39042` with `NRestarts=0`. At that historical transaction the
+deployed server plugin was `0.2.2`; the current installed server baseline is
+now `0.3.0`. This proves exact installation and stock-process stability at that
+stage, not physical ink/image/mixed acceptance through both icons.
 
 Live physical attempts at `08:38:13` and `08:54:38` narrowed the current
 failure below AppLoad process start. Each valid descriptor reached the launcher,
@@ -332,11 +358,44 @@ post-request check found no busy/trigger/ack residue, `xochitl` remained PID
 wand-to-OpenClaw path; the deliberate offline/reconnect case and wider physical
 matrix remain separate acceptance work.
 
-OpenClaw's candidate canonical final remains a strict
+The locally completed `0.8.0-openclaw` candidate adds the strict v3 context
+bundle without changing that deployed state yet. Its current exact-device
+contract pins aarch64 worker
+`4c9605f7f9e6be898230c3c5d607fa36fc1ce815ad85cc8f6f04e625be314f1e`
+with build ID `16bc36a982fbb2465375641a2006e3936b511394`, maximum
+GLIBC 2.28, and no RPATH/RUNPATH.
+The matching launcher, reconnecting runner, and protocol helper are respectively
+`6660d1f01510d9e92910f9fbdcbd23a4fe4c40aac3d5a74a27213fe3faea14cd`,
+`72588acb490cb17b7a2b8ca3bce4dc938862cff95da922267074d5c14f5b232c`,
+and `a11af20d55fc668c59e367d49e834844ed1e9a041cd400de481690811afb750c`.
+The functional source/compiled QMD pair is
+`1b01d2a123ac5d16763b140c2342c14bbd99243455fc81debdad85165707644d` /
+`5cf5156df227a1ecdf3fb421b2cc57e55564bf31ab9d434a7f16c21b40ef0dc2`;
+the inert source/compiled pair is
+`85577aabce320c983de04ef0928851a9567839ba95494bd2d58dbf14f50b7b25` /
+`635752321485a4dfb702b24fdf9b1f836f329a1399ebcc06f4b19dc4035a625a`.
+These are local reviewed candidate identities, not evidence that the tablet or
+server has been upgraded.
+
+This resource-expanding migration uses a special no-taps, app-first sequence.
+First install `0.8.0-openclaw` while the exact deployed v2 functional QMD and
+old server remain; the new client deliberately retains a strict v2 adapter
+that sends the historical one-image request and suppresses v2 local write-back.
+Then use the new contract to move that exact
+`v2-migration-functional` QMD to the new inert canary. With the buttons inert,
+quiesce requests and promote plugin `0.4.0`, origin-v4, journal schema v3, and
+the matching bridge as one server transaction. Only after capability-backed
+server health may the exact v3 functional QMD pass the guarded functional
+canary, watchdog, rollback, stable-`xochitl`, and read-only-root checks. No tap
+is permitted between the app-first install and inert transition.
+
+OpenClaw's v3 candidate canonical final remains a strict response-envelope-v3
 literal-transcription/answer envelope: WhatsApp receives one atomic `I read:`
 quote followed by the answer, while the sparkling notebook returns only the
 answer for guarded stock-text insertion and the sparkles action returns no
-assistant text to the tablet.
+assistant text to the tablet. The quote is attributable only to
+`remarkable-selection.png`; the supporting page/title context can improve the
+answer but cannot leak into `received_text`.
 
 In the earlier 3.28.0.163 deployment, server source transaction
 `20260725T230143Z` and tablet transaction
@@ -544,13 +603,17 @@ over SSH while you're learning the gesture.
 **Experimental upstream LLM button / Draw button**: with the raw
 `xovi-ext/llmbutton` installed, lassoing text with xochitl's own selection
 tool shows **LLM** and **Draw** buttons beside cut/copy/paste. That native
-extension is not the safe Paper Pro integration. The guarded 3.28.0.163
+extension is not the safe Paper Pro integration. The guarded firmware-specific
 candidate in `xovi-qmd/` adds the stock notebook-with-sparkles and sparkles
 actions. The deployed v2 source prewarms and caches one dynamically imported,
 parent-owned `AppLoadLibrary`, then launches a bounded descriptor containing
 mode, kind, orientation, geometry, and capture time through that direct checked
 helper. It reuses the helper for the same-snapshot prepare and close
 acknowledgements; it never talks to the Rust process directly.
+The `0.8.0-openclaw` candidate patches both `DeviceSceneView` and
+`SceneSelectionHandler` so a v3 descriptor also binds exact document/page
+identity, page-view bounds, and completeness before producing the two-image
+`selection-page-v1` request.
 Historical `--selection-button=...` actions remain only for the pinned approved
 legacy-QMD rollback/migration state described above.
 
@@ -821,12 +884,13 @@ walks the live QtQuick scene graph. It is retained only as upstream source
 and is not compatible with the guarded Paper Pro path.
 
 The Paper Pro integration instead uses firmware-specific QMLDiff artifacts in
-`xovi-qmd/`. The functional patch inserts two
-`ArkControls.ContextualMenu.Button` objects into the exact
-`SceneSelectionHandler.qml` resource. The deployed revision prewarms one
-parent-owned dynamic `AppLoadLibrary` when the selection menu appears, lets
-selected-state feedback paint, revalidates the pending snapshot, and reuses the
-cached helper to start the strict v2 descriptor. It checks the returned PID and
+`xovi-qmd/`. The v3 candidate patches the exact `DeviceSceneView.qml` and
+`SceneSelectionHandler.qml` resources and inserts two
+`ArkControls.ContextualMenu.Button` objects after Copy. It explicitly passes
+document/page identity from the owning scene view and prewarms one parent-owned
+dynamic `AppLoadLibrary` when the selection menu appears, lets selected-state
+feedback paint, revalidates the pending snapshot, and reuses the cached helper
+to start the strict descriptor. It checks the returned PID and
 bypasses both AppLoad's broadcast launcher signal and its broken no-GUI window
 bookkeeping. AppLoad owns later worker startup, derives the random nonce with
 the exact device-proven `hexdump` interface, publishes the root-only
@@ -835,7 +899,19 @@ launcher and QML emit content-free `SR_WAND` stages so a future physical test
 can identify the last completed boundary without exposing selection data. The
 listener advertises local capture
 readiness independently from the runner's remote bridge-ready marker. QML has
-no credential, network, or model access. The prior deployed compiled v2 QMD
+no credential, network, or model access. Before the canary controller may
+write anything remotely, it requires both exact extracted stock resources
+under `QML_REFERENCE_ROOT` and actually applies the compiled QMD with the
+SHA-pinned live hashtable into a private host-side directory. Compatibility
+metadata alone is not sufficient; both patched outputs must be regular,
+non-symlink, nonempty, and parse successfully with local
+`qmlformat --ignore-settings`. The deployed `0.7.3-openclaw` path
+still uses compiled v2 QMD
+`495db83da318801d24ae3d4d63120c7e9d1568145e3298efccecea583f5c17c4`;
+the reviewed v3 candidate source/compiled pair is
+`1b01d2a123ac5d16763b140c2342c14bbd99243455fc81debdad85165707644d` /
+`5cf5156df227a1ecdf3fb421b2cc57e55564bf31ab9d434a7f16c21b40ef0dc2`.
+The earlier deployed compiled v2 QMD
 was `28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`;
 the next direct-launch QMD was
 `3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.

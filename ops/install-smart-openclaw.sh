@@ -332,7 +332,7 @@ ssh -o BatchMode=yes "$HOST" "
         test \"\$(stat -c %u:%g:%a \"\$QMD\")\" = 0:0:644
         qmd_sha=\$(sha256sum \"\$QMD\" | cut -d' ' -f1)
         case \"\$qmd_sha\" in
-            '$LEGACY_BUTTON_QMD_SHA256'|'$INERT_BUTTON_QMD_SHA256'|'$BUTTON_QMD_SHA256') ;;
+            '$LEGACY_BUTTON_QMD_SHA256'|'$V2_MIGRATION_BUTTON_QMD_SHA256'|'$INERT_BUTTON_QMD_SHA256'|'$BUTTON_QMD_SHA256') ;;
             *) echo 'Active Smart QMD is outside the application compatibility contract' >&2; exit 1 ;;
         esac
     fi

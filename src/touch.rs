@@ -84,7 +84,10 @@ const SEND_BUTTON_TRIGGER_FILE: &str = "/run/smart-remarkable/send_button_trigge
 const DRAW_BUTTON_TRIGGER_FILE: &str = "/run/smart-remarkable/draw_button_trigger";
 
 const SELECTION_FIXED_POINT_SCALE: u64 = 1_000_000;
-const MAX_SELECTION_DESCRIPTOR_BYTES: u64 = 256;
+// V3 binds two view rectangles plus document/page identity. Keep the marker
+// comfortably bounded while allowing a page id of up to 256 UTF-8 bytes in
+// canonical lowercase-hex form.
+const MAX_SELECTION_DESCRIPTOR_BYTES: u64 = 1024;
 const MAX_SELECTION_DESCRIPTOR_AGE_MS: u64 = 40_000;
 const MAX_SELECTION_DESCRIPTOR_FUTURE_SKEW_MS: u64 = 5_000;
 const SELECTION_ACK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -124,6 +127,43 @@ pub enum SelectionAckPhase {
     Closed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PageImageCompleteness {
+    FullPage,
+    ViewportOnly,
+}
+
+impl PageImageCompleteness {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FullPage => "full_page",
+            Self::ViewportOnly => "viewport_only",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "full_page" => Some(Self::FullPage),
+            "viewport_only" => Some(Self::ViewportOnly),
+            _ => None,
+        }
+    }
+}
+
+/// Firmware-bound document/page identity for one prepared selection. The
+/// document UUID remains local and is used only for the metadata-file lookup;
+/// it is deliberately not forwarded to OpenClaw.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectionPageDescriptor {
+    pub document_id: String,
+    pub page_id: String,
+    page_id_hex: String,
+    pub page_index: u32,
+    pub page_view_rect: Rect,
+    normalized_page_view_bounds: [u64; 4],
+    pub completeness: PageImageCompleteness,
+}
+
 /// Immutable stock-selection metadata supplied by the firmware-pinned QML.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectionDescriptor {
@@ -133,6 +173,7 @@ pub struct SelectionDescriptor {
     pub rect: Rect,
     normalized_bounds: [u64; 4],
     captured_at_ms: u64,
+    pub page: Option<SelectionPageDescriptor>,
 }
 
 impl SelectionDescriptor {
@@ -141,6 +182,77 @@ impl SelectionDescriptor {
             anyhow::bail!("Invalid canonical decimal for {label}");
         }
         Ok(value.parse::<u64>()?)
+    }
+
+    fn canonical_uuid(value: &str) -> bool {
+        value.len() == 36
+            && value.bytes().enumerate().all(|(index, byte)| match index {
+                8 | 13 | 18 | 23 => byte == b'-',
+                _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte),
+            })
+    }
+
+    fn decode_page_id(value: &str) -> Result<String> {
+        if value.is_empty()
+            || value.len() > 256
+            || value.len() % 2 != 0
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            anyhow::bail!("Page id is not canonical lowercase hexadecimal UTF-8");
+        }
+        let mut bytes = Vec::with_capacity(value.len() / 2);
+        for pair in value.as_bytes().chunks_exact(2) {
+            let hex = std::str::from_utf8(pair)?;
+            bytes.push(u8::from_str_radix(hex, 16)?);
+        }
+        let page_id = String::from_utf8(bytes)?;
+        if page_id.len() > 128
+            || !page_id.is_ascii()
+            || !page_id
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            || !page_id.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
+            })
+        {
+            anyhow::bail!("Page id is outside the bounded bridge alphabet");
+        }
+        Ok(page_id)
+    }
+
+    fn rect_from_normalized(bounds: [u64; 4], label: &str) -> Result<Rect> {
+        let [x0, y0, x1, y1] = bounds;
+        if x0 >= x1
+            || y0 >= y1
+            || x1 > SELECTION_FIXED_POINT_SCALE
+            || y1 > SELECTION_FIXED_POINT_SCALE
+        {
+            anyhow::bail!("{label} is degenerate or out of bounds");
+        }
+        let scale = SELECTION_FIXED_POINT_SCALE;
+        let left = (x0 * u64::from(VIRTUAL_WIDTH) / scale) as i32;
+        let top = (y0 * u64::from(VIRTUAL_HEIGHT) / scale) as i32;
+        let right = ((x1 * u64::from(VIRTUAL_WIDTH) + scale - 1) / scale) as i32;
+        let bottom = ((y1 * u64::from(VIRTUAL_HEIGHT) + scale - 1) / scale) as i32;
+        let rect = Rect {
+            x: left,
+            y: top,
+            w: right - left,
+            h: bottom - top,
+        };
+        if rect.w <= 0
+            || rect.h <= 0
+            || rect.x < 0
+            || rect.y < 0
+            || rect.x + rect.w > i32::from(VIRTUAL_WIDTH)
+            || rect.y + rect.h > i32::from(VIRTUAL_HEIGHT)
+        {
+            anyhow::bail!("{label} does not map to the view");
+        }
+        Ok(rect)
     }
 
     fn parse_at(payload: &str, now_ms: u64) -> Result<Self> {
@@ -152,7 +264,7 @@ impl SelectionDescriptor {
             anyhow::bail!("Selection descriptor must be exactly one line");
         }
         let fields: Vec<&str> = payload.split(',').collect();
-        if fields.len() != 9 || fields[0] != "v2" {
+        if !matches!((fields[0], fields.len()), ("v2", 9) | ("v3", 17)) {
             anyhow::bail!("Unsupported selection descriptor");
         }
         let nonce = fields[1];
@@ -165,11 +277,48 @@ impl SelectionDescriptor {
         let y0 = Self::parse_decimal(fields[5], "y0")?;
         let x1 = Self::parse_decimal(fields[6], "x1")?;
         let y1 = Self::parse_decimal(fields[7], "y1")?;
-        let captured_at_ms = Self::parse_decimal(fields[8], "capture timestamp")?;
-
-        if x0 >= x1 || y0 >= y1 || x1 > SELECTION_FIXED_POINT_SCALE || y1 > SELECTION_FIXED_POINT_SCALE {
-            anyhow::bail!("Selection descriptor is degenerate or out of bounds");
-        }
+        let selection_bounds = [x0, y0, x1, y1];
+        let rect = Self::rect_from_normalized(selection_bounds, "Selection descriptor")?;
+        let (captured_at_ms, page) = if fields[0] == "v3" {
+            if !Self::canonical_uuid(fields[8]) {
+                anyhow::bail!("Document id is not a canonical UUID");
+            }
+            let page_id = Self::decode_page_id(fields[9])?;
+            let page_index = Self::parse_decimal(fields[10], "page index")?;
+            if page_index > 1_000_000 {
+                anyhow::bail!("Page index is out of bounds");
+            }
+            let page_index = u32::try_from(page_index)
+                .map_err(|_| anyhow::anyhow!("Page index is out of bounds"))?;
+            let page_bounds = [
+                Self::parse_decimal(fields[11], "page x0")?,
+                Self::parse_decimal(fields[12], "page y0")?,
+                Self::parse_decimal(fields[13], "page x1")?,
+                Self::parse_decimal(fields[14], "page y1")?,
+            ];
+            let page_view_rect =
+                Self::rect_from_normalized(page_bounds, "Current page-view descriptor")?;
+            let completeness = PageImageCompleteness::parse(fields[15])
+                .ok_or_else(|| anyhow::anyhow!("Unknown page image completeness"))?;
+            let captured_at_ms = Self::parse_decimal(fields[16], "capture timestamp")?;
+            (
+                captured_at_ms,
+                Some(SelectionPageDescriptor {
+                    document_id: fields[8].to_string(),
+                    page_id,
+                    page_id_hex: fields[9].to_string(),
+                    page_index,
+                    page_view_rect,
+                    normalized_page_view_bounds: page_bounds,
+                    completeness,
+                }),
+            )
+        } else {
+            (
+                Self::parse_decimal(fields[8], "capture timestamp")?,
+                None,
+            )
+        };
         if captured_at_ms > now_ms {
             if captured_at_ms - now_ms > MAX_SELECTION_DESCRIPTOR_FUTURE_SKEW_MS {
                 anyhow::bail!("Selection descriptor timestamp is in the future");
@@ -178,56 +327,58 @@ impl SelectionDescriptor {
             anyhow::bail!("Selection descriptor is stale");
         }
 
-        let scale = SELECTION_FIXED_POINT_SCALE;
-        let left = (x0 * u64::from(VIRTUAL_WIDTH) / scale) as i32;
-        let top = (y0 * u64::from(VIRTUAL_HEIGHT) / scale) as i32;
-        let right = ((x1 * u64::from(VIRTUAL_WIDTH) + scale - 1) / scale) as i32;
-        let bottom = ((y1 * u64::from(VIRTUAL_HEIGHT) + scale - 1) / scale) as i32;
-        let rect = Rect {
-            x: left,
-            y: top,
-            w: right - left,
-            h: bottom - top,
-        };
-        if rect.w <= 0 || rect.h <= 0 || rect.x < 0 || rect.y < 0 || rect.x + rect.w > i32::from(VIRTUAL_WIDTH) || rect.y + rect.h > i32::from(VIRTUAL_HEIGHT) {
-            anyhow::bail!("Selection descriptor does not map to the view");
-        }
-
         Ok(Self {
             nonce: nonce.to_string(),
             kind,
             orientation,
             rect,
-            normalized_bounds: [x0, y0, x1, y1],
+            normalized_bounds: selection_bounds,
             captured_at_ms,
+            page,
         })
     }
 
     pub fn canonical_payload(&self) -> String {
-        format!(
-            "v2,{},{},{},{},{},{},{},{}",
-            self.nonce,
-            self.kind.as_str(),
-            self.orientation.as_str(),
-            self.normalized_bounds[0],
-            self.normalized_bounds[1],
-            self.normalized_bounds[2],
-            self.normalized_bounds[3],
-            self.captured_at_ms
-        )
+        match &self.page {
+            Some(page) => format!(
+                "v3,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                self.nonce,
+                self.kind.as_str(),
+                self.orientation.as_str(),
+                self.normalized_bounds[0],
+                self.normalized_bounds[1],
+                self.normalized_bounds[2],
+                self.normalized_bounds[3],
+                page.document_id,
+                page.page_id_hex,
+                page.page_index,
+                page.normalized_page_view_bounds[0],
+                page.normalized_page_view_bounds[1],
+                page.normalized_page_view_bounds[2],
+                page.normalized_page_view_bounds[3],
+                page.completeness.as_str(),
+                self.captured_at_ms
+            ),
+            None => format!(
+                "v2,{},{},{},{},{},{},{},{}",
+                self.nonce,
+                self.kind.as_str(),
+                self.orientation.as_str(),
+                self.normalized_bounds[0],
+                self.normalized_bounds[1],
+                self.normalized_bounds[2],
+                self.normalized_bounds[3],
+                self.captured_at_ms
+            ),
+        }
     }
 
     fn acknowledgement_payload(&self) -> String {
-        format!(
-            "v2,{},{},{},{},{},{},{}",
-            self.nonce,
-            self.kind.as_str(),
-            self.orientation.as_str(),
-            self.normalized_bounds[0],
-            self.normalized_bounds[1],
-            self.normalized_bounds[2],
-            self.normalized_bounds[3]
-        )
+        let canonical = self.canonical_payload();
+        canonical
+            .rsplit_once(',')
+            .map(|(snapshot, _)| snapshot.to_string())
+            .expect("canonical descriptors always include a timestamp")
     }
 
     fn validate_acknowledgement(&self, payload: &str) -> Result<()> {
@@ -239,11 +390,11 @@ impl SelectionDescriptor {
     }
 }
 
-/// One launcher-owned selection generation. `V2` is the strict QML geometry
-/// protocol. `Legacy` exists only so the currently installed QMD can survive
-/// an app-first staged update; it never enters the v2 acknowledgement path.
+/// One launcher-owned selection generation. V3 adds exact document/page
+/// context; V2 and Legacy remain accepted for app-first migration.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelectionRequest {
+    V3(SelectionDescriptor),
     V2(SelectionDescriptor),
     Legacy { nonce: String, captured_at_ms: u64 },
 }
@@ -262,6 +413,9 @@ impl SelectionRequest {
     }
 
     fn parse_at(payload: &str, now_ms: u64) -> Result<Self> {
+        if payload.starts_with("v3,") {
+            return Ok(Self::V3(SelectionDescriptor::parse_at(payload, now_ms)?));
+        }
         if payload.starts_with("v2,") {
             return Ok(Self::V2(SelectionDescriptor::parse_at(payload, now_ms)?));
         }
@@ -292,7 +446,7 @@ impl SelectionRequest {
 
     pub fn descriptor(&self) -> Option<&SelectionDescriptor> {
         match self {
-            Self::V2(descriptor) => Some(descriptor),
+            Self::V3(descriptor) | Self::V2(descriptor) => Some(descriptor),
             Self::Legacy { .. } => None,
         }
     }
@@ -303,7 +457,7 @@ impl SelectionRequest {
 
     pub fn canonical_payload(&self) -> String {
         match self {
-            Self::V2(descriptor) => descriptor.canonical_payload(),
+            Self::V3(descriptor) | Self::V2(descriptor) => descriptor.canonical_payload(),
             Self::Legacy { nonce, captured_at_ms } => format!("legacy-v1,{nonce},{captured_at_ms}"),
         }
     }
@@ -1942,8 +2096,9 @@ impl Touch {
 mod tests {
     use super::{
         finish_selection_handshake_at, take_button_trigger_at, take_button_trigger_at_with_busy, InvalidButtonGeneration, PenGestureOutcome,
-        PenGestureTracker, PenReleaseKind, SelectionDescriptor, SelectionOrientation, SelectionRequest, Touch, TriggerCorner, TriggerSource,
-        TriggerReadinessGuard, WriteBackInputMonitor,
+        PageImageCompleteness, PenGestureTracker, PenReleaseKind, Rect,
+        SelectionDescriptor, SelectionOrientation, SelectionRequest, Touch,
+        TriggerCorner, TriggerSource, TriggerReadinessGuard, WriteBackInputMonitor,
     };
     use crate::llm_engine::SelectionKind;
     use crate::screenshot::Screenshot;
@@ -2001,6 +2156,15 @@ mod tests {
         format!("v2,{},{},normal,100000,200000,500000,600000,{}\n", "a".repeat(64), kind, NOW_MS - 10)
     }
 
+    fn valid_v3_descriptor(kind: &str) -> String {
+        format!(
+            "v3,{},{},normal,100000,200000,500000,600000,12345678-1234-4abc-8def-1234567890ab,706167652d31,0,0,100000,1000000,900000,viewport_only,{}\n",
+            "a".repeat(64),
+            kind,
+            NOW_MS - 10
+        )
+    }
+
     fn cleanup_trigger_dir(path: &Path) {
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
@@ -2039,6 +2203,46 @@ mod tests {
                 .is_none()
         );
         cleanup_trigger_dir(&llm);
+    }
+
+    #[test]
+    fn v3_descriptor_binds_document_page_and_page_view_to_acknowledgements() {
+        let request = SelectionRequest::parse_at(&valid_v3_descriptor("mixed"), NOW_MS).unwrap();
+        assert!(matches!(request, SelectionRequest::V3(_)));
+        let descriptor = request.descriptor().unwrap();
+        let page = descriptor.page.as_ref().unwrap();
+        assert_eq!(page.document_id, "12345678-1234-4abc-8def-1234567890ab");
+        assert_eq!(page.page_id, "page-1");
+        assert_eq!(page.page_index, 0);
+        assert_eq!(page.page_view_rect, Rect { x: 0, y: 102, w: 768, h: 820 });
+        assert_eq!(page.completeness, PageImageCompleteness::ViewportOnly);
+        assert_eq!(request.canonical_payload(), valid_v3_descriptor("mixed").trim_end());
+
+        let acknowledgement = format!(
+            "v3,{},mixed,normal,100000,200000,500000,600000,12345678-1234-4abc-8def-1234567890ab,706167652d31,0,0,100000,1000000,900000,viewport_only\n",
+            "a".repeat(64)
+        );
+        assert!(descriptor.validate_acknowledgement(&acknowledgement).is_ok());
+        assert!(descriptor
+            .validate_acknowledgement(&acknowledgement.replace("706167652d31", "706167652d32"))
+            .is_err());
+        assert!(descriptor
+            .validate_acknowledgement(&acknowledgement.replace("viewport_only", "full_page"))
+            .is_err());
+    }
+
+    #[test]
+    fn v3_rejects_noncanonical_or_bridge_incompatible_page_identity() {
+        let valid = valid_v3_descriptor("ink");
+        assert!(SelectionRequest::parse_at(
+            &valid.replace("12345678-1234-4abc-8def-1234567890ab", "12345678-1234-4ABC-8def-1234567890ab"),
+            NOW_MS,
+        )
+        .is_err());
+        assert!(SelectionRequest::parse_at(&valid.replace("706167652d31", "2e2e2f657363617065"), NOW_MS).is_err());
+        assert!(SelectionRequest::parse_at(&valid.replace(",0,0,100000,", ",1000001,0,100000,"), NOW_MS).is_err());
+        assert!(SelectionRequest::parse_at(&valid.replace("viewport_only", "unknown"), NOW_MS).is_err());
+        assert!(SelectionRequest::parse_at(&valid.replace("706167652d31", "706167652d3"), NOW_MS).is_err());
     }
 
     #[test]

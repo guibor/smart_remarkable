@@ -853,7 +853,7 @@ install_main() {
         CURRENT_FUNCTIONAL_SHA=$(sha256sum "$TARGET" | cut -d' ' -f1)
         CURRENT_FUNCTIONAL_STATE=$(smart_contract_classify_qmd_sha "$CURRENT_FUNCTIONAL_SHA")
         case "$CURRENT_FUNCTIONAL_STATE" in
-            legacy-functional|new-functional) ;;
+            legacy-functional|v2-migration-functional|new-functional) ;;
             *) exit 1 ;;
         esac
         [ "$(stat -c %a "$TARGET")" = 644 ]

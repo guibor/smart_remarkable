@@ -23,10 +23,13 @@ trap cleanup EXIT
 # shellcheck disable=SC1090
 . "$HELPER"
 smart_contract_load "$CONTRACT"
-test "$ARTIFACT_CONTRACT_VERSION" = smart-remarkable-artifacts-v1
-test "$SELECTION_PROTOCOL_VERSION" = smart-selection-v2
+test "$ARTIFACT_CONTRACT_VERSION" = smart-remarkable-artifacts-v2
+test "$SELECTION_PROTOCOL_VERSION" = smart-selection-v3
+test "$DEVICE_SCENE_VIEW_RESOURCE_HASH" = 11806562588218124596
 test "$(smart_contract_classify_qmd_sha "$LEGACY_BUTTON_QMD_SHA256")" = \
     legacy-functional
+test "$(smart_contract_classify_qmd_sha "$V2_MIGRATION_BUTTON_QMD_SHA256")" = \
+    v2-migration-functional
 test "$(smart_contract_classify_qmd_sha "$INERT_BUTTON_QMD_SHA256")" = new-inert
 if smart_contract_require_complete; then
     for artifact_spec in \
@@ -79,6 +82,8 @@ smart_contract_require_complete
 test "$(smart_contract_classify_qmd_sha absent)" = absent
 test "$(smart_contract_classify_qmd_sha "$LEGACY_BUTTON_QMD_SHA256")" = \
     legacy-functional
+test "$(smart_contract_classify_qmd_sha "$V2_MIGRATION_BUTTON_QMD_SHA256")" = \
+    v2-migration-functional
 test "$(smart_contract_classify_qmd_sha "$INERT_BUTTON_QMD_SHA256")" = new-inert
 test "$(smart_contract_classify_qmd_sha "$BUTTON_QMD_SHA256")" = new-functional
 if smart_contract_classify_qmd_sha "$(printf '9%.0s' {1..64})" >/dev/null 2>&1; then
@@ -126,17 +131,21 @@ stat() {
 }
 QMD_TARGET="$WORK/active.qmd"
 legacy_fixture="$WORK/legacy.qmd"
+v2_fixture="$WORK/v2.qmd"
 inert_fixture="$WORK/inert.qmd"
 functional_fixture="$WORK/functional.qmd"
 printf 'legacy\n' >"$legacy_fixture"
+printf 'v2\n' >"$v2_fixture"
 printf 'inert\n' >"$inert_fixture"
 printf 'functional\n' >"$functional_fixture"
 LEGACY_BUTTON_QMD_SHA256=$(sha256sum "$legacy_fixture" | cut -d' ' -f1)
+V2_MIGRATION_BUTTON_QMD_SHA256=$(sha256sum "$v2_fixture" | cut -d' ' -f1)
 INERT_BUTTON_QMD_SHA256=$(sha256sum "$inert_fixture" | cut -d' ' -f1)
 BUTTON_QMD_SHA256=$(sha256sum "$functional_fixture" | cut -d' ' -f1)
 test "$(classify_smart_qmd)" = absent:absent
 for classifier_spec in \
     "$legacy_fixture:legacy-functional:$LEGACY_BUTTON_QMD_SHA256" \
+    "$v2_fixture:v2-migration-functional:$V2_MIGRATION_BUTTON_QMD_SHA256" \
     "$inert_fixture:new-inert:$INERT_BUTTON_QMD_SHA256" \
     "$functional_fixture:new-functional:$BUTTON_QMD_SHA256"
 do
@@ -255,7 +264,7 @@ do
 done
 grep -F 'smart_contract_installed_client_is_exact "$STAGE"' "$APP_INSTALLER" >/dev/null
 grep -F 'smart_contract_installed_client_is_exact "$APP"' "$APP_INSTALLER" >/dev/null
-grep -F 'absent|legacy-functional|new-inert' "$APP_INSTALLER" >/dev/null
+grep -F 'absent|legacy-functional|v2-migration-functional|new-inert' "$APP_INSTALLER" >/dev/null
 grep -F 'new-functional)' "$APP_INSTALLER" >/dev/null
 grep -F 'rollback_order=qmd-before-app' "$APP_INSTALLER" >/dev/null
 
@@ -272,7 +281,47 @@ client_gate_line=$(grep -n 'smart_contract_installed_client_is_exact "$APP_ROOT"
     "$QMD_INSTALLER" | cut -d: -f1 | \
     awk -v armed="$armed_line" '$1 < armed { last=$1 } END { print last }')
 test "$client_gate_line" -lt "$armed_line"
-grep -F 'legacy-functional|new-functional' "$QMD_INSTALLER" >/dev/null
+grep -F 'legacy-functional|v2-migration-functional|new-functional' "$QMD_INSTALLER" >/dev/null
+
+# Both exact stock resources patched by the 0.8 QMD are contract-bound and
+# checked from the live hashtab before the canary is admitted.
+grep -F 'SCENE_SELECTION_HANDLER_RESOURCE_HASH' "$QMD_CONTROLLER" >/dev/null
+grep -F 'DEVICE_SCENE_VIEW_RESOURCE_HASH' "$QMD_CONTROLLER" >/dev/null
+grep -F 'DeviceSceneView.qml = $DEVICE_SCENE_VIEW_RESOURCE_HASH' \
+    "$QMD_CONTROLLER" >/dev/null
+
+# Compatibility-table membership alone does not prove that qmldiff can parse
+# and apply a compiled QMD. Keep the real-application gate ahead of both the
+# first device connection (for local reference validation) and every remote
+# write, without requiring the firmware fixture in this device-free suite.
+grep -F 'QML_REFERENCE_ROOT=${QML_REFERENCE_ROOT:-/private/tmp/rmpp-3280164-resource-extract/resources}' \
+    "$QMD_CONTROLLER" >/dev/null
+for expected in \
+    'QML_APPLY_OUTPUT="$WORK/qml-apply-output"' \
+    'QMLFORMAT_BIN=${QMLFORMAT_BIN:-$(command -v qmlformat 2>/dev/null || true)}' \
+    'qml/common/SceneSelectionHandler.qml' \
+    'qml/device/view/documentview/DeviceSceneView.qml' \
+    'if [ ! -f "$reference_path" ] || [ -L "$reference_path" ]; then' \
+    '"$QMLDIFF_BIN" apply-diffs' \
+    '--hashtab "$LIVE_HASHTAB"' \
+    'if [ ! -f "$output_path" ] || [ -L "$output_path" ] || [ ! -s "$output_path" ]; then' \
+    '"$QMLFORMAT_BIN" --ignore-settings "$output_path"'
+do
+    grep -F -- "$expected" "$QMD_CONTROLLER" >/dev/null
+done
+reference_gate_line=$(grep -n '^require_stock_qml_references$' "$QMD_CONTROLLER" | cut -d: -f1)
+first_ssh_line=$(grep -n '^ssh -o BatchMode=yes ' "$QMD_CONTROLLER" | head -n 1 | cut -d: -f1)
+apply_gate_line=$(grep -n '"$QMLDIFF_BIN" apply-diffs' "$QMD_CONTROLLER" | cut -d: -f1)
+output_gate_line=$(grep -n '^require_applied_qml_outputs$' "$QMD_CONTROLLER" | cut -d: -f1)
+qml_parse_line=$(grep -n '"$QMLFORMAT_BIN" --ignore-settings "$output_path"' "$QMD_CONTROLLER" | cut -d: -f1)
+first_remote_write_line=$(grep -n '^REMOTE_CLEANUP=1$' "$QMD_CONTROLLER" | cut -d: -f1)
+test "$reference_gate_line" -lt "$first_ssh_line"
+test "$apply_gate_line" -lt "$first_remote_write_line"
+test "$output_gate_line" -lt "$first_remote_write_line"
+test "$qml_parse_line" -lt "$first_remote_write_line"
+
+grep -F '"version": "0.8.0-openclaw"' \
+    "$REPO/remagic/external.manifest.json" >/dev/null
 
 # The reviewed migration adapter must continue accepting both exact legacy
 # button spellings while the installed legacy QMD is active.

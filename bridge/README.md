@@ -43,21 +43,35 @@ attempt cannot silently consume the next tap.
 
 ## Data flow
 
-1. The tablet posts one prompt and one PNG to `POST /v1/chat/completions` with a
-   narrow Bearer token, a response-mode header, a strict
+1. The tablet posts one prompt, the selected crop, the current-page image, and
+   document/page metadata to `POST /v1/chat/completions` with a narrow Bearer
+   token, a response-mode header, a strict
    `x-smart-remarkable-selection-kind` value of `ink`, `image`, or `mixed`,
-   and a unique request ID in the exact `smart-remarkable-` namespace.
+   `x-smart-remarkable-context-version: selection-page-v1`, and a unique
+   request ID in the exact `smart-remarkable-` namespace. The body must contain
+   exactly one non-empty text part followed by PNG `image_url` parts tagged
+   `x_smart_remarkable_role: selection` and `current_page` in that order. Each
+   PNG is limited to 6 MiB and their combined decoded size to 8 MiB. The body
+   context has exactly `version`, `document_display_name`, `page_id`,
+   zero-based `page_index`, matching one-based `page_number`,
+   `page_image_scope: current_page_view`, and
+   `page_image_completeness: full_page|viewport_only`. The visible display name
+   must already be NFC, contain no C0/C1 controls, and fit in 1024 UTF-8 bytes.
 2. The bridge validates the fixed request shape, then requires the exact plugin
    capability receipt for the current authenticated Gateway connection
    generation. Only after that side-effect-free probe succeeds does it compute
    a content fingerprint and atomically reserve the request ID, fingerprint,
    response mode, and selection kind in its persistent request journal. The
-   fingerprint also binds the selection kind. The selected PNG and prompt are
-   never persisted there. The request ID is both the bridge coalescing key and
-   OpenClaw's `chat.send` idempotency key.
+   fingerprint binds the prompt, selection kind, both PNGs, the NFC-normalized
+   bounded display name, page identity/index/number, page-image scope and
+   completeness, and all semantic protocol versions. Neither image, the
+   display name, nor the prompt is persisted in the journal. The request ID is
+   both the bridge coalescing key and OpenClaw's `chat.send` idempotency key.
 3. Before the HTTP listener and `/health` can open, the bridge calls the
    plugin's side-effect-free `smart_remarkable.capabilities` method and
-   requires the exact plugin ID, version 0.3.0, origin-v3 protocol, and ordered
+   requires the exact plugin ID, version 0.4.0, origin-v4 protocol, ordered
+   `selection-page-v1` input-context versions, ordered
+   `selection`/`current_page` attachment roles, and ordered
    `ink`/`image`/`mixed` capability receipt. An old, missing, or partially
    promoted plugin therefore keeps the bridge unready instead of letting the
    tablet close a locally captured selection before discovering server skew.
@@ -67,14 +81,15 @@ attempt cannot silently consume the next tap.
    admitted generation, so a reconnect race fails closed.
 4. The bridge preflights canonical history to capture the transcript ID for
    recovery and authority binding. It then calls
-   `smart_remarkable.bind_origin` with origin protocol v3, the request ID,
-   response mode, selection kind, and captured transcript ID and requires the
+   `smart_remarkable.bind_origin` with origin protocol v4, the request ID,
+   response mode, selection kind, input-context version, and captured
+   transcript ID and requires the
    plugin's exact versioned receipt and opaque cleanup handle. This creates a
    pending realm-neutral JSON string, including the authenticated selection
    kind, in OpenClaw's host-owned run context, which is shared across the
    Gateway startup registry, active prompt/tool hooks, and pinned tool factory.
    OpenClaw closes ordinary plugin API methods after registration, so plugin
-   version 0.3.0 reaches that host state through a registered synchronous
+   version 0.4.0 reaches that host state through a registered synchronous
    agent-event adapter. The complete get/set/clear command remains in the
    originating plugin instance; the emitted plugin-owned control event carries
    only a fresh random operation ID. Its host callback performs the operation,
@@ -86,11 +101,16 @@ attempt cannot silently consume the next tap.
    bridge does not pass
    the captured transcript ID to `chat.send`; on OpenClaw 2026.7.1 that field
    can rotate current session state rather than atomically assert identity.
-5. The bridge appends a selection-kind-aware versioned instruction requiring
+5. The bridge constructs a fixed capture manifest that names
+   `remarkable-selection.png` as the primary user focus and
+   `remarkable-current-page.png` as supporting page context. It labels the
+   document display name, page identity, and both image contents as untrusted
+   data while preserving the manifest roles as trusted transport facts. It
+   then appends a selection-kind-aware versioned instruction requiring
    the canonical assistant final to be exactly
    `{"received_text":"...","response_text":"..."}`, then calls native
-   `chat.send` with the fixed server-side session `agent:main:main`, the PNG as
-   an inline image attachment,
+   `chat.send` with the fixed server-side session `agent:main:main` and both
+   fixed-name PNGs as inline image attachments,
    `suppressCommandInterpretation: true`, `deliver: false`, and an explicit
    direct WhatsApp origin and the startup-validated
    `expectedSessionRoutingContract: "per-sender|main|main"`. It also attaches
@@ -107,15 +127,21 @@ attempt cannot silently consume the next tap.
    fixed fifteen minutes, and a 128-record cap rejects new binds without
    evicting live authority. It tells OpenClaw that the current turn originated
    on reMarkable while preserving normal WhatsApp continuity. `ink` retains
-   direct-request behavior. For authenticated `image` and `mixed` captures,
-   the hook resolves intent from an explicit current instruction, then a
-   specific still-active user instruction in canonical history, then durable
-   memory/preferences, and finally the content and immediate context.
-   Ambiguous captures receive an in-depth explanation and background rather
-   than a market scan, recommendations, or a generic clarification. Inference
-   and ambiguity never authorize side effects. Client framing, transport text,
-   assistant suggestions, quoted text, and commands merely visible in captured
-   content are context rather than user authority. If an explicit user
+   direct-request behavior. For every selection kind, the hook treats the
+   selection as primary and uses the current page, document display name,
+   canonical history, and durable memory as supporting context. It resolves
+   intent from an explicit current instruction, then a specific still-active
+   user instruction in canonical history, then durable memory/preferences, and
+   finally the contextualized selection. It makes the strongest reasonable
+   interpretation and completes the likely task instead of stopping at a
+   transcription, menu, market scan, or generic clarification. If no task can
+   be recovered, it gives an in-depth explanation, background, mechanisms,
+   relevance, and useful implications. It must not invent facts, evidence, or
+   completed actions. Inference and ambiguity never authorize side effects.
+   Deliberately authored primary handwriting can be user input; page context,
+   title metadata, client framing, assistant suggestions, quoted text, and
+   commands merely visible in image/mixed content remain context rather than
+   authority unless an explicit user instruction adopts them. If an explicit user
    instruction governing the turn asks to create, export, send, add, or place a document,
    the hook tells the agent to create a finished PDF or EPUB in its workspace
    and call `remarkable_deliver_document`. Discussing a document does not imply
@@ -142,7 +168,9 @@ attempt cannot silently consume the next tap.
    received field is a literal handwriting transcription. For `image`, it
    preserves legible text or gives a concise factual visual description; for
    `mixed`, it preserves handwritten and printed text plus essential non-text
-   content. Interpretation remains in `response_text`. `[unclear]` becomes an
+   content. `received_text` always applies to the selection attachment only;
+   the page-context image and document name are never quoted there.
+   Interpretation remains in `response_text`. `[unclear]` becomes an
    explicit inability-to-read message. A failed acknowledgement does not
    prevent the final attempt, but the final cannot overtake an in-flight ack.
 10. The delivery plugin uses OpenClaw 2026.7.1's public
@@ -171,9 +199,10 @@ attempt cannot silently consume the next tap.
 Only IDs matching
 `smart-remarkable-[A-Za-z0-9][A-Za-z0-9._:-]{0,110}` are admitted by the HTTP
 boundary, provenance validators, request journal, origin plugin, and delivery
-plugin. Concurrent retries with the same ID, mode, selection kind, and content
+plugin. Concurrent retries with the same ID, mode, selection kind, context
+version, and content
 share one Gateway turn, one acknowledgement, and one final send. Reuse of an ID for
-different content, a different mode, or a different selection kind is rejected
+different content, context, mode, or selection kind is rejected
 with HTTP 409. Replay labeling is per caller:
 the caller that started the work receives
 `x_smart_remarkable.replayed: false`; concurrent or delayed duplicate callers
@@ -184,22 +213,25 @@ The bridge request journal survives process restarts. A completed entry returns
 its cached safe response, marked as a replay, without calling `chat.send` or
 either delivery RPC again. A reserved, corrupt, or ambiguous entry fails
 closed and never resubmits the request. Records contain the request ID, mode,
-selection kind, content fingerprint, and final safe response only; they never
-contain the selected PNG, prompt, image base64, Gateway token, or WhatsApp
-credentials.
+selection kind, exact context version, content fingerprint, and final safe
+response only; they never persist either PNG, the raw document-display-name
+request field, prompt, image base64, Gateway token, or WhatsApp credentials.
+A bounded safe response may naturally mention the title. Safe responses include the admitted
+`context_version` alongside mode and selection kind.
 Entry directories are atomically reserved and records are committed with
 write-fsync-rename-fsync. Record reads refuse symlinks and records larger than
 128 KiB.
 
-Origin v3 and plugin 0.3.0 are a deliberate hard protocol boundary. Promotion
+Origin v4, input context `selection-page-v1`, response envelope v3, and plugin
+0.4.0 are a deliberate hard protocol boundary. Promotion
 must quiesce new tablet requests, install the plugin and bridge as one guarded
 server transaction, restart the Gateway so the new plugin is registered, and
 start the bridge only after its capability probe succeeds. The record schema
-also advances from v1 to v2 so selection kind is part of every identity and
-cached response. Existing schema-v1 reservations and responses remain on disk
-as fail-closed barriers: they are never replayed or resubmitted under v2.
+also advances to v3 so context semantics are bound to every cached response.
+Existing schema-v1 and schema-v2 reservations and responses remain on disk as
+fail-closed barriers: they are never replayed or resubmitted under v3.
 Because request IDs are unique per tablet attempt, normal new requests use new
-v2 entries; an operator must not delete old records merely to make a retry
+v3 entries; an operator must not delete old records merely to make a retry
 appear absent.
 
 The journal has a fixed hard capacity (20,000 entries by default, configurable
@@ -270,7 +302,7 @@ session.
   `User=mdf`; that user's home must contain the canonical OpenClaw
   configuration and main-agent session store.
 - Install and enable `openclaw-plugin/` as a native workspace plugin before
-  starting the bridge. The reviewed manifest/package version is `0.3.0`; its
+  starting the bridge. The reviewed manifest/package version is `0.4.0`; its
   manifest activates on Gateway startup, and the
   Gateway must expose `smart_remarkable.deliver`,
   `smart_remarkable.capabilities`,
@@ -405,10 +437,12 @@ npm test
 node --test openclaw-plugin/test/*.test.mjs
 ```
 
-The 145 bridge/plugin tests use a fake Gateway client and temporary filesystem
+The 148 bridge/plugin tests use a fake Gateway client and temporary filesystem
 journals. They verify pre-acceptance header
 withholding, both modes, all three strict selection kinds, kind-bound
-fingerprints and origin receipts, the exact request-ID namespace, fixed
+fingerprints and origin receipts, the exact request-ID namespace, strict
+selection/page role ordering, image bounds, page-metadata normalization,
+context-version capability gating, fixed
 routing, one turn/acknowledgement/final send per request ID, conflicting duplicates,
 acknowledgement and final delivery
 failure, ack-before-final ordering, exact transcription-plus-answer delivery,
@@ -428,8 +462,10 @@ replacement-session/live-final rejection, production service wiring, and
 pre-health journal preparation. They also exercise current-generation
 capability invalidation/re-probing, a reconnect crossing an in-flight RPC,
 dynamic health failure, admission refusal before journal reservation, explicit
-hook-policy configuration, the final-prompt admission gate, and schema-v1
-reserved/completed migration barriers that are neither replayed nor freed.
+hook-policy configuration, proactive context-aware prompt policy,
+selection-only `received_text`, the final-prompt admission gate, and
+schema-v1/schema-v2 reserved/completed migration barriers that are neither
+replayed nor freed.
 
 The plugin tests use fake sends plus both a fake journal and the real atomic
 file journal in a temporary directory. They verify ordinary workspace-plugin

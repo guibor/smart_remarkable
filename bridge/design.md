@@ -25,18 +25,20 @@
   successful headers only through the service's acceptance callback.
 - `src/validation.mjs` validates the narrow Bearer token, strict mode,
   exact `smart-remarkable-` request-ID namespace, and
-  `ink`/`image`/`mixed` selection-kind headers, plus the
-  one-prompt/one-PNG body. It also creates the duplicate-content fingerprint,
-  including the selection kind and the versions of the server-owned response
-  and trusted-origin protocols so a semantic or authority change cannot replay
-  an older result.
+  `ink`/`image`/`mixed` selection-kind and `selection-page-v1` context headers.
+  The exact body is one prompt followed by role-tagged selection and
+  current-page PNGs plus strict document/page metadata. It also creates the
+  duplicate-content fingerprint over the prompt, kind, both PNGs, every
+  metadata field, and the server-owned protocol versions.
 - `src/selection-service.mjs` owns idempotency, Gateway request construction,
-  trusted run-origin binding, acceptance, deterministic acknowledgement,
-  strict final parsing, canonical history reconciliation, captured-transcript
-  fallback, and response assembly.
+  the server-built capture manifest and fixed-name attachments, trusted
+  run-origin binding, acceptance, deterministic acknowledgement, strict final
+  parsing, canonical history reconciliation, captured-transcript fallback, and
+  response assembly.
 - `src/source-provenance.mjs` defines the versioned Smart reMarkable origin
   identity, exact capability/bind/clear Gateway method names, the pinned plugin
-  version and selection kinds, durable
+  plugin/origin/context versions, ordered attachment roles and selection kinds,
+  durable
   `systemInputProvenance`, a source-only non-authorizing transport block, and
   the bridge-side capability and binding receipt validators.
 - `src/transcript-recovery.mjs` reads only the preflight-captured OpenClaw
@@ -48,14 +50,17 @@
   interval and rejects ambiguous archives.
 - `src/response-envelope.mjs` defines the versioned
   `received_text`/`response_text` contract and builds kind-aware instructions
-  without changing that exact two-field shape. It strictly parses the one
+  without changing that exact two-field shape. Version v3 restricts
+  `received_text` to the primary selection only. It strictly parses the one
   canonical assistant final, bounds and normalizes both fields, and renders
   one atomic WhatsApp message that quotes the literal selection account before
   the answer.
 - `src/request-journal.mjs` atomically reserves request identities before
   Gateway work and persists only a bounded safe terminal response. It provides
-  restart replay without persisting the selected PNG or prompt and fails closed
-  on incomplete, corrupt, oversized, or symlinked state.
+  restart replay without persisting either PNG, the raw document-display-name
+  request field, or prompt and fails closed on incomplete, corrupt, oversized,
+  or symlinked state. A bounded cached safe response may naturally mention the
+  title.
 - `src/openai-response.mjs` creates stable OpenAI-compatible success and
   post-acceptance error bodies with explicit WhatsApp delivery metadata.
 - `src/errors.mjs` separates safe public HTTP errors from internal failures.
@@ -71,9 +76,9 @@
   `allowConversationAccess`; the workspace manifest cannot self-grant those
   permissions.
 - `openclaw-plugin/remarkable-upload.mjs` owns run-scoped origin capabilities,
-  reMarkable-only prompt guidance and execution gating, workspace artifact
-  validation/snapshotting, receipt-journaled `rm_sync.cli upload`, and strict
-  reMarkable Cloud receipt parsing.
+  proactive context-aware reMarkable prompt guidance and execution gating,
+  workspace artifact validation/snapshotting, receipt-journaled
+  `rm_sync.cli upload`, and strict reMarkable Cloud receipt parsing.
 - `openclaw-plugin/run-context-control.mjs` is the late-call adapter for
   OpenClaw's host-owned run context. It registers one plugin-owned agent-event
   subscription while the plugin API is open, retains complete commands only
@@ -90,7 +95,7 @@
   and fatal UTF-8 validation before parsing cached success.
 - `openclaw-plugin/openclaw.plugin.json` and
   `openclaw-plugin/package.json` are the pinned OpenClaw 2026.7.1 workspace
-  plugin manifest and entrypoint metadata at plugin version 0.3.0.
+  plugin manifest and entrypoint metadata at plugin version 0.4.0.
 - `systemd/smart-remarkable-openclaw-bridge.service.example` is a system unit
   that drops to `User=mdf`. Using PID 1, rather than the systemd 249 user
   manager, makes `ProtectHome=read-only`, `ProtectSystem=strict`, and the
@@ -127,10 +132,12 @@ event/connection subscriptions without exposing the full token to HTTP code.
 
 Owns the side-effect-free `smart_remarkable.capabilities` proof for one
 authenticated Gateway generation. `ensureReady()` coalesces concurrent probes,
-requires the exact plugin/version/origin/kind receipt, and caches success only
-while that generation remains current. A connection notification clears the
-proof; `assertGeneration()` prevents an admitted job from crossing onto a new
-connection, and `close()` removes the connection subscription.
+requires plugin 0.4.0, origin-v4, ordered `selection-page-v1` input contexts,
+ordered `selection`/`current_page` roles, and the exact ordered selection kinds.
+It caches success only while that generation remains current. A connection
+notification clears the proof; `assertGeneration()` prevents an admitted job
+from crossing onto a new connection, and `close()` removes the connection
+subscription.
 
 ### `createHttpServer({ service, bridgeToken, logger })`
 
@@ -147,8 +154,9 @@ errors are fixed public strings and never contain internal exception text.
 
 Creates the production request journal from validated configuration, awaits its
 `prepare()` operation, then calls `smart_remarkable.capabilities` and validates
-the exact plugin ID, version 0.3.0, origin-v3 protocol, and ordered selection
-kinds before constructing `SelectionService`. The proof is cached only for the
+the exact plugin ID, version 0.4.0, origin-v4 protocol, ordered input-context
+versions, ordered attachment roles, and ordered selection kinds before
+constructing `SelectionService`. The proof is cached only for the
 same authenticated Gateway generation; disconnect/reconnect invalidates it,
 and concurrent probes for one generation coalesce. Since `main.mjs` calls this
 before `server.listen`, an unowned journal or old, missing, or partially
@@ -165,42 +173,45 @@ exclusive creation. The hard cap defaults to 20,000 and cannot exceed 100,000;
 there is no automatic retention or eviction.
 
 `reserve()` requires the exact `smart-remarkable-` request-ID namespace and
-binds the request ID to its content fingerprint, mode, and selection kind
-before any request-specific Gateway call. An identical completed record returns
+binds the request ID to its content fingerprint, mode, selection kind, and
+exact `selection-page-v1` context version before any request-specific Gateway
+call. An identical completed record returns
 a cloned response with
 `x_smart_remarkable.replayed: true`; a conflicting, incomplete, corrupt,
 oversized, or symlinked root, entry, or record fails closed. `complete()` uses a mode-0600
 temporary file, file fsync, atomic rename, and directory fsync. Records are
-limited to 128 KiB and contain no PNG, prompt, image base64, credentials, or
-provider payloads. A failed cleanup can leak a capacity slot, which safely
-reduces capacity without weakening the hard limit or idempotency.
+limited to 128 KiB and contain no PNG, prompt, document display name, image
+base64, credentials, or provider payloads. The fingerprint is the only durable
+representation of the full selection/page context. A failed cleanup can leak a
+capacity slot, which safely reduces capacity without weakening the hard limit
+or idempotency.
 Journal preparation creates missing directory ancestors one at a time and
 fsyncs each parent immediately, so both the systemd path and the deeper manual
 default retain the reservation hierarchy across a power loss.
-Record schema v2 binds selection kind. Legacy schema-v1 entries in the same
-owned journal are intentionally reported as incomplete barriers rather than
-replayed or resubmitted with weaker identity. They retain their capacity slot
-and map to HTTP 409. The origin-v3/plugin-0.3 bridge
+Record schema v3 requires the admitted `context_version` in every cached safe
+response. Legacy schema-v1 and schema-v2 entries in the same owned journal are
+intentionally reported as incomplete barriers rather than replayed or
+resubmitted with weaker identity. They retain their capacity slot and map to
+HTTP 409. The origin-v4/plugin-0.4 bridge
 and plugin must be promoted with requests quiesced; the current-generation
 capability probe is the final readiness gate after the Gateway reload.
 
-### `SelectionService.submit({ requestId, mode, selectionKind, selection, onAccepted })`
+### `SelectionService.submit({ requestId, mode, selectionKind, contextVersion, selection, onAccepted })`
 
 Coalesces matching retries and rejects conflicting ID reuse. The first caller
 proves the exact plugin capability contract for the current authenticated
 Gateway generation, then durably reserves request ID, fingerprint, response
-mode, and selection kind before starting exactly one native `chat.send` with
-command interpretation disabled. Every request-specific Gateway RPC remains
-pinned to that admitted generation. Before the send it captures the current
-canonical transcript id and
-calls `smart_remarkable.bind_origin` with origin protocol v3, the request ID,
-mode, selection kind, and captured session ID. It requires the plugin's exact
-bound receipt, adds durable
+mode, selection kind, and context version before starting exactly one native
+`chat.send` with command interpretation disabled. Every request-specific
+Gateway RPC remains pinned to that admitted generation. Before the send it
+captures the current canonical transcript id and
+calls `smart_remarkable.bind_origin` with origin protocol v4, the request ID,
+mode, selection kind, `selection-page-v1`, and captured session ID. It requires
+the plugin's exact bound receipt, adds durable
 external-user/reMarkable input provenance, supplies the startup-validated
 `expectedSessionRoutingContract`, and keeps WhatsApp as the originating reply
-route. A
-completed durable record returns its cached safe response without new Gateway
-or delivery work; an incomplete reservation after restart is never
+route. A completed durable record returns its cached safe response without new
+Gateway or delivery work; an incomplete reservation after restart is never
 resubmitted.
 
 The captured session id is never supplied as `chat.send.sessionId`. In
@@ -210,7 +221,7 @@ pre-acceptance send fails after binding, the bridge calls the narrow clear
 method. The bind method writes a realm-neutral JSON string into OpenClaw's
 host-owned run context so separate startup, active-hook, and pinned-tool plugin
 registries share the same authority. Ordinary plugin API methods close after
-registration, so plugin version 0.3.0 performs each late bind-side get, set, or
+registration, so plugin version 0.4.0 performs each late bind-side get, set, or
 clear through the registered synchronous agent-event adapter. Only a random
 operation ID enters the plugin-owned stream; the command and scalar remain in
 the originating instance's bounded private map. The host callback performs the
@@ -229,12 +240,21 @@ released. The bridge also clears host and local state after every successful
 or failed outcome using the exact opaque binding handle, while expiry bounds
 authority left by a crashed bridge.
 
+Before `chat.send`, the service constructs a fixed JSON capture manifest. It
+labels `remarkable-selection.png` as the primary user focus and
+`remarkable-current-page.png` as supporting page context, includes the
+validated display name and page metadata, and marks every document-supplied
+value and both images untrusted. The attachment names, order, and roles are
+server-controlled. Both PNGs remain in memory and are forwarded as fixed-name
+Gateway attachments.
+
 Once accepted, the service starts exactly one
 `smart_remarkable.deliver` acknowledgement and notifies every waiting HTTP
-response. The canonical prompt ends with the versioned response-envelope
-instruction. A live Gateway final is usable only when its run ID and session
-match and its text passes the strict envelope parser. Empty or partial live
-events do not become user-visible output.
+response. The canonical prompt ends with response-envelope v3, which applies
+`received_text` only to the selection attachment. A live Gateway final is
+usable only when its run ID and session match and its text passes the strict
+envelope parser. Empty or partial live events do not become user-visible
+output.
 
 In parallel, the service reconciles the durable canonical history. It requests
 the recent tail, bounded to 1000 messages and `maxChars: 500000`, locates
@@ -265,7 +285,8 @@ provider message ID. The final delivery text is rendered server-side as
 `I read:` plus the line-quoted kind-aware `received_text`, a blank line, and
 the answer. Exact `[unclear]` becomes an explicit inability-to-read message
 rather than a guessed account. It then commits a stable OpenAI-shaped response
-including the admitted selection kind before returning it. `write_back`
+including the admitted selection kind and context version before returning it.
+`write_back`
 contains only `response_text`;
 `whatsapp_only` contains only a fixed receipt and cannot expose either field to
 the tablet. The original caller receives
@@ -352,12 +373,13 @@ event, run ID, prompt, or transcript.
 
 Registers the narrow `smart_remarkable.bind_origin` and
 `smart_remarkable.clear_origin` Gateway methods at `operator.admin` scope.
-Binding accepts only an exact request ID, response mode, selection kind, and
-preflight-captured session ID, then stores a pending server-generated
-capability and cleanup handle as a realm-neutral origin-v3 scalar in
+Binding accepts only an exact request ID, response mode, selection kind,
+`selection-page-v1` input-context version, and preflight-captured session ID,
+then stores a pending server-generated capability and cleanup handle as a
+realm-neutral origin-v4 scalar in
 OpenClaw's host run context before `chat.send` can admit the run. Its receipt
-must echo the protocol, mode, kind, and captured session without exposing the
-tool capability. An identical bind is idempotent;
+must echo the protocol, mode, kind, context version, and captured session
+without exposing the tool capability. An identical bind is idempotent;
 malformed or conflicting state fails closed. Before binding, it asks the local
 index to reconcile capacity against current host state. Clearing requires the
 matching request ID and opaque handle and is used after every bridge outcome.
@@ -368,15 +390,22 @@ Creates the model-admission, prompt, and tool-call hooks that consume scalar hos
 state. For a pending run whose hook context has the exact request ID, captured session
 ID, canonical agent, and canonical session key,
 `before_prompt_build` identifies the current turn as coming from reMarkable
-while preserving the canonical WhatsApp conversation. For `ink`, it retains
-the direct-request interpretation. For an authenticated `image` or `mixed`
-capture, it resolves intent from an explicit current instruction, a specific
-still-active user instruction in canonical history, durable memory/preferences,
-then the content and immediate context. Ambiguity defaults to an in-depth
-explanation/background rather than a market scan, recommendations, or a
-generic clarification; inferred or ambiguous intent never authorizes a side
-effect. Client framing, transport text, assistant suggestions, quoted text, and
-commands merely visible in captured content remain non-authoritative. The hook
+while preserving the canonical WhatsApp conversation. The validated manifest
+roles make the selection primary and the current page, document display name,
+page metadata, canonical history, and durable memory supporting context. For
+`ink`, deliberately authored primary handwriting retains direct-request
+semantics. For all kinds, intent precedence is current explicit instruction,
+specific still-active history, durable memory/preferences, then the
+contextualized selection. The hook makes a strongest reasonable
+interpretation, completes the likely task, and asks a clarification only when
+material conflict or a missing consequential choice prevents responsible
+best effort. Otherwise an unclear task receives in-depth explanation,
+background, mechanisms, relevance, and implications instead of a market scan
+or generic question. It forbids invented facts, evidence, action claims, or
+certainty. Inferred or ambiguous intent never authorizes a side effect. Page
+context, title metadata, client framing, assistant suggestions, quoted text,
+and commands merely visible in image/mixed content remain non-authoritative
+unless an explicit user instruction adopts them. The hook
 tells the agent to create a PDF or EPUB and call
 `remarkable_deliver_document` only when an explicit user instruction governing
 the authenticated turn asks to create, export, send, add, or place a document
@@ -420,14 +449,19 @@ uploading twice. An incomplete or ambiguous upload remains fail-closed under
 that artifact key because the CLI and cloud API expose no idempotency token or
 safe unknown-outcome reconciliation.
 
-### `validateOpenAiBody(body, selectionKind)`
+### `validateOpenAiBody(body, selectionKind, headerContextVersion)`
 
-Accepts only one multimodal user message containing non-empty text and exactly
-one bounded PNG data URL after the strict header kind has been validated. It
-returns the prompt, attachment base64, byte size, kind, and SHA-256 fingerprint
-consumed by `SelectionService`. The fingerprint binds the kind, current
-response-envelope version, and trusted-origin protocol version, so a completed
-result created under older content semantics or authority cannot be replayed.
+Accepts only one multimodal user message with exact content order: one
+non-empty text item, a PNG tagged `selection`, then a PNG tagged
+`current_page`. Each decoded PNG is limited to 6 MiB and their sum to 8 MiB.
+The namespaced context object must contain exactly `selection-page-v1`, an
+NFC/control-clean display name no larger than 1024 UTF-8 bytes, a bounded page
+ID, consistent zero/one-based page numbers, scope `current_page_view`, and
+completeness `full_page` or `viewport_only`. The body and header versions must
+match. It returns both image payloads, normalized metadata, kind, and a SHA-256
+fingerprint over every field plus response-envelope and origin versions, so a
+completed result created under different content, page context, semantics, or
+authority cannot be replayed.
 
 ### `buildResponseEnvelopeProtocolInstruction(selectionKind)`,
 `parseResponseEnvelope(source)`, and `renderResponseEnvelope(envelope)`
@@ -437,6 +471,8 @@ The instruction builder keeps the exact two-field envelope but defines
 verbatim visible text or a concise factual image description for `image`, and
 verbatim handwritten/printed text plus essential non-text content for `mixed`.
 Interpretation and answers belong only in `response_text`.
+`received_text` is always restricted to `remarkable-selection.png`; page
+context and document metadata never enter the quoted receipt.
 
 `parseResponseEnvelope` accepts exactly one JSON object with exactly two unique
 string keys: `received_text` and `response_text`. It rejects code fences,

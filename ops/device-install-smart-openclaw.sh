@@ -510,13 +510,13 @@ esac
 
 # This exercises the dynamic loader and clap parser only. It does not open
 # the framebuffer or an input device because clap exits for --version.
-test "$("$STAGE/smart_remarkable" --version)" = "smart_remarkable 0.4.0"
+test "$("$STAGE/smart_remarkable" --version)" = "smart_remarkable 0.8.0-openclaw"
 acquire_compatibility_lock
 ACTIVE_QMD=$(classify_smart_qmd)
 ACTIVE_QMD_STATE=${ACTIVE_QMD%%:*}
 ACTIVE_QMD_SHA=${ACTIVE_QMD#*:}
 case "$ACTIVE_QMD_STATE" in
-    absent|legacy-functional|new-inert) ;;
+    absent|legacy-functional|v2-migration-functional|new-inert) ;;
     new-functional)
         # A new functional QMD may never be paired, even transiently during
         # automatic rollback, with an older application contract.

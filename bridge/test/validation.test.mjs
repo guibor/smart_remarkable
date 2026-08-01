@@ -1,17 +1,15 @@
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { loadConfig } from "../src/config.mjs";
 import {
-  RESPONSE_ENVELOPE_PROTOCOL_VERSION,
-} from "../src/response-envelope.mjs";
-import {
   OPENCLAW_PLUGIN_ID,
   OPENCLAW_PLUGIN_VERSION,
   SOURCE_PROVENANCE_PROTOCOL_VERSION,
+  SMART_REMARKABLE_ATTACHMENT_ROLES,
+  SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   SMART_REMARKABLE_SELECTION_KINDS,
   verifyOriginBinding,
   verifyPluginCapabilities,
@@ -25,6 +23,47 @@ import {
 const PNG_BASE64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]).toString("base64");
+
+function validContext(overrides = {}) {
+  return {
+    version: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+    document_display_name: "Project Notes",
+    page_id: "page-0001",
+    page_index: 2,
+    page_number: 3,
+    page_image_scope: "current_page_view",
+    page_image_completeness: "full_page",
+    ...overrides,
+  };
+}
+
+function pngPart(role, image = PNG_BASE64) {
+  return {
+    type: "image_url",
+    x_smart_remarkable_role: role,
+    image_url: {
+      url: `data:image/png;base64,${image}`,
+    },
+  };
+}
+
+function validBody(overrides = {}) {
+  return {
+    model: "openclaw/main",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "answer the handwriting" },
+          pngPart("selection"),
+          pngPart("current_page"),
+        ],
+      },
+    ],
+    x_smart_remarkable_context: validContext(),
+    ...overrides,
+  };
+}
 
 test("configuration refuses non-loopback listeners and gateways", () => {
   const temporaryHome = fs.mkdtempSync(
@@ -278,6 +317,7 @@ test("origin binding receipt must echo the authenticated selection kind", () => 
     source: "remarkable",
     mode: "whatsapp_only",
     selectionKind: "image",
+    contextVersion: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
     expectedSessionId: "captured-session",
     bindingHandle: "A".repeat(43),
   };
@@ -288,6 +328,7 @@ test("origin binding receipt must echo the authenticated selection kind", () => 
       receipt.mode,
       receipt.selectionKind,
       receipt.expectedSessionId,
+      receipt.contextVersion,
     ),
     receipt.bindingHandle,
   );
@@ -299,6 +340,7 @@ test("origin binding receipt must echo the authenticated selection kind", () => 
         receipt.mode,
         "image",
         receipt.expectedSessionId,
+        receipt.contextVersion,
       ),
     /did not confirm the reMarkable origin binding/,
   );
@@ -310,6 +352,7 @@ test("origin binding receipt must echo the authenticated selection kind", () => 
         receipt.mode,
         receipt.selectionKind,
         receipt.expectedSessionId,
+        receipt.contextVersion,
       ),
     /did not confirm the reMarkable origin binding/,
   );
@@ -321,6 +364,8 @@ test("startup capability receipt must match the exact plugin contract", () => {
     pluginId: OPENCLAW_PLUGIN_ID,
     pluginVersion: OPENCLAW_PLUGIN_VERSION,
     originProtocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
+    inputContextVersions: [SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION],
+    attachmentRoles: [...SMART_REMARKABLE_ATTACHMENT_ROLES],
     selectionKinds: [...SMART_REMARKABLE_SELECTION_KINDS],
   };
   assert.doesNotThrow(() => verifyPluginCapabilities(receipt));
@@ -340,14 +385,35 @@ test("startup capability receipt must match the exact plugin contract", () => {
       }),
     /capability contract mismatch/,
   );
+  for (const mismatch of [
+    { inputContextVersions: [] },
+    {
+      inputContextVersions: [
+        SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+        "selection-page-v2",
+      ],
+    },
+    { attachmentRoles: ["current_page", "selection"] },
+    { attachmentRoles: ["selection", "current_page", "extra"] },
+  ]) {
+    assert.throws(
+      () => verifyPluginCapabilities({ ...receipt, ...mismatch }),
+      /capability contract mismatch/,
+    );
+  }
 });
 
 test("requires strict request mode, ID, and fixed legacy routing", () => {
+  const validHeaders = {
+    "x-smart-remarkable-response-mode": "write_back",
+    "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
+    "x-smart-remarkable-selection-kind": "ink",
+    "x-smart-remarkable-context-version":
+      SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+  };
   assert.deepEqual(
     validateRequestHeaders({
-      "x-smart-remarkable-response-mode": "write_back",
-      "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
-      "x-smart-remarkable-selection-kind": "ink",
+      ...validHeaders,
       "x-openclaw-session-key": "agent:main:main",
       "x-openclaw-message-channel": "whatsapp",
     }),
@@ -355,23 +421,21 @@ test("requires strict request mode, ID, and fixed legacy routing", () => {
       mode: "write_back",
       requestId: "smart-remarkable-valid-0001",
       selectionKind: "ink",
+      contextVersion: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
     },
   );
   assert.throws(
     () =>
       validateRequestHeaders({
+        ...validHeaders,
         "x-smart-remarkable-response-mode": "something_else",
-        "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
-        "x-smart-remarkable-selection-kind": "ink",
       }),
     /must be write_back or whatsapp_only/,
   );
   assert.throws(
     () =>
       validateRequestHeaders({
-        "x-smart-remarkable-response-mode": "write_back",
-        "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
-        "x-smart-remarkable-selection-kind": "ink",
+        ...validHeaders,
         "x-openclaw-session-key": "agent:other:main",
       }),
     /server-controlled/,
@@ -379,8 +443,7 @@ test("requires strict request mode, ID, and fixed legacy routing", () => {
   assert.throws(
     () =>
       validateRequestHeaders({
-        "x-smart-remarkable-response-mode": "write_back",
-        "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
+        ...validHeaders,
         "x-smart-remarkable-selection-kind": "photo",
       }),
     /must be ink, image, or mixed/,
@@ -388,6 +451,7 @@ test("requires strict request mode, ID, and fixed legacy routing", () => {
   for (const selectionKind of ["image", "mixed"]) {
     assert.equal(
       validateRequestHeaders({
+        ...validHeaders,
         "x-smart-remarkable-response-mode": "whatsapp_only",
         "x-smart-remarkable-request-id":
           `smart-remarkable-${selectionKind}-0001`,
@@ -399,78 +463,67 @@ test("requires strict request mode, ID, and fixed legacy routing", () => {
   assert.throws(
     () =>
       validateRequestHeaders({
-        "x-smart-remarkable-response-mode": "write_back",
-        "x-smart-remarkable-request-id": "smart-remarkable-valid-0001",
+        ...validHeaders,
+        "x-smart-remarkable-selection-kind": undefined,
       }),
     /must be ink, image, or mixed/,
   );
   assert.throws(
     () =>
       validateRequestHeaders({
-        "x-smart-remarkable-response-mode": "write_back",
+        ...validHeaders,
         "x-smart-remarkable-request-id": "ordinary-client-request-0001",
-        "x-smart-remarkable-selection-kind": "ink",
       }),
     /Invalid x-smart-remarkable-request-id/,
   );
   assert.equal(
     validateRequestHeaders({
-      "x-smart-remarkable-response-mode": "write_back",
+      ...validHeaders,
       "x-smart-remarkable-request-id": `smart-remarkable-${"a".repeat(111)}`,
-      "x-smart-remarkable-selection-kind": "ink",
     }).requestId.length,
     128,
   );
   assert.throws(
     () =>
       validateRequestHeaders({
-        "x-smart-remarkable-response-mode": "write_back",
+        ...validHeaders,
         "x-smart-remarkable-request-id": `smart-remarkable-${"a".repeat(112)}`,
-        "x-smart-remarkable-selection-kind": "ink",
       }),
     /Invalid x-smart-remarkable-request-id/,
   );
+  for (const contextVersion of [undefined, "selection-page-v0"]) {
+    assert.throws(
+      () =>
+        validateRequestHeaders({
+          ...validHeaders,
+          "x-smart-remarkable-context-version": contextVersion,
+        }),
+      /context-version must be selection-page-v1/,
+    );
+  }
 });
 
-test("accepts exactly one PNG and rejects client-supplied message types", () => {
-  const valid = {
-    model: "openclaw/main",
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "answer the handwriting" },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:image/png;base64,${PNG_BASE64}`,
-            },
-          },
-        ],
-      },
-    ],
-  };
-  const selection = validateOpenAiBody(valid, "ink");
-  assert.equal(selection.promptText, "answer the handwriting");
-  assert.equal(selection.imageBase64, PNG_BASE64);
-  assert.equal(selection.selectionKind, "ink");
-  assert.equal(
-    selection.fingerprint,
-    crypto
-      .createHash("sha256")
-      .update("openclaw/main")
-      .update("\0")
-      .update("answer the handwriting")
-      .update("\0")
-      .update(PNG_BASE64)
-      .update("\0")
-      .update("ink")
-      .update("\0")
-      .update(RESPONSE_ENVELOPE_PROTOCOL_VERSION)
-      .update("\0")
-      .update(SOURCE_PROVENANCE_PROTOCOL_VERSION)
-      .digest("hex"),
+test("accepts one text then selection and current-page PNGs", () => {
+  const valid = validBody();
+  const selection = validateOpenAiBody(
+    valid,
+    "ink",
+    SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   );
+  assert.equal(selection.promptText, "answer the handwriting");
+  assert.equal(selection.selectionImageBase64, PNG_BASE64);
+  assert.equal(selection.currentPageImageBase64, PNG_BASE64);
+  assert.equal(selection.selectionKind, "ink");
+  assert.deepEqual(selection.captureContext, {
+    version: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+    documentDisplayName: "Project Notes",
+    pageId: "page-0001",
+    pageIndex: 2,
+    pageNumber: 3,
+    pageImageScope: "current_page_view",
+    pageImageCompleteness: "full_page",
+  });
+  assert.match(selection.fingerprint, /^[a-f0-9]{64}$/);
 
   assert.throws(
     () =>
@@ -482,8 +535,9 @@ test("accepts exactly one PNG and rejects client-supplied message types", () => 
           ],
         },
         "ink",
+        SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
       ),
-    /one multimodal user message/,
+    /one user message/,
   );
   assert.throws(
     () =>
@@ -498,19 +552,186 @@ test("accepts exactly one PNG and rejects client-supplied message types", () => 
           ],
         },
         "ink",
+        SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
       ),
-    /exactly one PNG/,
+    /exactly three content items/,
   );
   assert.notEqual(
-    validateOpenAiBody(valid, "image").fingerprint,
+    validateOpenAiBody(
+      valid,
+      "image",
+      SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+    ).fingerprint,
     selection.fingerprint,
   );
   assert.notEqual(
-    validateOpenAiBody(valid, "mixed").fingerprint,
+    validateOpenAiBody(
+      valid,
+      "mixed",
+      SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+    ).fingerprint,
     selection.fingerprint,
   );
   assert.throws(
-    () => validateOpenAiBody(valid, "photo"),
+    () =>
+      validateOpenAiBody(
+        valid,
+        "photo",
+        SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+      ),
     /must be ink, image, or mixed/,
+  );
+});
+
+test("rejects reordered, untagged, extra, or oversized image content", () => {
+  const valid = validBody();
+  const validate = (body) =>
+    validateOpenAiBody(
+      body,
+      "ink",
+      SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+    );
+  for (const content of [
+    [valid.messages[0].content[0], valid.messages[0].content[2], valid.messages[0].content[1]],
+    [valid.messages[0].content[0], { ...valid.messages[0].content[1], x_smart_remarkable_role: undefined }, valid.messages[0].content[2]],
+    [...valid.messages[0].content, { type: "text", text: "extra" }],
+  ]) {
+    assert.throws(
+      () => validate({ ...valid, messages: [{ role: "user", content }] }),
+      /role-tagged|exactly three content items/,
+    );
+  }
+
+  const largePng = Buffer.alloc(4 * 1024 * 1024 + 1);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(largePng);
+  const largeBase64 = largePng.toString("base64");
+  assert.throws(
+    () =>
+      validate({
+        ...valid,
+        messages: [{
+          role: "user",
+          content: [
+            valid.messages[0].content[0],
+            pngPart("selection", largeBase64),
+            pngPart("current_page", largeBase64),
+          ],
+        }],
+      }),
+    /Combined PNG content must be at most 8 MiB/,
+  );
+
+  const oversizedPng = Buffer.alloc(6 * 1024 * 1024 + 1);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(
+    oversizedPng,
+  );
+  assert.throws(
+    () =>
+      validate({
+        ...valid,
+        messages: [{
+          role: "user",
+          content: [
+            valid.messages[0].content[0],
+            pngPart("selection", oversizedPng.toString("base64")),
+            valid.messages[0].content[2],
+          ],
+        }],
+      }),
+    /selection image must be a PNG of at most 6 MiB/,
+  );
+});
+
+test("strictly validates and fingerprints all page context", () => {
+  const base = validBody();
+  const fingerprint = (body) =>
+    validateOpenAiBody(
+      body,
+      "ink",
+      SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+    ).fingerprint;
+  const original = fingerprint(base);
+  const contextMutations = [
+    { document_display_name: "Other Notes" },
+    { page_id: "page-0002" },
+    { page_index: 3, page_number: 4 },
+    { page_image_completeness: "viewport_only" },
+  ];
+  for (const mutation of contextMutations) {
+    assert.notEqual(
+      fingerprint({
+        ...base,
+        x_smart_remarkable_context: validContext(mutation),
+      }),
+      original,
+    );
+  }
+  const differentPagePng = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01,
+  ]).toString("base64");
+  assert.notEqual(
+    fingerprint({
+      ...base,
+      messages: [{
+        role: "user",
+        content: [
+          base.messages[0].content[0],
+          base.messages[0].content[1],
+          pngPart("current_page", differentPagePng),
+        ],
+      }],
+    }),
+    original,
+  );
+  const differentSelectionPng = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x02,
+  ]).toString("base64");
+  assert.notEqual(
+    fingerprint({
+      ...base,
+      messages: [{
+        role: "user",
+        content: [
+          base.messages[0].content[0],
+          pngPart("selection", differentSelectionPng),
+          base.messages[0].content[2],
+        ],
+      }],
+    }),
+    original,
+  );
+
+  for (const context of [
+    validContext({ document_display_name: "Cafe\u0301" }),
+    validContext({ document_display_name: "bad\nname" }),
+    validContext({ document_display_name: "x".repeat(1025) }),
+    validContext({ page_id: "bad page" }),
+    validContext({ page_number: 99 }),
+    validContext({ page_image_scope: "screen" }),
+    validContext({ page_image_completeness: "unknown" }),
+    { ...validContext(), extra: true },
+  ]) {
+    assert.throws(
+      () =>
+        fingerprint({
+          ...base,
+          x_smart_remarkable_context: context,
+        }),
+      /document_display_name|page_id|page_index|page_image_scope|page_image_completeness|must contain exactly/,
+    );
+  }
+  assert.throws(
+    () =>
+      validateOpenAiBody(base, "ink", "selection-page-v0"),
+    /Body and header context versions/,
+  );
+  assert.throws(
+    () =>
+      validateOpenAiBody(
+        { ...base, temperature: 0 },
+        "ink",
+        SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
+      ),
+    /must contain exactly model, messages, and x_smart_remarkable_context/,
   );
 });

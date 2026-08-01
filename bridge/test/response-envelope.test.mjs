@@ -27,7 +27,15 @@ function assertEnvelopeError(action, code) {
 }
 
 test("exports a versioned, self-contained protocol instruction", () => {
-  assert.match(RESPONSE_ENVELOPE_PROTOCOL_VERSION, /\.v2$/u);
+  assert.match(RESPONSE_ENVELOPE_PROTOCOL_VERSION, /\.v3$/u);
+  assert.match(
+    RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
+    /received_text.*only.*remarkable-selection\.png/is,
+  );
+  assert.match(
+    RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
+    /Never include.*current-page context image/is,
+  );
   assert.match(
     RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION,
     new RegExp(RESPONSE_ENVELOPE_PROTOCOL_VERSION.replaceAll(".", "\\."), "u"),

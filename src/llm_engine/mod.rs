@@ -19,6 +19,20 @@ pub enum SelectionKind {
     Mixed,
 }
 
+pub const SELECTION_PAGE_CONTEXT_VERSION: &str = "selection-page-v1";
+
+/// OpenClaw-only context assembled from one prepared framebuffer. Direct
+/// providers keep their historical single-image request shape.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SelectionPageContext {
+    pub selection_image_base64: String,
+    pub current_page_image_base64: String,
+    pub document_display_name: String,
+    pub page_id: String,
+    pub page_index: u32,
+    pub page_image_completeness: crate::touch::PageImageCompleteness,
+}
+
 impl SelectionKind {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -113,5 +127,8 @@ pub trait LLMEngine: Send {
     /// Bind the stock selection classification to the next execution.
     /// Non-OpenClaw engines use it only through local preprocessing.
     fn set_selection_kind(&mut self, _kind: Option<SelectionKind>) {}
+    /// Install same-frame selection/page context for an OpenClaw request.
+    /// Other engines intentionally ignore it and retain their existing body.
+    fn set_selection_page_context(&mut self, _context: Option<SelectionPageContext>) {}
     async fn execute(&mut self, cancellation: &SmartRemarkableCancellation, status_callback: Option<StatusCallback>) -> Result<()>;
 }

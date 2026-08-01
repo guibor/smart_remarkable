@@ -1,5 +1,5 @@
 export const RESPONSE_ENVELOPE_PROTOCOL_VERSION =
-  "smart-remarkable.response-envelope.v2";
+  "smart-remarkable.response-envelope.v3";
 export const MAX_RECEIVED_TEXT_BYTES = 2_048;
 export const MAX_RENDERED_RESPONSE_BYTES = 32_768;
 
@@ -33,6 +33,7 @@ export function buildResponseEnvelopeProtocolInstruction(selectionKind) {
     "Return exactly one JSON object and nothing else.",
     'The object must contain exactly the keys "received_text" and "response_text", and both values must be non-empty strings.',
     ...receivedTextInstruction(selectionKind),
+    '"received_text" applies only to the primary selection attachment named "remarkable-selection.png". Never include text or a description from the current-page context image, document display name, or page metadata.',
     '"response_text" must contain the answer or action result intended for the user.',
     "Do not use Markdown code fences. Do not include NUL or other C0/C1 control characters except LF newlines.",
     `"received_text" must be at most ${MAX_RECEIVED_TEXT_BYTES} UTF-8 bytes, and the final rendered message must fit within ${MAX_RENDERED_RESPONSE_BYTES} UTF-8 bytes.`,
