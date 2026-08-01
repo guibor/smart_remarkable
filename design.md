@@ -573,8 +573,15 @@ then promoted the unchanged functional QMD with current-contract transaction
 `20260801T115608Z-37109`. Final `xochitl` PID `57254`, `NRestarts=0`, and
 read-only root prove guarded deployment. A request-free transient-session smoke
 test reached both `ready` and `bridge-ready`, verified the exact worker in
-memory, produced no busy/trigger/ack markers, and stopped cleanly. It does not
-replace a physical request and server receipt.
+memory, produced no busy/trigger/ack markers, and stopped cleanly. Two later
+physical `whatsapp_only` ink taps each emitted one content-free QML/launcher
+stage chain, were consumed once by Rust, and completed as server request IDs
+`smart-remarkable-fa26-18c7b415578ef44d-0` and
+`smart-remarkable-102b9-18c7b68a6b9a9b5c-0`. The user confirmed the interaction
+worked. Post-request state retained `xochitl` PID `57254`, `NRestarts=0`,
+read-only root, and no busy/trigger/ack residue. This accepts the ordinary wand
+path without claiming the deliberate tunnel-loss or complete orientation/kind
+matrix.
 
 The historical firmware-recovery sequence first used disabled transaction
 `20260730T184327Z-34344` and functional transaction
@@ -633,8 +640,9 @@ current-contract refresh-functional transaction `20260801T115608Z-37109`
 restored functional QMD
 `495db83da318801d24ae3d4d63120c7e9d1568145e3298efccecea583f5c17c4`.
 The final request-free tunnel smoke test left the Smart session inactive,
-`xochitl` PID `57254` at `NRestarts=0`, and root read-only. Physical
-`0.7.3-openclaw` request acceptance remains separate.
+`xochitl` PID `57254` at `NRestarts=0`, and root read-only. Subsequent physical
+request acceptance completed two one-tap/one-turn ink requests while preserving
+those stock-process and filesystem invariants.
 
 The current two-button client passes 88 applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
@@ -678,8 +686,8 @@ and `3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
 Those functional bytes were promoted by transaction
 `20260731T222432Z-49869`; physical interaction exposed the nonce-generation
 failure described above. The replacement QMD/protocol/launcher generation has
-now passed its complete local and guarded device gate, while its physical
-request acceptance remains pending. The prior 3.28.0.163
+now passed its complete local, guarded-device, and ordinary physical wand gate.
+The prior 3.28.0.163
 QMLDiff artifacts passed offline compatibility and apply-diff checks against
 that firmware's exact extracted resources. Its functional two-button
 QMD is
@@ -1008,8 +1016,8 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   compatibility and compose to 22 resources. The currently deployed
   direct-launch generation failed physical nonce creation; the
   BusyBox/cached-helper replacement is now deployed through the guarded inert,
-  application, and functional transactions recorded above, while post-fix
-  physical acceptance remains gated work. Both menus place the firmware's stock
+  application, and functional transactions recorded above, and its later
+  lifecycle repair has passed two physical wand requests. Both menus place the firmware's stock
   notebook-with-sparkles answer-here action and stock sparkles agent action
   immediately after Copy. The v2 source derives
   live kind, fixed-point view geometry, and stable scene orientation; rechecks

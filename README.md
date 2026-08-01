@@ -119,8 +119,9 @@ trigger marker could be published. Because process start had already returned a
 positive PID, QML retained its pending state until the 45-second safety timer;
 that failed-state dwell, rather than server processing, explained the apparent
 long lag. The `hexdump` and cached-helper correction described above has since
-passed guarded installation, but no post-fix physical tap has yet proved a
-working request.
+passed guarded installation. The subsequent `0.7.3-openclaw` lifecycle repair
+has also passed physical one-tap/one-turn acceptance as recorded in the current
+deployment section below.
 
 Both buttons are explicit triggers in all three modes. In `once`, the worker
 exits after the request; in either session mode it rearms for another one.
@@ -319,8 +320,17 @@ and finally committed the byte-identical functional QMD through transaction
 `20260801T115608Z-37109`. Final verification found `xochitl` PID `57254`,
 `NRestarts=0`, and `/` read-only. A request-free start/health/stop smoke test
 proved both local worker readiness and the private OpenClaw tunnel, created no
-selection markers or model request, and cleaned up the transient worker. One
-physical `0.7.3` wand request remains the end-to-end acceptance gate.
+selection markers or model request, and cleaned up the transient worker.
+Physical acceptance then produced two exact `whatsapp_only` ink turns. The
+tablet progressed once from `SR_WAND stage=click` through `trigger-published`
+for each tap; server requests
+`smart-remarkable-fa26-18c7b415578ef44d-0` and
+`smart-remarkable-102b9-18c7b68a6b9a9b5c-0` completed at `14:16:39Z` and
+`15:01:39Z`, respectively. The user confirmed the interaction worked. The
+post-request check found no busy/trigger/ack residue, `xochitl` remained PID
+`57254` with `NRestarts=0`, and `/` remained read-only. This proves the ordinary
+wand-to-OpenClaw path; the deliberate offline/reconnect case and wider physical
+matrix remain separate acceptance work.
 
 OpenClaw's candidate canonical final remains a strict
 literal-transcription/answer envelope: WhatsApp receives one atomic `I read:`
@@ -838,8 +848,9 @@ and matching `0.7.2-openclaw` app helpers through guarded inert transaction
 `20260801T091905Z-53220`, staged manifest
 `360f2a54f5efb1272dd21e2dcc421b5a8e329b9ffabdbd7ff95b3185e3360188`,
 and functional transaction `20260801T092129Z-55163`. The final stock process
-was PID `48260` with zero restarts and read-only root. Post-fix physical button
-acceptance remains pending. A
+was PID `48260` with zero restarts and read-only root. The later
+`0.7.3-openclaw` deployment and two completed physical wand turns are recorded
+above. A
 separate disabled-button patch remains the first visual canary for later
 revisions, and activation still requires fresh live hashes plus a bounded
 rollback transaction.
