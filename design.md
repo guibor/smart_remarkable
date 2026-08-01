@@ -613,6 +613,14 @@ allowlist keys are tracked from parsed file contents rather than inherited
 environment variables. This lets the button coexist with the exact installed
 ReMagic set without weakening the unknown-extension boundary.
 
+The current contract deliberately pins BetterTOC's reviewed 3.28.0.164 r3
+QMD (`903e40e97d6d48923c6f76f77b5ff7f20ac156ee2b01ee266f51e4487dfe68fb`).
+An earlier `0.8.0` candidate still pinned r2 and therefore stopped at the
+device-side pre-arm fingerprint after the independent BetterTOC upgrade. That
+failure made no QMD rename and no `xochitl` restart. Preserving r3 requires a
+new exact application contract and manifest; it does not add a multi-version
+or wildcard coexistence rule.
+
 There is no direct provider API call or publicly exposed OpenClaw operator
 endpoint. `setup_uinput` is fail-closed: when `/dev/uinput` is missing, it
 returns an error unless module loading was explicitly opted into with

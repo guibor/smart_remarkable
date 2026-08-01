@@ -905,7 +905,16 @@ under `QML_REFERENCE_ROOT` and actually applies the compiled QMD with the
 SHA-pinned live hashtable into a private host-side directory. Compatibility
 metadata alone is not sufficient; both patched outputs must be regular,
 non-symlink, nonempty, and parse successfully with local
-`qmlformat --ignore-settings`. The deployed `0.7.3-openclaw` path
+`qmlformat --ignore-settings`.
+
+The coexistence contract pins the installed reviewed BetterTOC 3.28.0.164 r3
+QMD at SHA-256
+`903e40e97d6d48923c6f76f77b5ff7f20ac156ee2b01ee266f51e4487dfe68fb`.
+The first `0.8.0` refresh-inert attempt still expected r2, so it failed closed
+before `ARMED`, changed no QMD, and did not restart `xochitl`; the contract was
+then revised to preserve r3 rather than downgrade the tablet.
+
+The deployed `0.7.3-openclaw` path
 still uses compiled v2 QMD
 `495db83da318801d24ae3d4d63120c7e9d1568145e3298efccecea583f5c17c4`;
 the reviewed v3 candidate source/compiled pair is
