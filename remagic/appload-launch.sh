@@ -32,6 +32,9 @@ BUSY_FILE="$STATE_DIR/busy"
 PREPARE_ACK_FILE="$STATE_DIR/selection_prepare_ack"
 CLOSE_ACK_FILE="$STATE_DIR/selection_close_ack"
 ADMISSION_LOCK="$STATE_DIR/selection-admission.lock"
+LIFECYCLE_DIR=/run/smart-remarkable-lifecycle
+LIFECYCLE_LOCK="$LIFECYCLE_DIR/launcher.lock"
+LIFECYCLE_LOCK_HELD=0
 . "$MODE_SETTINGS"
 . "$SELECTION_PROTOCOL"
 smart_load_mode_settings
@@ -102,6 +105,12 @@ case "${1:-}" in
         ;;
 esac
 if [ "$ACTION" = selection-button ]; then
+    # Fifteen minutes each for in-RAM tunnel and HTTP transport recovery need
+    # more than the ten-minute `once` tile lifetime. Explicit buttons therefore
+    # receive at least a fresh one-hour unit.
+    if [ "$SMART_RUNTIME_MAX_SECONDS" -lt 3600 ]; then
+        SMART_RUNTIME_MAX_SECONDS=3600
+    fi
     smart_log_stage descriptor-parsed
 fi
 
@@ -137,6 +146,49 @@ acquire_selection_lock() {
 
 release_selection_lock() {
     rmdir "$ADMISSION_LOCK" 2>/dev/null || true
+}
+
+# Serialize toggle/start/stop/button admission independently from the runner's
+# volatile state directory. An fd-backed flock is released by the kernel even
+# if AppLoad terminates this short-lived launcher.
+acquire_lifecycle_lock() {
+    if [ ! -e "$LIFECYCLE_DIR" ] && [ ! -L "$LIFECYCLE_DIR" ]; then
+        saved_umask=$(umask)
+        umask 077
+        mkdir "$LIFECYCLE_DIR" 2>/dev/null || true
+        umask "$saved_umask"
+    fi
+    [ -d "$LIFECYCLE_DIR" ] &&
+        [ ! -L "$LIFECYCLE_DIR" ] &&
+        [ "$(stat -c %u:%g:%a "$LIFECYCLE_DIR")" = "0:0:700" ] || return 1
+
+    if [ ! -e "$LIFECYCLE_LOCK" ] && [ ! -L "$LIFECYCLE_LOCK" ]; then
+        (
+            set -C
+            umask 077
+            : > "$LIFECYCLE_LOCK"
+        ) 2>/dev/null || true
+    fi
+    [ -f "$LIFECYCLE_LOCK" ] &&
+        [ ! -L "$LIFECYCLE_LOCK" ] &&
+        [ "$(stat -c %u:%g:%a "$LIFECYCLE_LOCK")" = "0:0:600" ] &&
+        [ "$(stat -c %h "$LIFECYCLE_LOCK")" = "1" ] || return 1
+    exec 9<> "$LIFECYCLE_LOCK"
+    lifecycle_wait=0
+    while ! /usr/bin/flock -n -x 9; do
+        lifecycle_wait=$((lifecycle_wait + 1))
+        [ "$lifecycle_wait" -lt 10 ] || return 1
+        sleep 1
+    done
+    LIFECYCLE_LOCK_HELD=1
+}
+
+release_lifecycle_lock() {
+    if [ "$LIFECYCLE_LOCK_HELD" -eq 1 ]; then
+        /usr/bin/flock -u 9 2>/dev/null || true
+        exec 9>&-
+        LIFECYCLE_LOCK_HELD=0
+    fi
 }
 
 publish_root_marker() {
@@ -318,6 +370,47 @@ clear_stale_local_ready_before_start() {
     [ ! -e "$STATE_DIR/ready" ] && [ ! -L "$STATE_DIR/ready" ]
 }
 
+# A stopped --collect transient can remain loaded briefly while PID 1 garbage
+# collects it. Reusing its fixed name before LoadState becomes not-found makes
+# StartTransientUnit fail and silently loses the user's button request.
+wait_for_session_unit_unloaded() {
+    unload_wait=0
+    while [ "$unload_wait" -lt 10 ]; do
+        load_state=$(systemctl show -p LoadState --value "$UNIT" 2>/dev/null || true)
+        case "$load_state" in
+            not-found) return 0 ;;
+            loaded) ;;
+            *)
+                echo "Smart Remarkable session unit has unexpected load state" >&2
+                return 1
+                ;;
+        esac
+        systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
+        unload_wait=$((unload_wait + 1))
+        sleep 1
+    done
+    echo "Prior Smart Remarkable session unit did not unload" >&2
+    return 1
+}
+
+# RuntimeMaxSec can expire the session after is-active succeeds but before the
+# stop call reaches PID 1. Treat only a proven already-inactive/unloaded result
+# as success; every other stop error remains fail-closed.
+stop_session_unit_if_present() {
+    if systemctl stop "$UNIT"; then
+        return 0
+    fi
+    load_state=$(systemctl show -p LoadState --value "$UNIT" 2>/dev/null || true)
+    active_state=$(systemctl show -p ActiveState --value "$UNIT" 2>/dev/null || true)
+    case "$load_state:$active_state" in
+        not-found:inactive|loaded:inactive|loaded:failed) return 0 ;;
+        *)
+            echo "Smart Remarkable session could not be stopped safely" >&2
+            return 1
+            ;;
+    esac
+}
+
 case "$ACTION" in
     selection-prepare-ack|selection-close-ack)
         deliver_selection_ack
@@ -325,18 +418,29 @@ case "$ACTION" in
         ;;
 esac
 
+if ! acquire_lifecycle_lock; then
+    echo "Smart Remarkable lifecycle lock is unavailable" >&2
+    exit 1
+fi
+trap release_lifecycle_lock EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 if systemctl is-active --quiet "$UNIT"; then
     if [ "$ACTION" = selection-button ]; then
-        if [ -f "$STATE_DIR/ready" ]; then
-            deliver_selection_button
-            exit 0
+        # A published busy generation owns the existing worker until its exact
+        # request completes. Never tear it down for a second tap.
+        if [ -e "$BUSY_FILE" ] || [ -L "$BUSY_FILE" ]; then
+            echo "A Smart Remarkable button request is already pending" >&2
+            exit 1
         fi
-        # Only local listener readiness gates capture. A stale local marker is
-        # repaired through the ordinary guarded start path; remote tunnel
-        # readiness is owned separately by the runner and Rust worker.
-        systemctl stop "$UNIT"
+        # Give every explicit request a fresh bounded RuntimeMaxSec. This
+        # removes the active-but-nearly-expired race while preserving the
+        # asynchronous local capture-before-network flow.
+        stop_session_unit_if_present
     else
-        systemctl stop "$UNIT"
+        stop_session_unit_if_present
         exit 0
     fi
 fi
@@ -351,6 +455,7 @@ if smart_process_running; then
 fi
 systemctl is-active --quiet xochitl.service
 systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
+wait_for_session_unit_unloaded
 
 # A killed prior transient can leave an empty local-ready marker. Remove it
 # before PID 1 starts the replacement so the following wait can observe only

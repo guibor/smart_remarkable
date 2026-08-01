@@ -54,15 +54,17 @@ restore chord, so a detached capture cannot later close a restored selection.
 This local capture gate does not depend on the network. The runner then starts
 the forwarding-only SSH tunnel on local port
 `18791` and probes the bridge. It publishes a distinct root-only
-`bridge-ready` marker only after the capability-backed health probe succeeds,
-or `bridge-failed` if setup or later supervision fails. Rust waits for this
-remote marker only after the exact crop has been captured and the stock
-selection has closed. A tunnel failure removes only remote readiness first and
-leaves the listener a bounded handoff window in which to finish the local QML
-acknowledgement and observe the failure; a normal listener exit terminates the
-tunnel and preserves the listener status. The exit trap removes every local
-and remote readiness, trigger, acknowledgement, busy, lock, and isolated-home
-artifact. Both production wrappers use the tablet's BusyBox
+`bridge-ready` marker only after the capability-backed health probe succeeds.
+Rust waits for this remote marker only after the exact crop has been captured
+and the stock selection has closed. A tunnel setup failure or later SSH exit
+removes remote readiness, reaps only that SSH child, and retries with bounded
+parent-owned health probes and the native Dropbear `-K` keepalive while the
+worker retains the crop only in RAM.
+The Rust bridge wait is bounded to fifteen minutes. A normal listener exit
+terminates the current tunnel and preserves the listener status; the transient
+unit remains the outer lifetime and power-loss boundary. The exit trap removes
+every local and remote readiness, trigger, acknowledgement, busy, admission
+lock, and isolated-home artifact. Both production wrappers use the tablet's BusyBox
 `mkdir`/`chown`/`chmod` commands and do not assume GNU `install`.
 `scripts/openclaw-runtime-env.sh` parses the root-only six-line `.env` as
 strict data; it rejects duplicate, missing, unknown, malformed, or non-pinned
@@ -86,6 +88,21 @@ because OpenSSH 8.9 cannot express local-TCP-only forwarding in
 The compatibility-named `scripts/run-armed-once.sh` is now the generic
 three-mode worker; `scripts/run-selected-once.sh` remains the constrained SSH
 recovery path.
+
+Every explicit stock-button launch is serialized by a separate root-only
+fd-backed lifecycle lock under `/run`; the runner never removes that lock while
+a launcher owns it. If the current exact busy generation exists, a second tap
+is rejected without stopping anything. Otherwise the launcher stops any idle
+transient session and starts a fresh one before publishing the descriptor, so
+an active unit cannot expire just after the local marquee closes. Explicit
+button units receive at least one fresh hour even when the configured tile mode
+is `once`; no unit is enabled at boot and the ordinary AppLoad tile remains a
+toggle. The fd lock acquisition is bounded, and after a stop the launcher waits
+for the `--collect` unit's `LoadState` to become `not-found` before reusing the
+fixed transient name. The guarded installer also parses the runner's exact SSH
+options on the live firmware without opening a connection: it pins Dropbear
+2025.88, checks native `-K` help, and checks each required extended option via
+`-o help`. Unsupported OpenSSH-only options are forbidden.
 
 The two native buttons are independent, explicit sources. Once their
 device canary has passed, the user completes an ordinary lasso, lifts, and
@@ -537,6 +554,19 @@ QMD pair passes exact-hashtable compatibility and applies to the
 extracted resource tree; with the seven supported ReMagic QMDs, the selected
 Smart QMD composes in device filename order into 22 patched resources.
 
+The subsequent local `0.7.3-openclaw` recovery candidate leaves the approved
+source/compiled QMD and selection protocol unchanged. Its aarch64 worker is
+`d9e045c8eee9a442def7bf6218cfbf81797a3133cdd49673746931a1b0e222bb`
+with build ID `3acb24c18156394f0352ad24572bdfe813e07507`; its launcher is
+`e8d8729997f4975de54a9a3e6c20d219c4aeb069bc9268a758b3b81bd53582f3`,
+its reconnecting runner is
+`72588acb490cb17b7a2b8ca3bce4dc938862cff95da922267074d5c14f5b232c`,
+and its complete compatibility contract is
+`fab7ddfb35b0b005f382d2a2e8450b44b1e1a38adb1189546b3e7da860cf331d`.
+The binary retains `/lib/ld-linux-aarch64.so.1`, maximum GLIBC 2.28, and no
+RPATH/RUNPATH. These are reviewed local artifacts until the exact-device
+inert/application/functional transaction is completed.
+
 The historical firmware-recovery sequence first used disabled transaction
 `20260730T184327Z-34344` and functional transaction
 `20260730T184443Z-34618` to restore the legacy QMD. Guarded transaction
@@ -806,8 +836,19 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   accepts client-controlled session/channel routing, emits the historical
   remote-accepted status when successful HTTP headers arrive, validates
   request/mode/kind/delivery metadata in the final JSON, and dispatches the
-  text tool only for a non-replayed `write_back`. `src/main.rs`, not the
-  transport, owns the final view/placement/activation guard before typing.
+  text tool only for a non-replayed `write_back`. Bridge-mode transport and
+  response-body interruptions are retried through a separate transport window
+  of at most fifteen minutes with the exact same serialized request and request
+  ID. Together with the preceding, independently bounded fifteen-minute bridge
+  readiness wait, this can retain one crop in RAM for roughly thirty minutes
+  in the worst case. Pre-acceptance 502, 503, and 504 responses use that same
+  retry identity with capped backoff. Redirects are disabled so neither crop
+  nor sensitive bearer can leave the pinned loopback route, and only exact
+  HTTP 200 emits acceptance. A 4xx response remains terminal: in particular,
+  an incomplete durable reservation after a bridge-process restart is not
+  resubmitted. Acceptance is emitted at most once; direct provider requests
+  are not given this retry policy. `src/main.rs`, not the transport, owns the
+  final view/placement/activation guard before typing.
 - `src/config.rs` and `prompts/`: merge runtime configuration and define provider/tool instructions. `selection_openclaw.json` asks OpenClaw for concise plain text that is safe to type into a stock text box; `selection_openclaw_whatsapp.json` asks for an ordinary canonical OpenClaw response when no notebook insertion is requested; `selection_print.json` remains the direct-provider print prompt.
 - `bridge/`: implements the loopback-only, narrow-token HTTP adapter. It
   validates the one-prompt/one-PNG request, exact request-ID namespace, and
@@ -911,17 +952,23 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
 - `scripts/run-armed-once.sh`: provides the compatibility-named AppLoad worker.
   It refuses to load any fallback kernel module, starts the configured Rust
   listener before network setup, owns root-only volatile local-ready,
-  remote-ready/failed, trigger, acknowledgement, and busy state under `/run`,
+  remote-ready, trigger, acknowledgement, and busy state under `/run`,
   then validates and opens the restricted key-only local `18791` to remote
-  loopback `18792` bridge tunnel. A dead tunnel removes remote readiness and
-  gives the listener a bounded local-handoff window before termination; a
-  finished listener terminates the tunnel while preserving its status.
+  loopback `18792` bridge tunnel. A dead tunnel removes remote readiness,
+  reaps only the SSH child, and reconnects while Rust retains at most one crop
+  in memory; a finished listener terminates the tunnel while preserving its
+  status.
 - `remagic/appload-launch.sh` and `remagic/external.manifest.json`: define the
   single non-QTFB AppLoad tile and toggle a time-limited transient session
   without changing boot state. The launcher refuses to source its mode helper
   or selection-protocol helper unless both resolve inside the exact root-owned
   AppLoad installation. A v2 descriptor can be published only after local
   listener readiness; the launcher does not probe or wait for the bridge. It
+  serializes the complete transient-unit lifecycle with a separate fd lock,
+  refuses to stop an exact busy generation, and gives each accepted explicit
+  button request a fresh one-hour minimum lifetime. Lock acquisition is bounded,
+  and the fixed transient name is reused only after a stopped `--collect` unit
+  reports `LoadState=not-found`. It
   creates a kernel-random nonce through the exact device-supported `hexdump`
   interface, verifies its canonical lowercase-hex representation, publishes
   busy before the trigger, rejects another request until Rust verifies terminal
@@ -1070,6 +1117,11 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   to contain a minimum vertical caret-like run.
 - `create_engine` in `src/main.rs`: selects the provider transport; `openclaw` uses the OpenAI-compatible wire format but final-text response handling and OpenClaw-specific environment variables.
 - `OpenAI::new_openclaw` in `src/llm_engine/openai.rs`: creates the loopback bridge transport using `OPENCLAW_BRIDGE_BASE_URL`/`OPENCLAW_BRIDGE_TOKEN`; the tablet does not receive Gateway, session, channel, account, or recipient authority.
+- `OpenAI::send_openclaw_with_recovery` in `src/llm_engine/openai.rs`: rebuilds
+  only interrupted bridge HTTP connections inside one overall deadline while
+  preserving the exact request ID, body, response mode, and selection kind;
+  this lets the server's live job map or durable completion journal return one
+  idempotent result after a lost connection.
 - `parseResponseEnvelope` and `renderResponseEnvelope` in `bridge/src/response-envelope.mjs`: turn the one canonical structured final into a validated literal transcription, answer-only tablet result, and one delivery-bounded WhatsApp message.
 - `SelectionService.submit` in `bridge/src/selection-service.mjs`: durably
   reserves the idempotency key, captures the current transcript for recovery
@@ -1104,6 +1156,18 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   without a shell or unrelated credentials, validates its receipt, and uses a
   durable fail-closed artifact journal to avoid duplicate uploads.
 - `OpenAI::request_builder` in `src/llm_engine/openai.rs`: attaches only the strict namespaced request ID, response-mode, and trusted selection-kind headers in bridge mode and leaves direct provider requests unchanged.
+- `acquire_lifecycle_lock` in `remagic/appload-launch.sh`: validates a
+  root-only `/run` lock file and takes an auto-releasing fd lock around the
+  complete inspect/stop/start/button-admission transition so concurrent
+  launchers cannot stop each other's fresh unit.
+- `wait_for_session_unit_unloaded` in `remagic/appload-launch.sh`: boundedly
+  waits for PID 1 to garbage-collect the prior transient name before a fresh
+  `systemd-run` call, failing before descriptor publication on any unexpected
+  load state or timeout.
+- `stop_session_unit_if_present` in `remagic/appload-launch.sh`: stops the idle
+  transient and tolerates only the narrow race where `RuntimeMaxSec` already
+  made it inactive or unloaded; every other stop failure aborts before a fresh
+  descriptor can be published.
 - `captureSnapshot` in the firmware-pinned QML source: derives the live
   selection kind, maps all four selection corners into fixed-point view bounds,
   and accepts only the stable `normal` or `rot180` scene transform.

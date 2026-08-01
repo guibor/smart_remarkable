@@ -73,7 +73,6 @@ const RUNTIME_STATE_DIR: &str = "/run/smart-remarkable";
 const RUNTIME_READY_FILE: &str = "/run/smart-remarkable/ready";
 const RUNTIME_BUSY_FILE: &str = "/run/smart-remarkable/busy";
 const RUNTIME_BRIDGE_READY_FILE: &str = "/run/smart-remarkable/bridge-ready";
-const RUNTIME_BRIDGE_FAILED_FILE: &str = "/run/smart-remarkable/bridge-failed";
 const SELECTION_PREPARE_ACK_FILE: &str = "/run/smart-remarkable/selection_prepare_ack";
 const SELECTION_CLOSE_ACK_FILE: &str = "/run/smart-remarkable/selection_close_ack";
 const LLM_BUTTON_TRIGGER_FILE: &str = "/run/smart-remarkable/llm_button_trigger";
@@ -89,7 +88,10 @@ const MAX_SELECTION_DESCRIPTOR_BYTES: u64 = 256;
 const MAX_SELECTION_DESCRIPTOR_AGE_MS: u64 = 40_000;
 const MAX_SELECTION_DESCRIPTOR_FUTURE_SKEW_MS: u64 = 5_000;
 const SELECTION_ACK_TIMEOUT: Duration = Duration::from_secs(5);
-const BRIDGE_READY_TIMEOUT: Duration = Duration::from_secs(50);
+// Keep one captured selection in memory while the restricted SSH tunnel
+// reconnects. This remains shorter than the fresh one-hour transient unit
+// granted to every explicit button request, and never persists the crop.
+const BRIDGE_READY_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// Stable transform from stock QML's logical selection view to the physical
 /// framebuffer. Explicit selection crops never use toolbar/corner heuristics.
@@ -494,9 +496,6 @@ pub async fn wait_for_bridge_ready(cancellation: &SmartRemarkableCancellation) -
     loop {
         if secure_runtime_marker_exists(RUNTIME_BRIDGE_READY_FILE, 0)? {
             return Ok(());
-        }
-        if secure_runtime_marker_exists(RUNTIME_BRIDGE_FAILED_FILE, 0)? {
-            anyhow::bail!("Private OpenClaw tunnel failed after local capture");
         }
         if cancellation.should_cancel() {
             anyhow::bail!("Bridge readiness wait cancelled");

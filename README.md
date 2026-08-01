@@ -273,8 +273,45 @@ the button, application staged manifest
 then installed the matching `0.7.2-openclaw` helpers, and refresh-functional
 transaction `20260801T092129Z-55163` committed the new QMD. Final verification
 found `xochitl` PID `48260` with `NRestarts=0` and `/` mounted read-only. This
-proves guarded deployment and stock-process stability only; no post-fix physical
-request or OpenClaw receipt has succeeded yet.
+At deployment time this proved guarded installation and stock-process stability
+only; no post-fix physical request or OpenClaw receipt had yet been observed.
+
+Subsequent server-side observation now proves that two post-fix physical taps
+did succeed: an `ink` request at `09:43:39Z` and a Capture/`image` request at
+`09:45:05Z` each reached the canonical OpenClaw turn, completed, and recorded
+native WhatsApp acknowledgement and final receipts as `sent`. A later tap
+closed locally but created no server reservation because the one-hour tablet
+session had ended and no restricted SSH tunnel was present. The bridge and
+OpenClaw Gateway remained healthy with zero restarts, so this was a client
+lifecycle failure rather than a server or recognition failure.
+
+The local `0.7.3-openclaw` candidate fixes that boundary without a tablet
+outbox. Every explicit button gets a freshly bounded one-hour transient unit,
+serialized through a root-only auto-releasing lifecycle lock; a current busy
+generation is rejected without being stopped. The launcher waits for PID 1 to
+fully unload any stopped `--collect` transient before reusing its fixed name,
+and installation first proves the exact Dropbear 2025.88 client plus its native
+`-K` keepalive and required `-o` names through non-networking help output. The
+runner removes remote
+readiness and reconnects only the forwarding-only SSH child while Rust retains
+the already-captured crop in RAM through one bridge-readiness recovery window
+of at most fifteen minutes. If the tunnel drops just after readiness or while
+a response body is returning, the OpenClaw-only HTTP transport gets a separate
+recovery window of at most fifteen minutes and reuses the exact same serialized
+request and request ID. The two consecutive phases can therefore retain the
+in-memory crop for roughly thirty minutes in the worst case, still within the
+fresh one-hour transient unit. The server's idempotency journal continues to
+represent one logical turn and remote acceptance is emitted at most once.
+Pre-acceptance 502, 503, and 504 responses are retried in the same window; a
+4xx response, including an incomplete reservation left by a bridge-process
+restart, remains terminal and is never converted into a second OpenClaw turn.
+Redirects are disabled, only exact HTTP 200 is accepted, the bearer header is
+marked sensitive, and capped retry backoff prevents repeatedly uploading a
+large in-memory selection once per second during a long outage.
+Direct provider requests are unchanged. The source and prepared crop are still
+never written to a tablet file, and no service is enabled at boot. This
+candidate is not on the tablet until its exact-firmware guarded deployment is
+recorded below.
 
 OpenClaw's candidate canonical final remains a strict
 literal-transcription/answer envelope: WhatsApp receives one atomic `I read:`

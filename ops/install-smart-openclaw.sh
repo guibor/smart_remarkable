@@ -256,6 +256,46 @@ ssh -o BatchMode=yes "$HOST" "
     fi
     test -c /dev/uinput
     test -x /usr/bin/hexdump
+    test -x /usr/bin/flock
+    test -x /usr/bin/ssh
+    ssh_version=\$(/usr/bin/ssh -V 2>&1)
+    test \"\$ssh_version\" = 'Dropbear v2025.88'
+    ssh_help=\$(/usr/bin/ssh -h 2>&1 || true)
+    case \"\$ssh_help\" in
+        *'-K <keepalive>'*) ;;
+        *) echo 'Firmware lacks the bounded Dropbear keepalive option' >&2; exit 1 ;;
+    esac
+    ssh_option_help=\$(/usr/bin/ssh -o help 2>&1 || true)
+    for required_ssh_option in \
+        BatchMode \
+        PasswordAuthentication \
+        DisableTrivialAuth \
+        ForwardAgent \
+        ExitOnForwardFailure \
+        StrictHostKeyChecking
+    do
+        printf '%s\n' \"\$ssh_option_help\" |
+            grep -F \"\$required_ssh_option\" >/dev/null || {
+                echo 'Firmware lacks a pinned Smart tunnel option' >&2
+                exit 1
+            }
+    done
+    unset ssh_version ssh_help ssh_option_help required_ssh_option
+    flock_probe=/run/smart-remarkable-install-flock.\$\$
+    rm -f \"\$flock_probe\"
+    (umask 077; : >\"\$flock_probe\")
+    chmod 0600 \"\$flock_probe\"
+    chown root:root \"\$flock_probe\"
+    exec 9<>\"\$flock_probe\"
+    if ! /usr/bin/flock -n -x 9; then
+        exec 9>&-
+        rm -f \"\$flock_probe\"
+        echo 'Firmware cannot lock the Smart launcher lifecycle fd' >&2
+        exit 1
+    fi
+    /usr/bin/flock -u 9
+    exec 9>&-
+    rm -f \"\$flock_probe\"
     nonce_probe=\$(
         /usr/bin/hexdump -n 32 -v -e '1/1 \"%02x\"' /dev/urandom
     )

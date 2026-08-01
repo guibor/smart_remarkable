@@ -96,24 +96,6 @@ publish_bridge_marker() {
     mv -f "$marker_tmp" "$marker_target"
 }
 
-# Preserve local QML acknowledgements when the tunnel fails during a capture.
-# A cold-start failure waits briefly for AppLoad to publish its request; once a
-# busy nonce has appeared, the worker gets time to observe bridge-failed and
-# release that exact request before the runner terminates it.
-wait_for_local_failure_handoff() {
-    handoff_i=0
-    handoff_saw_busy=0
-    while [ "$handoff_i" -lt 10 ] && kill -0 "$WORKER_PID" 2>/dev/null; do
-        if [ -f "$STATE_DIR/busy" ]; then
-            handoff_saw_busy=1
-        elif [ "$handoff_saw_busy" -eq 1 ]; then
-            return 0
-        fi
-        handoff_i=$((handoff_i + 1))
-        sleep 1
-    done
-}
-
 if [ "$OPENCLAW_IDENTITY" != "$EXPECTED_OPENCLAW_IDENTITY" ] ||
     [ ! -f "$OPENCLAW_IDENTITY" ] ||
     [ -L "$OPENCLAW_IDENTITY" ] ||
@@ -207,76 +189,101 @@ fi
     $MODE_ARGS &
 WORKER_PID=$!
 
-/usr/bin/env -i \
-    HOME="$SSH_HOME" \
-    PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-    /usr/bin/ssh \
-    -N \
-    -q \
-    -i "$OPENCLAW_IDENTITY" \
-    -o BatchMode=yes \
-    -o PasswordAuthentication=no \
-    -o DisableTrivialAuth=yes \
-    -o ForwardAgent=no \
-    -o ExitOnForwardFailure=yes \
-    -o ServerAliveInterval=30 \
-    -o StrictHostKeyChecking=yes \
-    -L "127.0.0.1:${OPENCLAW_PORT}:127.0.0.1:${OPENCLAW_REMOTE_PORT}" \
-    "${OPENCLAW_USER}@${OPENCLAW_HOST}" &
-TUNNEL_PID=$!
+# A disappearing network must not discard an already captured selection.
+# Keep the worker (and its crop) only in RAM while repeatedly recreating the
+# forwarding-only tunnel. The worker's own bounded bridge wait and the
+# transient unit's RuntimeMaxSec remain the outer limits.
+while kill -0 "$WORKER_PID" 2>/dev/null; do
+    rm -f "$STATE_DIR/bridge-ready" "$STATE_DIR/bridge-failed"
+    /usr/bin/env -i \
+        HOME="$SSH_HOME" \
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        /usr/bin/ssh \
+        -N \
+        -q \
+        -i "$OPENCLAW_IDENTITY" \
+        -o BatchMode=yes \
+        -o PasswordAuthentication=no \
+        -o DisableTrivialAuth=yes \
+        -o ForwardAgent=no \
+        -o ExitOnForwardFailure=yes \
+        -K 30 \
+        -o StrictHostKeyChecking=yes \
+        -L "127.0.0.1:${OPENCLAW_PORT}:127.0.0.1:${OPENCLAW_REMOTE_PORT}" \
+        "${OPENCLAW_USER}@${OPENCLAW_HOST}" &
+    TUNNEL_PID=$!
 
-i=0
-while ! /usr/bin/env -i \
-    PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-    wget -q -T 2 -O /dev/null \
-    "http://127.0.0.1:${OPENCLAW_PORT}/health" 2>/dev/null; do
-    i=$((i + 1))
-    if ! kill -0 "$TUNNEL_PID" 2>/dev/null || [ "$i" -ge 15 ]; then
-        echo "Unable to establish the private OpenClaw tunnel" >&2
-        rm -f "$STATE_DIR/bridge-ready"
-        publish_bridge_marker bridge-failed || true
-        wait_for_local_failure_handoff
-        exit 1
+    tunnel_healthy=0
+    i=0
+    while [ "$i" -lt 5 ]; do
+        if ! kill -0 "$WORKER_PID" 2>/dev/null ||
+            ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+            break
+        fi
+        if /usr/bin/env -i \
+            PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            wget -q -T 2 -O /dev/null \
+            "http://127.0.0.1:${OPENCLAW_PORT}/health" 2>/dev/null; then
+            tunnel_healthy=1
+            break
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+
+    if ! kill -0 "$WORKER_PID" 2>/dev/null; then
+        if wait "$WORKER_PID"; then
+            WORKER_STATUS=0
+        else
+            WORKER_STATUS=$?
+        fi
+        WORKER_PID=
+        kill "$TUNNEL_PID" 2>/dev/null || true
+        wait "$TUNNEL_PID" 2>/dev/null || true
+        TUNNEL_PID=
+        exit "$WORKER_STATUS"
     fi
-    sleep 1
-done
-if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
-    echo "OpenClaw tunnel exited during its health check" >&2
-    rm -f "$STATE_DIR/bridge-ready"
-    publish_bridge_marker bridge-failed || true
-    wait_for_local_failure_handoff
-    exit 1
-fi
-rm -f "$STATE_DIR/bridge-failed"
-publish_bridge_marker bridge-ready
 
-# BusyBox ash on the supported firmware provides wait -n -p. Supervise both
-# children so the listener cannot keep advertising readiness after its private
-# bridge tunnel has disappeared.
-EXITED_PID=
-if wait -n -p EXITED_PID "$TUNNEL_PID" "$WORKER_PID"; then
-    EXITED_STATUS=0
-else
-    EXITED_STATUS=$?
-fi
+    if [ "$tunnel_healthy" -ne 1 ] ||
+        ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        kill "$TUNNEL_PID" 2>/dev/null || true
+        wait "$TUNNEL_PID" 2>/dev/null || true
+        TUNNEL_PID=
+        echo "Private OpenClaw tunnel unavailable; retrying without discarding the captured request" >&2
+        sleep 2
+        continue
+    fi
 
-if [ "$EXITED_PID" = "$TUNNEL_PID" ]; then
+    publish_bridge_marker bridge-ready
+
+    # BusyBox ash on the supported firmware provides wait -n -p. Remote
+    # readiness disappears before any reconnect; only worker exit terminates
+    # the bounded session.
+    EXITED_PID=
+    if wait -n -p EXITED_PID "$TUNNEL_PID" "$WORKER_PID"; then
+        EXITED_STATUS=0
+    else
+        EXITED_STATUS=$?
+    fi
     rm -f "$STATE_DIR/bridge-ready"
-    publish_bridge_marker bridge-failed || true
-    wait_for_local_failure_handoff
-    rm -f "$STATE_DIR/ready"
-    kill "$WORKER_PID" 2>/dev/null || true
-    wait "$WORKER_PID" 2>/dev/null || true
-    WORKER_PID=
+
+    if [ "$EXITED_PID" = "$WORKER_PID" ]; then
+        WORKER_PID=
+        kill "$TUNNEL_PID" 2>/dev/null || true
+        wait "$TUNNEL_PID" 2>/dev/null || true
+        TUNNEL_PID=
+        exit "$EXITED_STATUS"
+    fi
+
     TUNNEL_PID=
-    echo "Private OpenClaw tunnel exited; Smart Remarkable worker stopped" >&2
-    exit 1
-fi
+    echo "Private OpenClaw tunnel disconnected; reconnecting with the worker retained in memory" >&2
+    sleep 2
+done
 
-# The bounded worker completed or failed first. Stop the no-longer-needed
-# tunnel and preserve the worker's status for systemd/AppLoad diagnostics.
+if wait "$WORKER_PID"; then
+    WORKER_STATUS=0
+else
+    WORKER_STATUS=$?
+fi
 WORKER_PID=
-kill "$TUNNEL_PID" 2>/dev/null || true
-wait "$TUNNEL_PID" 2>/dev/null || true
-TUNNEL_PID=
-exit "$EXITED_STATUS"
+exit "$WORKER_STATUS"

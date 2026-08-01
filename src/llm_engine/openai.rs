@@ -10,6 +10,7 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static OPENCLAW_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+const OPENCLAW_TRANSPORT_RECOVERY_TIMEOUT: Duration = Duration::from_secs(900);
 
 pub struct OpenAI {
     model: String,
@@ -112,7 +113,7 @@ impl OpenAI {
     ) -> reqwest::RequestBuilder {
         let mut request = client
             .post(format!("{}/v1/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .bearer_auth(&self.api_key)
             .header("Content-Type", "application/json");
 
         if self.plain_text_response {
@@ -131,6 +132,164 @@ impl OpenAI {
         }
 
         request.json(body)
+    }
+
+    fn is_retryable_openclaw_transport_error(error: &anyhow::Error) -> bool {
+        error
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|error| {
+                !error.is_builder()
+                    && (error.is_connect()
+                        || error.is_timeout()
+                        || error.is_body()
+                        || error.is_decode()
+                        || error.is_request())
+            })
+    }
+
+    fn is_retryable_openclaw_status(status: reqwest::StatusCode) -> bool {
+        matches!(status.as_u16(), 502 | 503 | 504)
+    }
+
+    fn openclaw_retry_delay(attempt: u32) -> Duration {
+        Duration::from_secs(match attempt {
+            0 | 1 => 1,
+            2 => 2,
+            3 => 4,
+            4 => 8,
+            _ => 15,
+        })
+    }
+
+    async fn wait_before_openclaw_retry(
+        deadline: tokio::time::Instant,
+        attempt: u32,
+        cancellation: &SmartRemarkableCancellation,
+    ) -> Result<()> {
+        with_cancellation(
+            async {
+                tokio::time::timeout_at(
+                    deadline,
+                    tokio::time::sleep(Self::openclaw_retry_delay(attempt)),
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("OpenClaw transport recovery window expired"))?;
+                Ok(())
+            },
+            cancellation,
+        )
+        .await
+    }
+
+    /// Rebuild interrupted tablet-to-bridge HTTP connections with one stable
+    /// request identity. The bridge's live job map and persistent completion
+    /// journal make the replay idempotent; changing the ID here could create a
+    /// second OpenClaw turn after a lost response. Selected content remains in
+    /// this process only and the retry window is bounded.
+    async fn send_openclaw_with_recovery(
+        client: &reqwest::Client,
+        base_url: String,
+        api_key: String,
+        response_mode: ResponseMode,
+        selection_kind: SelectionKind,
+        body: &json,
+        request_id: &str,
+        cancellation: &SmartRemarkableCancellation,
+        status_callback: &mut Option<super::StatusCallback>,
+    ) -> Result<String> {
+        let deadline = tokio::time::Instant::now() + OPENCLAW_TRANSPORT_RECOVERY_TIMEOUT;
+        let mut remote_accepted = false;
+        let mut attempt = 0_u32;
+        let request_template = client
+            .post(format!("{}/v1/chat/completions", base_url))
+            .bearer_auth(&api_key)
+            .header("Content-Type", "application/json")
+            .header(
+                "x-smart-remarkable-response-mode",
+                response_mode.as_str(),
+            )
+            .header("x-smart-remarkable-request-id", request_id)
+            .header(
+                "x-smart-remarkable-selection-kind",
+                selection_kind.as_str(),
+            )
+            .json(body)
+            .build()?;
+
+        loop {
+            attempt = attempt.saturating_add(1);
+            let request = request_template.try_clone().ok_or_else(|| {
+                anyhow::anyhow!("OpenClaw request body cannot be replayed safely")
+            })?;
+            let response_result = with_cancellation(
+                async {
+                    tokio::time::timeout_at(deadline, client.execute(request))
+                        .await
+                        .map_err(|_| anyhow::anyhow!("OpenClaw transport recovery window expired"))?
+                        .map_err(anyhow::Error::from)
+                },
+                cancellation,
+            )
+            .await;
+
+            let response = match response_result {
+                Ok(response) => response,
+                Err(error) => {
+                    if cancellation.should_cancel()
+                        || tokio::time::Instant::now() >= deadline
+                        || !Self::is_retryable_openclaw_transport_error(&error)
+                    {
+                        return Err(error);
+                    }
+                    debug!("OpenClaw transport attempt {} was interrupted; retrying with the same request ID", attempt);
+                    Self::wait_before_openclaw_retry(deadline, attempt, cancellation).await?;
+                    continue;
+                }
+            };
+
+            if response.status() != reqwest::StatusCode::OK {
+                if Self::is_retryable_openclaw_status(response.status())
+                    && tokio::time::Instant::now() < deadline
+                {
+                    debug!("OpenClaw bridge attempt {} was temporarily unavailable; retrying with the same request ID", attempt);
+                    drop(response);
+                    Self::wait_before_openclaw_retry(deadline, attempt, cancellation).await?;
+                    continue;
+                }
+                return Err(anyhow::anyhow!("API Error: {}", response.status()));
+            }
+            if !remote_accepted {
+                status_update!(
+                    status_callback,
+                    super::ModelExecutionStatus::RemoteAccepted
+                );
+                remote_accepted = true;
+            }
+
+            let body_result = with_cancellation(
+                async {
+                    tokio::time::timeout_at(deadline, response.text())
+                        .await
+                        .map_err(|_| anyhow::anyhow!("OpenClaw response recovery window expired"))?
+                        .map_err(anyhow::Error::from)
+                },
+                cancellation,
+            )
+            .await;
+            match body_result {
+                Ok(body_text) => return Ok(body_text),
+                Err(error) => {
+                    if cancellation.should_cancel()
+                        || tokio::time::Instant::now() >= deadline
+                        || !Self::is_retryable_openclaw_transport_error(&error)
+                    {
+                        return Err(error);
+                    }
+                    debug!("OpenClaw response attempt {} was interrupted; replaying the same request ID", attempt);
+                    Self::wait_before_openclaw_retry(deadline, attempt, cancellation).await?;
+                }
+            }
+        }
     }
 
     fn validate_bridge_response(&self, response: &json, request_id: &str) -> Result<bool> {
@@ -299,11 +458,14 @@ impl LLMEngine for OpenAI {
         // Notify that we're processing with LLM
         status_update!(status_callback, super::ModelExecutionStatus::LlmProcessing);
 
-        // Build the request before entering the async cancellation future so
-        // the future owns it and does not borrow the engine's non-Sync tool
+        // Clone only the narrow OpenClaw transport fields before awaiting so
+        // the recovery future never borrows this engine's non-Sync tool
         // callbacks across an await point.
         let client = if self.plain_text_response {
             reqwest::Client::builder()
+                // Never forward the selected PNG or bridge token to a redirect
+                // target. The pinned loopback bridge contract is one exact URL.
+                .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(15))
                 // Canonical OpenClaw turns may legitimately queue behind the
                 // user's WhatsApp turn or run tools. Keep the request bounded
@@ -315,29 +477,42 @@ impl LLMEngine for OpenAI {
             reqwest::Client::new()
         };
         let request_id = Self::next_request_id();
-        let request = self.request_builder(&client, &body, &request_id);
-
-        // Wait only for response headers first. The OpenClaw bridge deliberately
-        // flushes a successful status after Gateway chat.send's onAccepted
-        // event, while the final answer is still running.
-        let response = with_cancellation(
-            async { Ok::<_, anyhow::Error>(request.send().await?) },
-            cancellation,
-        )
-        .await?;
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!("API Error: {}", response.status()));
-        }
-        status_update!(
-            status_callback,
-            super::ModelExecutionStatus::RemoteAccepted
-        );
-
-        let body_text = with_cancellation(
-            async { Ok::<_, anyhow::Error>(response.text().await?) },
-            cancellation,
-        )
-        .await?;
+        let body_text = if self.plain_text_response {
+            let selection_kind = self.selection_kind.ok_or_else(|| {
+                anyhow::anyhow!("OpenClaw bridge request has no trusted selection kind")
+            })?;
+            Self::send_openclaw_with_recovery(
+                &client,
+                self.base_url.clone(),
+                self.api_key.clone(),
+                self.response_mode,
+                selection_kind,
+                &body,
+                &request_id,
+                cancellation,
+                &mut status_callback,
+            )
+            .await?
+        } else {
+            let request = self.request_builder(&client, &body, &request_id);
+            let response = with_cancellation(
+                async { Ok::<_, anyhow::Error>(request.send().await?) },
+                cancellation,
+            )
+            .await?;
+            if !response.status().is_success() {
+                return Err(anyhow::anyhow!("API Error: {}", response.status()));
+            }
+            status_update!(
+                status_callback,
+                super::ModelExecutionStatus::RemoteAccepted
+            );
+            with_cancellation(
+                async { Ok::<_, anyhow::Error>(response.text().await?) },
+                cancellation,
+            )
+            .await?
+        };
         let json: json = serde_json::from_str(&body_text)?;
         debug!("OpenAI-compatible response received and parsed");
 
@@ -470,6 +645,41 @@ mod tests {
             .unwrap_or_else(|| panic!("missing request header {name}"))
     }
 
+    fn request_body_bytes(request: &[u8]) -> &[u8] {
+        let body_start = request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|index| index + 4)
+            .expect("request must contain a complete HTTP header block");
+        &request[body_start..]
+    }
+
+    async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+        const MAX_TEST_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let count = socket.read(&mut buffer).await.unwrap();
+            assert!(count > 0, "connection closed before the request completed");
+            request.extend_from_slice(&buffer[..count]);
+            assert!(request.len() <= MAX_TEST_REQUEST_BYTES);
+
+            if let Some(header_index) = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+            {
+                let body_start = header_index + 4;
+                let content_length = request_header(&request[..body_start], "content-length")
+                    .parse::<usize>()
+                    .unwrap();
+                if request.len() >= body_start + content_length {
+                    request.truncate(body_start + content_length);
+                    return request;
+                }
+            }
+        }
+    }
+
     #[test]
     fn bridge_request_has_no_client_controlled_session_or_channel() {
         let mut options = openclaw_options();
@@ -508,7 +718,26 @@ mod tests {
             request.headers()["x-smart-remarkable-selection-kind"],
             "image"
         );
+        assert!(request.headers()[reqwest::header::AUTHORIZATION].is_sensitive());
         assert_eq!(request.url().as_str(), "http://127.0.0.1:18791/v1/chat/completions");
+    }
+
+    #[test]
+    fn only_expected_transient_bridge_statuses_are_retryable() {
+        for status in [502, 503, 504] {
+            assert!(OpenAI::is_retryable_openclaw_status(
+                reqwest::StatusCode::from_u16(status).unwrap()
+            ));
+        }
+        for status in [200, 202, 307, 400, 409, 429, 500, 505] {
+            assert!(!OpenAI::is_retryable_openclaw_status(
+                reqwest::StatusCode::from_u16(status).unwrap()
+            ));
+        }
+        assert_eq!(OpenAI::openclaw_retry_delay(1), Duration::from_secs(1));
+        assert_eq!(OpenAI::openclaw_retry_delay(4), Duration::from_secs(8));
+        assert_eq!(OpenAI::openclaw_retry_delay(5), Duration::from_secs(15));
+        assert_eq!(OpenAI::openclaw_retry_delay(100), Duration::from_secs(15));
     }
 
     #[test]
@@ -696,18 +925,153 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_failure_never_emits_remote_accepted() {
+    async fn interrupted_openclaw_before_headers_reuses_the_exact_request() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            let first_request = read_http_request(&mut first).await;
+            let first_id = request_header(&first_request, "x-smart-remarkable-request-id");
+            drop(first);
+
+            let (mut second, _) = listener.accept().await.unwrap();
+            let second_request = read_http_request(&mut second).await;
+            let second_id = request_header(&second_request, "x-smart-remarkable-request-id");
+            let response_body = bridge_response(
+                &second_id,
+                "whatsapp_only",
+                "ink",
+                "sent",
+            )
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            second.write_all(response.as_bytes()).await.unwrap();
+            (first_request, second_request, first_id, second_id)
+        });
+
+        let mut options = openclaw_options();
+        options.insert("base_url".to_string(), format!("http://{}", address));
+        let mut engine = OpenAI::new_openclaw(&options);
+        engine.set_response_mode(ResponseMode::WhatsappOnly);
+        engine.set_selection_kind(Some(SelectionKind::Ink));
+        engine.add_text_content("test");
+
+        engine
+            .execute(&SmartRemarkableCancellation::new(), None)
+            .await
+            .unwrap();
+        let (first_request, second_request, first_id, second_id) = server.await.unwrap();
+        assert_eq!(first_id, second_id);
+        assert_eq!(
+            request_header(&first_request, "x-smart-remarkable-response-mode"),
+            request_header(&second_request, "x-smart-remarkable-response-mode")
+        );
+        assert_eq!(
+            request_header(&first_request, "x-smart-remarkable-selection-kind"),
+            request_header(&second_request, "x-smart-remarkable-selection-kind")
+        );
+        assert_eq!(
+            request_body_bytes(&first_request),
+            request_body_bytes(&second_request)
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupted_openclaw_body_reuses_id_and_emits_acceptance_once() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            let first_request = read_http_request(&mut first).await;
+            let first_id = request_header(&first_request, "x-smart-remarkable-request-id");
+            first
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n{\"partial\":true}",
+                )
+                .await
+                .unwrap();
+            drop(first);
+
+            let (mut second, _) = listener.accept().await.unwrap();
+            let second_request = read_http_request(&mut second).await;
+            let second_id = request_header(&second_request, "x-smart-remarkable-request-id");
+            let response_body = bridge_response(
+                &second_id,
+                "whatsapp_only",
+                "image",
+                "sent",
+            )
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            second.write_all(response.as_bytes()).await.unwrap();
+            (first_request, second_request, first_id, second_id)
+        });
+
+        let mut options = openclaw_options();
+        options.insert("base_url".to_string(), format!("http://{}", address));
+        let mut engine = OpenAI::new_openclaw(&options);
+        engine.set_response_mode(ResponseMode::WhatsappOnly);
+        engine.set_selection_kind(Some(SelectionKind::Image));
+        engine.add_text_content("test");
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let callback_statuses = Arc::clone(&statuses);
+        let callback = Some(Box::new(move |status| {
+            callback_statuses.lock().unwrap().push(status);
+        }) as super::super::StatusCallback);
+
+        engine
+            .execute(&SmartRemarkableCancellation::new(), callback)
+            .await
+            .unwrap();
+        let (first_request, second_request, first_id, second_id) = server.await.unwrap();
+        assert_eq!(first_id, second_id);
+        assert_eq!(
+            request_header(&first_request, "x-smart-remarkable-response-mode"),
+            request_header(&second_request, "x-smart-remarkable-response-mode")
+        );
+        assert_eq!(
+            request_header(&first_request, "x-smart-remarkable-selection-kind"),
+            request_header(&second_request, "x-smart-remarkable-selection-kind")
+        );
+        assert_eq!(
+            request_body_bytes(&first_request),
+            request_body_bytes(&second_request)
+        );
+        assert_eq!(
+            statuses
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|status| **status == ModelExecutionStatus::RemoteAccepted)
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn non_retryable_http_failure_never_emits_remote_accepted() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = [0_u8; 8192];
-            let _ = socket.read(&mut request).await.unwrap();
+            let _ = read_http_request(&mut socket).await;
             socket
                 .write_all(
-                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    b"HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                 )
                 .await
                 .unwrap();
@@ -733,6 +1097,156 @@ mod tests {
             .lock()
             .unwrap()
             .contains(&ModelExecutionStatus::RemoteAccepted));
+    }
+
+    #[tokio::test]
+    async fn openclaw_redirect_is_terminal_and_never_receives_the_selection_twice() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            let _ = read_http_request(&mut first).await;
+            let response = format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://{}/redirected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                address
+            );
+            first.write_all(response.as_bytes()).await.unwrap();
+            drop(first);
+            tokio::time::timeout(Duration::from_millis(250), listener.accept())
+                .await
+                .is_ok()
+        });
+
+        let mut options = openclaw_options();
+        options.insert("base_url".to_string(), format!("http://{}", address));
+        let mut engine = OpenAI::new_openclaw(&options);
+        engine.set_selection_kind(Some(SelectionKind::Image));
+        engine.add_text_content("private selection");
+
+        let error = engine
+            .execute(&SmartRemarkableCancellation::new(), None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("307 Temporary Redirect"));
+        assert!(!server.await.unwrap(), "redirect target received a second POST");
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_openclaw_retry_backoff() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let _ = read_http_request(&mut socket).await;
+            drop(socket);
+        });
+
+        let mut options = openclaw_options();
+        options.insert("base_url".to_string(), format!("http://{}", address));
+        let mut engine = OpenAI::new_openclaw(&options);
+        engine.set_selection_kind(Some(SelectionKind::Ink));
+        engine.add_text_content("test");
+        let cancellation = SmartRemarkableCancellation::new();
+        let cancellation_trigger = cancellation.clone();
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancellation_trigger.cancel_all();
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            engine.execute(&cancellation, None),
+        )
+        .await
+        .expect("cancellation must stop retry well before the backoff deadline");
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+        cancel_task.await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transient_bridge_unavailability_reuses_the_exact_request() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            let first_request = read_http_request(&mut first).await;
+            first
+                .write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            drop(first);
+
+            let (mut second, _) = listener.accept().await.unwrap();
+            let second_request = read_http_request(&mut second).await;
+            let request_id =
+                request_header(&second_request, "x-smart-remarkable-request-id");
+            let response_body = bridge_response(
+                &request_id,
+                "whatsapp_only",
+                "image",
+                "sent",
+            )
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            second.write_all(response.as_bytes()).await.unwrap();
+            (first_request, second_request)
+        });
+
+        let mut options = openclaw_options();
+        options.insert("base_url".to_string(), format!("http://{}", address));
+        let mut engine = OpenAI::new_openclaw(&options);
+        engine.set_response_mode(ResponseMode::WhatsappOnly);
+        engine.set_selection_kind(Some(SelectionKind::Image));
+        engine.add_text_content("test");
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let callback_statuses = Arc::clone(&statuses);
+        let callback = Some(Box::new(move |status| {
+            callback_statuses.lock().unwrap().push(status);
+        }) as super::super::StatusCallback);
+
+        engine
+            .execute(&SmartRemarkableCancellation::new(), callback)
+            .await
+            .unwrap();
+        let (first_request, second_request) = server.await.unwrap();
+        assert_eq!(
+            request_header(&first_request, "x-smart-remarkable-request-id"),
+            request_header(&second_request, "x-smart-remarkable-request-id")
+        );
+        assert_eq!(
+            request_header(&first_request, "x-smart-remarkable-response-mode"),
+            request_header(&second_request, "x-smart-remarkable-response-mode")
+        );
+        assert_eq!(
+            request_header(&first_request, "x-smart-remarkable-selection-kind"),
+            request_header(&second_request, "x-smart-remarkable-selection-kind")
+        );
+        assert_eq!(
+            request_body_bytes(&first_request),
+            request_body_bytes(&second_request)
+        );
+        assert_eq!(
+            statuses
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|status| **status == ModelExecutionStatus::RemoteAccepted)
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]

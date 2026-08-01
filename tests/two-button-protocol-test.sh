@@ -113,12 +113,21 @@ grep -F 'selection_descriptor="legacy-v1,$SMART_SELECTION_NONCE,$SMART_SELECTION
 grep -F 'WRITE_BACK_TRIGGER="$STATE_DIR/llm_button_trigger"' "$LAUNCHER" >/dev/null
 grep -F 'WHATSAPP_ONLY_TRIGGER="$STATE_DIR/send_button_trigger"' "$LAUNCHER" >/dev/null
 grep -F 'BUSY_FILE="$STATE_DIR/busy"' "$LAUNCHER" >/dev/null
+grep -F 'LIFECYCLE_DIR=/run/smart-remarkable-lifecycle' "$LAUNCHER" >/dev/null
+grep -F '/usr/bin/flock -n -x 9' "$LAUNCHER" >/dev/null
+grep -F 'trap release_lifecycle_lock EXIT' "$LAUNCHER" >/dev/null
+grep -F 'if [ "$SMART_RUNTIME_MAX_SECONDS" -lt 3600 ]; then' "$LAUNCHER" >/dev/null
+grep -F 'wait_for_session_unit_unloaded()' "$LAUNCHER" >/dev/null
+grep -F 'stop_session_unit_if_present()' "$LAUNCHER" >/dev/null
 grep -F 'clear_stale_local_ready_before_start()' "$LAUNCHER" >/dev/null
 clear_ready_line=$(grep -n '^clear_stale_local_ready_before_start$' "$LAUNCHER" | cut -d: -f1)
+unload_line=$(grep -n '^wait_for_session_unit_unloaded$' "$LAUNCHER" | cut -d: -f1)
 systemd_run_line=$(grep -n '^systemd-run \\$' "$LAUNCHER" | cut -d: -f1)
 test -n "$clear_ready_line"
+test -n "$unload_line"
 test -n "$systemd_run_line"
 test "$clear_ready_line" -lt "$systemd_run_line"
+test "$unload_line" -lt "$systemd_run_line"
 grep -F 'PREPARE_ACK_FILE="$STATE_DIR/selection_prepare_ack"' "$LAUNCHER" >/dev/null
 grep -F 'CLOSE_ACK_FILE="$STATE_DIR/selection_close_ack"' "$LAUNCHER" >/dev/null
 grep -F 'smart_generate_selection_nonce' "$LAUNCHER" >/dev/null
@@ -143,12 +152,23 @@ grep -F 'ln "$marker_tmp" "$marker_target"' "$LAUNCHER" >/dev/null
 ! grep -F '$STATE_DIR/bridge-ready' "$LAUNCHER" >/dev/null
 ! grep -F '$STATE_DIR/bridge-failed' "$LAUNCHER" >/dev/null
 ! grep -F 'wget' "$LAUNCHER" >/dev/null
-grep -F 'if [ -f "$STATE_DIR/ready" ]; then' "$LAUNCHER" >/dev/null
-grep -F 'systemctl stop "$UNIT"' "$LAUNCHER" >/dev/null
+grep -F 'stop_session_unit_if_present' "$LAUNCHER" >/dev/null
+busy_guard_line=$(grep -n 'if \[ -e "$BUSY_FILE" \] || \[ -L "$BUSY_FILE" \]; then' \
+    "$LAUNCHER" | head -1 | cut -d: -f1)
+stop_line=$(grep -n '^        stop_session_unit_if_present$' "$LAUNCHER" | head -1 | cut -d: -f1)
+test -n "$busy_guard_line"
+test -n "$stop_line"
+test "$busy_guard_line" -lt "$stop_line"
 grep -F 'wait -n -p EXITED_PID "$TUNNEL_PID" "$WORKER_PID"' "$RUNNER" >/dev/null
-grep -F 'if [ "$EXITED_PID" = "$TUNNEL_PID" ]; then' "$RUNNER" >/dev/null
+grep -F 'if [ "$EXITED_PID" = "$WORKER_PID" ]; then' "$RUNNER" >/dev/null
 grep -F 'publish_bridge_marker bridge-ready' "$RUNNER" >/dev/null
-grep -F 'publish_bridge_marker bridge-failed' "$RUNNER" >/dev/null
+! grep -F 'publish_bridge_marker bridge-failed' "$RUNNER" >/dev/null
+grep -F 'retrying without discarding the captured request' "$RUNNER" >/dev/null
+grep -F 'reconnecting with the worker retained in memory' "$RUNNER" >/dev/null
+grep -F -- '-K 30' "$RUNNER" >/dev/null
+! grep -F -- '-o ConnectTimeout=' "$RUNNER" >/dev/null
+! grep -F -- '-o ConnectionAttempts=' "$RUNNER" >/dev/null
+! grep -F -- '-o ServerAliveCountMax=' "$RUNNER" >/dev/null
 worker_line=$(grep -n '    ./smart_remarkable' "$RUNNER" | head -1 | cut -d: -f1)
 tunnel_line=$(grep -n '    /usr/bin/ssh' "$RUNNER" | head -1 | cut -d: -f1)
 health_line=$(grep -n '    wget -q -T 2 -O /dev/null' "$RUNNER" | head -1 | cut -d: -f1)
@@ -287,6 +307,30 @@ grep -F "/usr/bin/hexdump -n 32 -v -e '1/1 \"%02x\"' /dev/urandom" \
 ! grep -E '/usr/bin/od[[:space:]].*-A' "$PROTOCOL" >/dev/null
 grep -F 'Firmware cannot produce a canonical Smart request nonce' \
     "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F 'test -x /usr/bin/flock' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F '/usr/bin/flock -n -x 9' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F 'ssh_version=\$(/usr/bin/ssh -V 2>&1)' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F 'test \"\$ssh_version\" = ' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F "'Dropbear v2025.88'" \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F 'ssh_help=\$(/usr/bin/ssh -h 2>&1 || true)' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F 'ssh_option_help=\$(/usr/bin/ssh -o help 2>&1 || true)' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F 'case \"\$ssh_help\" in' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F 'printf '\''%s\n'\'' \"\$ssh_option_help\" |' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F 'grep -F \"\$required_ssh_option\"' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+grep -F "*'-K <keepalive>'*" \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+! grep -F '/usr/bin/ssh -G' "$REPO/ops/install-smart-openclaw.sh" >/dev/null
+! grep -F 'ssh_version=$(' "$REPO/ops/install-smart-openclaw.sh" >/dev/null
 smart_generate_selection_nonce
 first_nonce=$SMART_SELECTION_NONCE
 smart_generate_selection_nonce
