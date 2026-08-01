@@ -124,8 +124,7 @@ smart_parse_active_selection_descriptor() {
 
 smart_generate_selection_nonce() {
     SMART_SELECTION_NONCE=$(
-        /usr/bin/od -An -N32 -tx1 /dev/urandom | \
-            /usr/bin/tr -d ' \n'
+        /usr/bin/hexdump -n 32 -v -e '1/1 "%02x"' /dev/urandom
     ) || return 1
     [ "${#SMART_SELECTION_NONCE}" -eq 64 ] || return 1
     case "$SMART_SELECTION_NONCE" in

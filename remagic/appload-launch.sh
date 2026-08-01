@@ -36,6 +36,12 @@ ADMISSION_LOCK="$STATE_DIR/selection-admission.lock"
 . "$SELECTION_PROTOCOL"
 smart_load_mode_settings
 
+# Content-free launch stages are forwarded by AppLoad to xochitl's journal.
+# They deliberately omit the descriptor, geometry, nonce, and selected data.
+smart_log_stage() {
+    printf 'SR_WAND child_pid=%s stage=%s\n' "$$" "$1" >&2
+}
+
 [ "$#" -le 1 ] || {
     echo "Unsupported Smart Remarkable launcher arguments" >&2
     exit 2
@@ -95,6 +101,9 @@ case "${1:-}" in
         exit 2
         ;;
 esac
+if [ "$ACTION" = selection-button ]; then
+    smart_log_stage descriptor-parsed
+fi
 
 runtime_dir_is_secure() {
     [ -d "$STATE_DIR" ] &&
@@ -192,7 +201,11 @@ deliver_selection_button_locked() {
         *) return 1 ;;
     esac
 
-    smart_generate_selection_nonce || return 1
+    if ! smart_generate_selection_nonce; then
+        smart_log_stage nonce-failed
+        return 1
+    fi
+    smart_log_stage nonce-created
     case "$REQUEST_PROTOCOL" in
         v2)
             selection_descriptor="v2,$SMART_SELECTION_NONCE,${REQUEST_SNAPSHOT#v2,},$REQUEST_CAPTURED_MS"
@@ -207,11 +220,18 @@ deliver_selection_button_locked() {
     # The nonce-bearing busy file is published first and remains present until
     # Rust has completed or failed this exact request. New taps therefore fail
     # even after the trigger marker itself has been consumed.
-    publish_root_marker "$selection_descriptor" "$BUSY_FILE" selection-busy || return 1
+    if ! publish_root_marker \
+            "$selection_descriptor" "$BUSY_FILE" selection-busy; then
+        smart_log_stage busy-publish-failed
+        return 1
+    fi
+    smart_log_stage busy-published
     if ! publish_root_marker "$selection_descriptor" "$target" selection-trigger; then
+        smart_log_stage trigger-publish-failed
         rm -f "$BUSY_FILE"
         return 1
     fi
+    smart_log_stage trigger-published
 }
 
 deliver_selection_button() {
@@ -228,10 +248,12 @@ deliver_selection_button() {
         echo "Smart Remarkable runtime directory is not root-only" >&2
         return 1
     fi
+    smart_log_stage local-ready
     if ! acquire_selection_lock; then
         echo "A Smart Remarkable button request is already pending" >&2
         return 1
     fi
+    smart_log_stage admission-lock-acquired
     if deliver_selection_button_locked; then
         selection_status=0
     else

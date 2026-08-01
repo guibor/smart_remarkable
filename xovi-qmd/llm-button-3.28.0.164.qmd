@@ -20,6 +20,7 @@ AFFECT [[3197972396468700595]]
                     property ~&7083178290016&~ pendingMode: ""
                     property ~&7083178290016&~ pendingSnapshot: ""
                     property ~&6503679477&~ pendingPrepared: ~&214625660372&~
+                    property ~&197102514&~ appLoadHelper: ~&6504117156&~
                     ~&8399601734642709923&~: ~&"10806537930630303861&~
                     ~&7713561545874130&~: pendingMode === "write_back"
 
@@ -41,6 +42,18 @@ AFFECT [[3197972396468700595]]
                         ~&7083194890448&~: ~&10742505294233322867&~
                         function ~&13733777459642361598&~() {
                             smartRemarkableLlmButton.clearPendingMode()
+                            ~&5972376&~ (~&10742505294233322867&~.~&233748328658231&~) {
+                                /* Compile/import the AppLoad helper while the*/
+                                /* menu is already visible, before the user can*/
+                                /* tap either action. Keep one parent-owned*/
+                                /* helper for descriptor and acknowledgement*/
+                                /* launches instead of recompiling each phase.*/
+                                ~&5971598&~.~&254524858248187773&~(function() {
+                                    ~&5972376&~ (~&10742505294233322867&~.~&233748328658231&~) {
+                                        smartRemarkableLlmButton.ensureAppLoadHelper()
+                                    }
+                                })
+                            }
                         }
                     }
 
@@ -133,15 +146,19 @@ AFFECT [[3197972396468700595]]
                     }
 
                     function requestMode(~&6504074414&~) {
+                        ~&233724020023100&~.~&197092075&~("SR_WAND stage=click")
                         ~&5972376&~ (pendingMode !== "") {
+                            ~&233724020023100&~.~&6504419009&~("SR_WAND stage=pending-rejected")
                             ~&7083121450889&~
                         }
                         ~&5972376&~ (~&6504074414&~ !== "write_back" &&
                                 ~&6504074414&~ !== "whatsapp_only") {
+                            ~&233724020023100&~.~&6504419009&~("SR_WAND stage=mode-rejected")
                             ~&7083121450889&~
                         }
                         ~&197102514&~ snapshot = captureSnapshot()
                         ~&5972376&~ (snapshot === "") {
+                            ~&233724020023100&~.~&6504419009&~("SR_WAND stage=snapshot-rejected")
                             ~&7083121450889&~
                         }
                         ~&197102514&~ descriptor = "v2," + ~&6504074414&~ + ~&"180917&~ +
@@ -156,13 +173,31 @@ AFFECT [[3197972396468700595]]
                         /* pending snapshot in case the stock menu changed in*/
                         /* the intervening event-loop turn.*/
                         ~&5971598&~.~&254524858248187773&~(function() {
+                            ~&233724020023100&~.~&197092075&~("SR_WAND stage=deferred-enter")
                             ~&5972376&~ (pendingMode !== ~&6504074414&~ ||
-                                    pendingSnapshot !== snapshot ||
-                                    !~&10742505294233322867&~.~&233748328658231&~ ||
-                                    captureSnapshot() !== snapshot ||
-                                    !launchArgument(
-                                        "--selection-button-descriptor=" +
-                                        descriptor)) {
+                                    pendingSnapshot !== snapshot) {
+                                ~&233724020023100&~.~&6504419009&~(
+                                    "SR_WAND stage=deferred-pending-rejected")
+                                clearPendingMode()
+                                ~&7083121450889&~
+                            }
+                            ~&5972376&~ (!~&10742505294233322867&~.~&233748328658231&~) {
+                                ~&233724020023100&~.~&6504419009&~(
+                                    "SR_WAND stage=deferred-hidden-rejected")
+                                clearPendingMode()
+                                ~&7083121450889&~
+                            }
+                            ~&5972376&~ (captureSnapshot() !== snapshot) {
+                                ~&233724020023100&~.~&6504419009&~(
+                                    "SR_WAND stage=deferred-snapshot-rejected")
+                                clearPendingMode()
+                                ~&7083121450889&~
+                            }
+                            ~&5972376&~ (!launchArgument(
+                                    "--selection-button-descriptor=" +
+                                    descriptor)) {
+                                ~&233724020023100&~.~&6504419009&~(
+                                    "SR_WAND stage=launch-rejected")
                                 clearPendingMode()
                             }
                         })
@@ -272,44 +307,65 @@ AFFECT [[3197972396468700595]]
                             ~&5972817&~ + ~&"180917&~ + ~&5972850&~ + ~&"180917&~ + ~&5972818&~ + ~&"180917&~ + ~&5972851&~
                     }
 
-                    function launchArgument(argument) {
-                        /* Resolve AppLoad only when tapped. Keeping the module*/
-                        /* out of the host file's static imports lets the stock*/
-                        /* selection component keep loading if AppLoad is ever*/
-                        /* absent or disabled. Call AppLoadLibrary directly:*/
+                    function ensureAppLoadHelper() {
+                        /* Resolve AppLoad dynamically after the stock selection*/
+                        /* appears. Keeping the module out of the host file's*/
+                        /* static imports lets the stock selection component*/
+                        /* keep loading if AppLoad is ever absent or disabled.*/
+                        /* Call AppLoadLibrary directly:*/
                         /* AppLoadLauncher broadcasts to every loaded AppLoad*/
                         /* view, and its non-QTFB receiver also dereferences an*/
                         /* undefined window after spawning the process. A*/
                         /* direct library call creates exactly one process and*/
                         /* returns its PID without entering that window path.*/
-                        ~&197102514&~ helper = ~&6504117156&~
+                        ~&5972376&~ (appLoadHelper) {
+                            ~&7083121450889&~ appLoadHelper
+                        }
                         try {
-                            helper = ~&5971598&~.createQmlObject(
+                            appLoadHelper = ~&5971598&~.createQmlObject(
                                 'import QtQuick;\n' +
                                 'import net.asivery.AppLoad 1.0;\n' +
                                 'AppLoadLibrary { function go(argument) { return launchExternal("external::smart-remarkable", -1, [argument], ({})) } }',
                                 ~&10742505294233322867&~,
                                 "smart_remarkable_appload_launcher"
                             )
-                            ~&5972376&~ (helper) {
-                                ~&197102514&~ pid = helper.go(argument)
-                                helper.~&233724926106067&~()
-                                ~&5972376&~ (pid > 0) {
-                                    ~&7083121450889&~ ~&6504329801&~
-                                }
-                                ~&233724020023100&~.~&6504419009&~(
-                                    "Smart Remarkable launcher did not start")
-                                ~&7083121450889&~ ~&214625660372&~
-                            } ~&6503784146&~ {
-                                ~&7083121450889&~ ~&214625660372&~
+                            ~&5972376&~ (appLoadHelper) {
+                                ~&233724020023100&~.~&197092075&~(
+                                    "Smart Remarkable launcher helper ready")
                             }
                         } catch (~&214625091795&~) {
                             ~&233724020023100&~.~&6504419009&~("Smart Remarkable launcher unavailable")
-                            ~&5972376&~ (helper) {
-                                helper.~&233724926106067&~()
+                            ~&5972376&~ (appLoadHelper) {
+                                appLoadHelper.~&233724926106067&~()
+                                appLoadHelper = ~&6504117156&~
                             }
+                        }
+                        ~&7083121450889&~ appLoadHelper
+                    }
+
+                    function launchArgument(argument) {
+                        ~&197102514&~ helper = ensureAppLoadHelper()
+                        ~&5972376&~ (!helper) {
                             ~&7083121450889&~ ~&214625660372&~
                         }
+                        try {
+                            ~&197102514&~ startedAt = ~&6502586279&~.now()
+                            ~&197102514&~ pid = helper.go(argument)
+                            ~&233724020023100&~.~&197092075&~(
+                                "Smart Remarkable launcher process start " +
+                                "pid=" + pid + " elapsed_ms=" +
+                                (~&6502586279&~.now() - startedAt))
+                            ~&5972376&~ (pid > 0) {
+                                ~&7083121450889&~ ~&6504329801&~
+                            }
+                            ~&233724020023100&~.~&6504419009&~(
+                                "Smart Remarkable launcher did not start")
+                        } catch (~&214625091795&~) {
+                            ~&233724020023100&~.~&6504419009&~("Smart Remarkable launcher unavailable")
+                            helper.~&233724926106067&~()
+                            appLoadHelper = ~&6504117156&~
+                        }
+                        ~&7083121450889&~ ~&214625660372&~
                     }
 
                     ~&254542236275632405&~: requestMode("write_back")

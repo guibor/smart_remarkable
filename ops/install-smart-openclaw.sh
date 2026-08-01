@@ -255,6 +255,18 @@ ssh -o BatchMode=yes "$HOST" "
         exit 1
     fi
     test -c /dev/uinput
+    test -x /usr/bin/hexdump
+    nonce_probe=\$(
+        /usr/bin/hexdump -n 32 -v -e '1/1 \"%02x\"' /dev/urandom
+    )
+    case "\$nonce_probe" in
+        ''|*[!0-9a-f]*)
+            echo 'Firmware cannot produce a canonical Smart request nonce' >&2
+            exit 1
+            ;;
+    esac
+    test "\${#nonce_probe}" -eq 64
+    unset nonce_probe
     test -f /home/root/.ssh/id_dropbear_smart_remarkable_bridge
     test ! -L /home/root/.ssh/id_dropbear_smart_remarkable_bridge
     test \"\$(stat -c %u:%g:%a /home/root/.ssh/id_dropbear_smart_remarkable_bridge)\" = 0:0:600

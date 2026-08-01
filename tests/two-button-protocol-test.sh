@@ -24,9 +24,12 @@ test "$(grep -c 'iconSource: "qrc:/icons/sparkles.svg"' "$INERT")" -eq 1
 test "$(grep -c 'property string pendingMode: ""' "$QML")" -eq 1
 test "$(grep -c 'property string pendingSnapshot: ""' "$QML")" -eq 1
 test "$(grep -c 'property bool pendingPrepared: false' "$QML")" -eq 1
+test "$(grep -c 'property var appLoadHelper: null' "$QML")" -eq 1
 test "$(grep -c 'function clearPendingMode()' "$QML")" -eq 1
 test "$(grep -c 'function requestMode(mode)' "$QML")" -eq 1
 test "$(grep -c 'function captureSnapshot()' "$QML")" -eq 1
+test "$(grep -c 'function ensureAppLoadHelper()' "$QML")" -eq 1
+test "$(grep -c 'Qt.createQmlObject(' "$QML")" -eq 1
 ! grep -F 'function captureDescriptor(mode)' "$QML" >/dev/null
 test "$(grep -c 'sequence: "Ctrl+Alt+Shift+7"' "$QML")" -eq 1
 test "$(grep -c 'sequence: "Ctrl+Alt+Shift+8"' "$QML")" -eq 1
@@ -44,10 +47,23 @@ grep -F 'selectionRoot.close()' "$QML" >/dev/null
 test "$(grep -c 'id: smartRemarkablePendingReset' "$QML")" -eq 1
 grep -F 'interval: 45000' "$QML" >/dev/null
 grep -F 'smartRemarkablePendingReset.restart()' "$QML" >/dev/null
-test "$(grep -c 'Qt.callLater(function() {' "$QML")" -eq 3
+test "$(grep -c 'Qt.callLater(function() {' "$QML")" -eq 4
 grep -F '// Let the stock selected state paint before AppLoad' "$QML" >/dev/null
+grep -F 'smartRemarkableLlmButton.ensureAppLoadHelper()' "$QML" >/dev/null
+grep -F 'return appLoadHelper' "$QML" >/dev/null
+grep -F 'elapsed_ms=' "$QML" >/dev/null
 grep -F 'pendingMode !== mode ||' "$QML" >/dev/null
-grep -F 'pendingSnapshot !== snapshot ||' "$QML" >/dev/null
+grep -F 'pendingSnapshot !== snapshot)' "$QML" >/dev/null
+for qml_stage in \
+    click \
+    deferred-enter \
+    deferred-pending-rejected \
+    deferred-hidden-rejected \
+    deferred-snapshot-rejected \
+    launch-rejected
+do
+    grep -F "SR_WAND stage=$qml_stage" "$QML" >/dev/null
+done
 grep -F 'onTriggered: smartRemarkableLlmButton.clearPendingMode()' "$QML" >/dev/null
 grep -F 'onClicked: requestMode("write_back")' "$QML" >/dev/null
 grep -F 'onClicked: smartRemarkableLlmButton.requestMode(' "$QML" >/dev/null
@@ -106,7 +122,18 @@ test "$clear_ready_line" -lt "$systemd_run_line"
 grep -F 'PREPARE_ACK_FILE="$STATE_DIR/selection_prepare_ack"' "$LAUNCHER" >/dev/null
 grep -F 'CLOSE_ACK_FILE="$STATE_DIR/selection_close_ack"' "$LAUNCHER" >/dev/null
 grep -F 'smart_generate_selection_nonce' "$LAUNCHER" >/dev/null
-grep -F 'publish_root_marker "$selection_descriptor" "$BUSY_FILE"' "$LAUNCHER" >/dev/null
+for launcher_stage in \
+    descriptor-parsed \
+    local-ready \
+    admission-lock-acquired \
+    nonce-created \
+    busy-published \
+    trigger-published
+do
+    grep -F "smart_log_stage $launcher_stage" "$LAUNCHER" >/dev/null
+done
+grep -F 'if ! publish_root_marker \' "$LAUNCHER" >/dev/null
+grep -F '"$selection_descriptor" "$BUSY_FILE" selection-busy' "$LAUNCHER" >/dev/null
 grep -F 'publish_root_marker "$SMART_SELECTION_ACK" "$ack_target"' "$LAUNCHER" >/dev/null
 grep -F 'chmod 0600 "$marker_tmp"' "$LAUNCHER" >/dev/null
 grep -F 'chown 0:0 "$marker_tmp"' "$LAUNCHER" >/dev/null
@@ -255,12 +282,20 @@ fi
 # Reject before BusyBox integer conversion: malformed untrusted input must not
 # emit an overflow/error diagnostic that depends on shell implementation.
 test -z "$huge_coordinate_error"
+grep -F "/usr/bin/hexdump -n 32 -v -e '1/1 \"%02x\"' /dev/urandom" \
+    "$PROTOCOL" >/dev/null
+! grep -E '/usr/bin/od[[:space:]].*-A' "$PROTOCOL" >/dev/null
+grep -F 'Firmware cannot produce a canonical Smart request nonce' \
+    "$REPO/ops/install-smart-openclaw.sh" >/dev/null
 smart_generate_selection_nonce
 first_nonce=$SMART_SELECTION_NONCE
 smart_generate_selection_nonce
 second_nonce=$SMART_SELECTION_NONCE
 test "${#first_nonce}" -eq 64
 test "$first_nonce" != "$second_nonce"
+case "$first_nonce$second_nonce" in
+    *[!0-9a-f]*) exit 1 ;;
+esac
 smart_parse_active_selection_descriptor \
     "v2,$first_nonce,mixed,rot180,100000,200000,500000,600000,1800000000000"
 test "$SMART_SELECTION_ACK" = \

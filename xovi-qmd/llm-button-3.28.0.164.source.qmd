@@ -20,6 +20,7 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                     property string pendingMode: ""
                     property string pendingSnapshot: ""
                     property bool pendingPrepared: false
+                    property var appLoadHelper: null
                     iconSource: "qrc:/ark/icons/notebook_sparkles"
                     selected: pendingMode === "write_back"
 
@@ -41,6 +42,18 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         target: selectionRoot
                         function onVisibleChanged() {
                             smartRemarkableLlmButton.clearPendingMode()
+                            if (selectionRoot.visible) {
+                                // Compile/import the AppLoad helper while the
+                                // menu is already visible, before the user can
+                                // tap either action. Keep one parent-owned
+                                // helper for descriptor and acknowledgement
+                                // launches instead of recompiling each phase.
+                                Qt.callLater(function() {
+                                    if (selectionRoot.visible) {
+                                        smartRemarkableLlmButton.ensureAppLoadHelper()
+                                    }
+                                })
+                            }
                         }
                     }
 
@@ -133,15 +146,19 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                     }
 
                     function requestMode(mode) {
+                        console.log("SR_WAND stage=click")
                         if (pendingMode !== "") {
+                            console.warn("SR_WAND stage=pending-rejected")
                             return
                         }
                         if (mode !== "write_back" &&
                                 mode !== "whatsapp_only") {
+                            console.warn("SR_WAND stage=mode-rejected")
                             return
                         }
                         var snapshot = captureSnapshot()
                         if (snapshot === "") {
+                            console.warn("SR_WAND stage=snapshot-rejected")
                             return
                         }
                         var descriptor = "v2," + mode + "," +
@@ -156,13 +173,31 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         // pending snapshot in case the stock menu changed in
                         // the intervening event-loop turn.
                         Qt.callLater(function() {
+                            console.log("SR_WAND stage=deferred-enter")
                             if (pendingMode !== mode ||
-                                    pendingSnapshot !== snapshot ||
-                                    !selectionRoot.visible ||
-                                    captureSnapshot() !== snapshot ||
-                                    !launchArgument(
-                                        "--selection-button-descriptor=" +
-                                        descriptor)) {
+                                    pendingSnapshot !== snapshot) {
+                                console.warn(
+                                    "SR_WAND stage=deferred-pending-rejected")
+                                clearPendingMode()
+                                return
+                            }
+                            if (!selectionRoot.visible) {
+                                console.warn(
+                                    "SR_WAND stage=deferred-hidden-rejected")
+                                clearPendingMode()
+                                return
+                            }
+                            if (captureSnapshot() !== snapshot) {
+                                console.warn(
+                                    "SR_WAND stage=deferred-snapshot-rejected")
+                                clearPendingMode()
+                                return
+                            }
+                            if (!launchArgument(
+                                    "--selection-button-descriptor=" +
+                                    descriptor)) {
+                                console.warn(
+                                    "SR_WAND stage=launch-rejected")
                                 clearPendingMode()
                             }
                         })
@@ -272,44 +307,65 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                             x0 + "," + y0 + "," + x1 + "," + y1
                     }
 
-                    function launchArgument(argument) {
-                        // Resolve AppLoad only when tapped. Keeping the module
-                        // out of the host file's static imports lets the stock
-                        // selection component keep loading if AppLoad is ever
-                        // absent or disabled. Call AppLoadLibrary directly:
+                    function ensureAppLoadHelper() {
+                        // Resolve AppLoad dynamically after the stock selection
+                        // appears. Keeping the module out of the host file's
+                        // static imports lets the stock selection component
+                        // keep loading if AppLoad is ever absent or disabled.
+                        // Call AppLoadLibrary directly:
                         // AppLoadLauncher broadcasts to every loaded AppLoad
                         // view, and its non-QTFB receiver also dereferences an
                         // undefined window after spawning the process. A
                         // direct library call creates exactly one process and
                         // returns its PID without entering that window path.
-                        var helper = null
+                        if (appLoadHelper) {
+                            return appLoadHelper
+                        }
                         try {
-                            helper = Qt.createQmlObject(
+                            appLoadHelper = Qt.createQmlObject(
                                 'import QtQuick;\n' +
                                 'import net.asivery.AppLoad 1.0;\n' +
                                 'AppLoadLibrary { function go(argument) { return launchExternal("external::smart-remarkable", -1, [argument], ({})) } }',
                                 selectionRoot,
                                 "smart_remarkable_appload_launcher"
                             )
-                            if (helper) {
-                                var pid = helper.go(argument)
-                                helper.destroy()
-                                if (pid > 0) {
-                                    return true
-                                }
-                                console.warn(
-                                    "Smart Remarkable launcher did not start")
-                                return false
-                            } else {
-                                return false
+                            if (appLoadHelper) {
+                                console.log(
+                                    "Smart Remarkable launcher helper ready")
                             }
                         } catch (error) {
                             console.warn("Smart Remarkable launcher unavailable")
-                            if (helper) {
-                                helper.destroy()
+                            if (appLoadHelper) {
+                                appLoadHelper.destroy()
+                                appLoadHelper = null
                             }
+                        }
+                        return appLoadHelper
+                    }
+
+                    function launchArgument(argument) {
+                        var helper = ensureAppLoadHelper()
+                        if (!helper) {
                             return false
                         }
+                        try {
+                            var startedAt = Date.now()
+                            var pid = helper.go(argument)
+                            console.log(
+                                "Smart Remarkable launcher process start " +
+                                "pid=" + pid + " elapsed_ms=" +
+                                (Date.now() - startedAt))
+                            if (pid > 0) {
+                                return true
+                            }
+                            console.warn(
+                                "Smart Remarkable launcher did not start")
+                        } catch (error) {
+                            console.warn("Smart Remarkable launcher unavailable")
+                            helper.destroy()
+                            appLoadHelper = null
+                        }
+                        return false
                     }
 
                     onClicked: requestMode("write_back")

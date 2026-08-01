@@ -100,14 +100,19 @@ pending selection before scheduling launch with `Qt.callLater`, while shared
 pending state rejects another button tap. The deferred callback first
 revalidates the same mode, snapshot, and visible handler so the selected state
 can paint before AppLoad's synchronous process-start boundary.
-`launchArgument` dynamically creates exactly one `AppLoadLibrary`, calls
-`launchExternal("external::smart-remarkable", -1, [argument], ({}))`, destroys
-the helper, and accepts only a positive PID. It deliberately does not emit
+When the stock handler becomes visible, a deferred `ensureAppLoadHelper` call
+dynamically imports one `AppLoadLibrary`, parents it to the selection handler,
+and caches it for the descriptor plus both acknowledgement launches.
+`launchArgument` reuses that helper, calls
+`launchExternal("external::smart-remarkable", -1, [argument], ({}))`, and
+accepts only a positive PID. It deliberately does not emit
 `AppLoadLauncher.launchApplication`: that singleton signal is received by
 every loaded AppLoad QML view, while AppLoad's non-QTFB handler starts the
 external process and then writes the PID to an undefined window object. The
 direct library path therefore avoids broadcast fan-out, window creation, and
-the observed post-spawn QML error. It still performs AppLoad's synchronous
+the observed post-spawn QML error. Prewarming removes repeated dynamic QML
+compilation and global-handle churn from the tap, prepare, and close paths. It
+still performs AppLoad's synchronous
 `QProcess::waitForStarted` check on the stock UI thread, but the launched shell,
 transient service, worker, tunnel, and remote work all continue in the child;
 no persistent or boot service is introduced. One `clearPendingMode` path runs
@@ -123,10 +128,19 @@ the selection root into the physical scene and accepts only the stable
 empty, degenerate, or out-of-bounds selections fail closed. The initial
 descriptor contains version, response mode, kind, orientation, bounds, and
 capture time. `scripts/selection-protocol.sh` strictly parses this data, and
-the root-owned AppLoad launcher adds a fresh 256-bit kernel-random nonce before
+the root-owned AppLoad launcher reads 32 bytes from `/dev/urandom` through the
+device-proven `/usr/bin/hexdump -n 32 -v -e '1/1 "%02x"'` interface, accepts
+only exactly 64 lowercase hexadecimal characters, and adds that fresh 256-bit
+nonce before
 atomically publishing each marker: the nonce-bearing busy marker first and the
 one corresponding trigger second. The Rust parser accepts only the canonical bounded form while it is
 younger than 40 seconds, below QML's 45-second pending timeout.
+
+QML and the launcher also expose content-free `SR_WAND` stage diagnostics. QML
+records admission/revalidation/launch boundaries and elapsed process-start time;
+the launcher records descriptor parsing, local readiness, lock acquisition,
+nonce creation, and busy/trigger publication. The stages never include the
+descriptor, geometry, nonce, recognized text, image bytes, or selected content.
 
 Capture and close form a two-phase, same-nonce local transaction. Rust first
 emits `Ctrl+Alt+Shift+8`. QML immediately re-reads the live kind, transform,
@@ -408,15 +422,17 @@ schema-v2 bridge therefore require one quiesced guarded server promotion; the
 current-generation capability probe is the readiness gate after Gateway
 reload.
 
-For firmware 3.28.0.164, the selected native-button candidate is a two-button
+For firmware 3.28.0.164, the deployed native-button integration is a two-button
 QMLDiff patch rather than the upstream raw `llmbutton.so`.
 `xovi-qmd/llm-button-3.28.0.164.source.qmd` inserts one stock
 QML block containing the firmware's stock sparkling-notebook and sparkles
 resources into the exact
 `SceneSelectionHandler.qml` tree immediately after `selectionDuplicate`
 (Copy). On tap the chosen button marks itself selected, schedules one deferred
-same-snapshot launch, dynamically creates one `AppLoadLibrary`, and accepts only
-a positive PID from direct non-QTFB `launchExternal`. This bypasses
+same-snapshot launch, and accepts only a positive PID from direct non-QTFB
+`launchExternal`. The deployed revision prewarms and caches one parent-owned
+dynamic `AppLoadLibrary` per selection handler, so the three launch phases do
+not recompile the helper. This bypasses
 `AppLoadLauncher`'s process-wide broadcast and the external-no-GUI receiver's
 undefined-window assignment while exposing the prepare, close, and restore
 transaction described above. Keeping AppLoad out of the host file's static
@@ -504,10 +520,20 @@ the disabled canary is
 The prior v2 functional source/compiled pair is
 `130353dbba7fd31b764f0835b610d59d9c25c7f1cc2b2c52e9285379f23ec1b8`
 and `28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`.
-The corrected direct-launch source/compiled pair is
+The previously deployed direct-launch source/compiled pair was
 `6aa2e491cffa568458c696e9035dca31f02b66786e30ad6f12f67dbfaa5b1fb9`
 and `3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
-Each pinned pair passes exact-hashtable compatibility and applies to the
+Its selection-protocol and launcher hashes were respectively
+`e124286e273474782f1632402711ae30ab6643afe8f05e85aecc9ce43cfc1e74`
+and `79845482e8a47c84ee73b02f1641e60f83c81cd44504914f1aa49a1d797107e1`.
+The deployed BusyBox/cached-helper revision changes those four hashes to
+source `a4af1eeff5f011479e68e8fc14fe385e6a5070e8ff3051e0df69ff18c93a5b03`,
+compiled QMD `495db83da318801d24ae3d4d63120c7e9d1568145e3298efccecea583f5c17c4`,
+protocol `4317dafd6fcc3a1cd5fd21b427be7465621f570443112a390840004a0d23203a`,
+and launcher `df7177e7d75b15a521e5ed748c8ea01f867deb3953f0cf3ac1dc5dd58f8aa88b`.
+It is packaged as Smart Remarkable `0.7.2-openclaw`. Guarded installation is
+complete, but it has no physical-success claim. Each pinned
+QMD pair passes exact-hashtable compatibility and applies to the
 extracted resource tree; with the seven supported ReMagic QMDs, the selected
 Smart QMD composes in device filename order into 22 patched resources.
 
@@ -538,7 +564,26 @@ Guarded refresh-functional transaction `20260731T222432Z-49869` finally
 committed corrected QMD
 `3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
 The recorded final `xochitl` PID is `39042` with `NRestarts=0`. Physical
-handwritten/Capture round trips remain the separate acceptance gate.
+attempts at `08:38:13` and `08:54:38` then proved that a valid descriptor
+entered the launcher but the installed BusyBox `/usr/bin/od` rejected `-A`.
+Nonce creation therefore failed before the busy marker, trigger marker, Rust
+listener, bridge, or OpenClaw. AppLoad had already reported a positive child
+PID, so QML could not observe the later shell failure and retained pending state
+until its 45-second timer; this is the source of the apparent long lag in those
+attempts. Handwritten/Capture round trips remain the separate acceptance gate.
+
+The corrective deployment reused the established old-contract transition so a
+protocol-skewed functional button was never exposed. Old-contract
+refresh-inert transaction `20260801T091905Z-53220` committed the disabled QMD;
+application staged manifest
+`360f2a54f5efb1272dd21e2dcc421b5a8e329b9ffabdbd7ff95b3185e3360188`
+then installed Smart Remarkable `0.7.2-openclaw` with the new launcher and
+protocol helper. Refresh-functional transaction `20260801T092129Z-55163`
+committed compiled QMD
+`495db83da318801d24ae3d4d63120c7e9d1568145e3298efccecea583f5c17c4`.
+Final health evidence recorded stock `xochitl` PID `48260`, `NRestarts=0`, and
+read-only root. This establishes exact guarded deployment, not a post-fix wand
+request, Rust consumption, bridge request, or OpenClaw receipt.
 
 The current two-button client passes 88 applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
@@ -575,12 +620,15 @@ v2 QMD used source
 `130353dbba7fd31b764f0835b610d59d9c25c7f1cc2b2c52e9285379f23ec1b8`
 and compiled bytes
 `28a253e1d16d4aa5e2852afa40699d3bc13b3fb2ab1e9cdc0a953deec9953ef6`.
-The corrected deployed revision keeps that worker and changes only the functional
+The previously deployed direct-launch revision kept that worker and changed the functional
 QMD source/compiled pair to
 `6aa2e491cffa568458c696e9035dca31f02b66786e30ad6f12f67dbfaa5b1fb9`
 and `3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
-Those corrected functional bytes were promoted by transaction
-`20260731T222432Z-49869`; physical interaction is still unverified. The prior 3.28.0.163
+Those functional bytes were promoted by transaction
+`20260731T222432Z-49869`; physical interaction exposed the nonce-generation
+failure described above. The replacement QMD/protocol/launcher generation has
+now passed its complete local and guarded device gate, while its physical
+request acceptance remains pending. The prior 3.28.0.163
 QMLDiff artifacts passed offline compatibility and apply-diff checks against
 that firmware's exact extracted resources. Its functional two-button
 QMD is
@@ -874,27 +922,36 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   or selection-protocol helper unless both resolve inside the exact root-owned
   AppLoad installation. A v2 descriptor can be published only after local
   listener readiness; the launcher does not probe or wait for the bridge. It
-  creates a kernel-random nonce, publishes busy before the trigger, rejects
-  another request until Rust verifies terminal cleanup, and accepts QML
+  creates a kernel-random nonce through the exact device-supported `hexdump`
+  interface, verifies its canonical lowercase-hex representation, publishes
+  busy before the trigger, rejects another request until Rust verifies terminal
+  cleanup, and accepts QML
   acknowledgements only when their snapshot exactly matches that nonce's
-  active descriptor. Historical `--selection-button` arguments are accepted
-  only as the explicit pinned-QMD `legacy-v1` migration route.
+  active descriptor. Content-free `SR_WAND` stages identify the last completed
+  launcher boundary without disclosing request data. Historical
+  `--selection-button` arguments are accepted only as the explicit pinned-QMD
+  `legacy-v1` migration route.
 - `xovi-qmd/`: contains the disabled visual-canary source/artifact, the
   reviewable firmware-specific v2 functional source, the pinned legacy-v1
   rollback artifact, and the immutable compatibility contract. The functional
   source rehashes through the pinned QMLDiff tool and exact firmware hashtable
-  to the byte-identical compiled direct-launch candidate recorded by the
-  finalized contract. That candidate and the seven exact co-resident QMDs pass
-  compatibility and compose to 22 resources; guarded functional promotion is
-  complete and physical acceptance remains gated work. Both menus place the firmware's stock
+  to the byte-identical compiled direct-launch artifact recorded by the
+  finalized contract. That artifact and the seven exact co-resident QMDs pass
+  compatibility and compose to 22 resources. The currently deployed
+  direct-launch generation failed physical nonce creation; the
+  BusyBox/cached-helper replacement is now deployed through the guarded inert,
+  application, and functional transactions recorded above, while post-fix
+  physical acceptance remains gated work. Both menus place the firmware's stock
   notebook-with-sparkles answer-here action and stock sparkles agent action
   immediately after Copy. The v2 source derives
   live kind, fixed-point view geometry, and stable scene orientation; rechecks
   that snapshot at both the prepare and close phases; hides only the stock
   `controlsAreVisible` flag through a reversible binding; and returns exact
   prepare/close acknowledgements through AppLoad. Pending state is centralized,
-  its initial launch is deferred one event-loop turn for paint, and one dynamic
-  `AppLoadLibrary.launchExternal` call must return a positive PID. State clears
+  its initial launch is deferred one event-loop turn for paint, and the
+  deployed revision prewarms one parent-owned dynamic helper for reuse across
+  `AppLoadLibrary.launchExternal` calls, each of which must return a positive
+  PID. State clears
   on visibility loss, timeout, launch failure, or revalidation failure. The
   QMD never emits AppLoad's global launcher signal or enters its no-GUI window
   path. Offline QMLDiff compatibility/application against the extracted
@@ -906,7 +963,9 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   rejects missing, duplicate, unknown, unsafe, partially finalized, or
   protocol-skewed contract data before mutation.
 - `ops/install-smart-openclaw.sh` and `ops/device-install-smart-openclaw.sh`:
-  assemble the local AppLoad bundle, preflight `/home` capacity, stream only
+  assemble the local AppLoad bundle, preflight `/home` capacity, and require
+  the live tablet's exact `hexdump` command to produce one canonical 64-character
+  nonce before mutation. They stream only
   the server-generated narrow bridge bearer directly from its mode-0600
   server file into a transaction-private mode-0600 tablet file, verify its
   SHA-256 at both ends, and atomically install or roll back the application
@@ -1048,15 +1107,18 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
 - `captureSnapshot` in the firmware-pinned QML source: derives the live
   selection kind, maps all four selection corners into fixed-point view bounds,
   and accepts only the stable `normal` or `rot180` scene transform.
-- `requestMode` and `launchArgument` in the firmware-pinned QML source: commit
-  and revalidate one pending snapshot across a deferred paint turn, then invoke
-  exactly one non-QTFB `AppLoadLibrary.launchExternal` operation and accept only
-  its positive PID without broadcasting or creating a window.
+- `requestMode`, `ensureAppLoadHelper`, and `launchArgument` in the
+  firmware-pinned QML source: commit and revalidate one pending snapshot across
+  a deferred paint turn, prewarm and cache one parent-owned dynamic AppLoad
+  helper per selection handler, then invoke the required non-QTFB
+  `AppLoadLibrary.launchExternal` operation and accept only its positive PID
+  without broadcasting or creating a window.
 - `smart_parse_selection_request`, `smart_parse_selection_snapshot`, and
   `smart_parse_active_selection_descriptor` in
   `scripts/selection-protocol.sh`: parse each distinct protocol shape as strict
-  data; `smart_generate_selection_nonce` obtains the launcher generation from
-  the kernel RNG.
+  data; `smart_generate_selection_nonce` obtains 32 bytes from the kernel RNG
+  through the device-proven `hexdump` formatter and accepts only their exact
+  64-character lowercase-hex representation.
 - `SelectionDescriptor::parse_at` and `SelectionRequest::parse_at` in
   `src/touch.rs`: enforce canonical v2 nonce/kind/orientation/geometry/time or
   the deliberately distinct pinned-QMD `legacy-v1` generation. V2 descriptors
