@@ -251,7 +251,7 @@ nonce, busy marker, trigger marker, Rust event, bridge request, or OpenClaw turn
 The 45-second QML pending timer kept the selected state latched after the
 already-started child failed, which accounts for the reported apparent lag.
 
-The correction is now installed as Smart Remarkable `0.7.2-openclaw`. It uses
+The preceding correction was installed as Smart Remarkable `0.7.2-openclaw`. It uses
 the device-proven
 `/usr/bin/hexdump -n 32 -v -e '1/1 "%02x"' /dev/urandom` command, retains exact
 64-character lowercase-hex validation, makes that capability a device-installer
@@ -272,8 +272,8 @@ the button, application staged manifest
 `360f2a54f5efb1272dd21e2dcc421b5a8e329b9ffabdbd7ff95b3185e3360188`
 then installed the matching `0.7.2-openclaw` helpers, and refresh-functional
 transaction `20260801T092129Z-55163` committed the new QMD. Final verification
-found `xochitl` PID `48260` with `NRestarts=0` and `/` mounted read-only. This
-At deployment time this proved guarded installation and stock-process stability
+found `xochitl` PID `48260` with `NRestarts=0` and `/` mounted read-only. At
+deployment time this proved guarded installation and stock-process stability
 only; no post-fix physical request or OpenClaw receipt had yet been observed.
 
 Subsequent server-side observation now proves that two post-fix physical taps
@@ -285,7 +285,7 @@ session had ended and no restricted SSH tunnel was present. The bridge and
 OpenClaw Gateway remained healthy with zero restarts, so this was a client
 lifecycle failure rather than a server or recognition failure.
 
-The local `0.7.3-openclaw` candidate fixes that boundary without a tablet
+The deployed `0.7.3-openclaw` revision fixes that boundary without a tablet
 outbox. Every explicit button gets a freshly bounded one-hour transient unit,
 serialized through a root-only auto-releasing lifecycle lock; a current busy
 generation is rejected without being stopped. The launcher waits for PID 1 to
@@ -309,9 +309,18 @@ Redirects are disabled, only exact HTTP 200 is accepted, the bearer header is
 marked sensitive, and capped retry backoff prevents repeatedly uploading a
 large in-memory selection once per second during a long outage.
 Direct provider requests are unchanged. The source and prepared crop are still
-never written to a tablet file, and no service is enabled at boot. This
-candidate is not on the tablet until its exact-firmware guarded deployment is
-recorded below.
+never written to a tablet file, and no service is enabled at boot.
+
+The exact-device upgrade used the installed `0.7.2` contract to commit disabled
+refresh-inert transaction `20260801T115255Z-35025`, then installed application
+transaction `20260801T115433Z` with staged manifest
+`afa3ee5e5e7edd24c3c059fc1015ba42294083e185e661d7ed2775d0908773aa`,
+and finally committed the byte-identical functional QMD through transaction
+`20260801T115608Z-37109`. Final verification found `xochitl` PID `57254`,
+`NRestarts=0`, and `/` read-only. A request-free start/health/stop smoke test
+proved both local worker readiness and the private OpenClaw tunnel, created no
+selection markers or model request, and cleaned up the transient worker. One
+physical `0.7.3` wand request remains the end-to-end acceptance gate.
 
 OpenClaw's candidate canonical final remains a strict
 literal-transcription/answer envelope: WhatsApp receives one atomic `I read:`

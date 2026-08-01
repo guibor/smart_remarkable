@@ -543,18 +543,19 @@ and `3ad5c084765a980b017da4b5e87670312242212ea362a456b7ab487d2ca9b451`.
 Its selection-protocol and launcher hashes were respectively
 `e124286e273474782f1632402711ae30ab6643afe8f05e85aecc9ce43cfc1e74`
 and `79845482e8a47c84ee73b02f1641e60f83c81cd44504914f1aa49a1d797107e1`.
-The deployed BusyBox/cached-helper revision changes those four hashes to
+The preceding BusyBox/cached-helper revision changed those four hashes to
 source `a4af1eeff5f011479e68e8fc14fe385e6a5070e8ff3051e0df69ff18c93a5b03`,
 compiled QMD `495db83da318801d24ae3d4d63120c7e9d1568145e3298efccecea583f5c17c4`,
 protocol `4317dafd6fcc3a1cd5fd21b427be7465621f570443112a390840004a0d23203a`,
 and launcher `df7177e7d75b15a521e5ed748c8ea01f867deb3953f0cf3ac1dc5dd58f8aa88b`.
-It is packaged as Smart Remarkable `0.7.2-openclaw`. Guarded installation is
-complete, but it has no physical-success claim. Each pinned
+It was packaged as Smart Remarkable `0.7.2-openclaw`. Two later physical taps
+proved its ink and Capture request paths before the separate session-lifetime
+failure motivated `0.7.3`. Each pinned
 QMD pair passes exact-hashtable compatibility and applies to the
 extracted resource tree; with the seven supported ReMagic QMDs, the selected
 Smart QMD composes in device filename order into 22 patched resources.
 
-The subsequent local `0.7.3-openclaw` recovery candidate leaves the approved
+The deployed `0.7.3-openclaw` recovery revision leaves the approved
 source/compiled QMD and selection protocol unchanged. Its aarch64 worker is
 `d9e045c8eee9a442def7bf6218cfbf81797a3133cdd49673746931a1b0e222bb`
 with build ID `3acb24c18156394f0352ad24572bdfe813e07507`; its launcher is
@@ -564,8 +565,16 @@ its reconnecting runner is
 and its complete compatibility contract is
 `fab7ddfb35b0b005f382d2a2e8450b44b1e1a38adb1189546b3e7da860cf331d`.
 The binary retains `/lib/ld-linux-aarch64.so.1`, maximum GLIBC 2.28, and no
-RPATH/RUNPATH. These are reviewed local artifacts until the exact-device
-inert/application/functional transaction is completed.
+RPATH/RUNPATH. The exact-device migration used the still-installed `0.7.2`
+contract for refresh-inert transaction `20260801T115255Z-35025`, installed app
+transaction `20260801T115433Z` with staged manifest
+`afa3ee5e5e7edd24c3c059fc1015ba42294083e185e661d7ed2775d0908773aa`,
+then promoted the unchanged functional QMD with current-contract transaction
+`20260801T115608Z-37109`. Final `xochitl` PID `57254`, `NRestarts=0`, and
+read-only root prove guarded deployment. A request-free transient-session smoke
+test reached both `ready` and `bridge-ready`, verified the exact worker in
+memory, produced no busy/trigger/ack markers, and stopped cleanly. It does not
+replace a physical request and server receipt.
 
 The historical firmware-recovery sequence first used disabled transaction
 `20260730T184327Z-34344` and functional transaction
@@ -614,6 +623,18 @@ committed compiled QMD
 Final health evidence recorded stock `xochitl` PID `48260`, `NRestarts=0`, and
 read-only root. This establishes exact guarded deployment, not a post-fix wand
 request, Rust consumption, bridge request, or OpenClaw receipt.
+
+The lifecycle-recovery deployment repeated that ordering without changing the
+functional QMD. Old-contract refresh-inert transaction
+`20260801T115255Z-35025` established the compatibility boundary; app transaction
+`20260801T115433Z` installed staged manifest
+`afa3ee5e5e7edd24c3c059fc1015ba42294083e185e661d7ed2775d0908773aa`;
+current-contract refresh-functional transaction `20260801T115608Z-37109`
+restored functional QMD
+`495db83da318801d24ae3d4d63120c7e9d1568145e3298efccecea583f5c17c4`.
+The final request-free tunnel smoke test left the Smart session inactive,
+`xochitl` PID `57254` at `NRestarts=0`, and root read-only. Physical
+`0.7.3-openclaw` request acceptance remains separate.
 
 The current two-button client passes 88 applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
