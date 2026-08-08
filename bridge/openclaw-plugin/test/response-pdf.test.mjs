@@ -99,6 +99,9 @@ function inlineText(inlines) {
       if (inline.t === "LineBreak") {
         return "\n";
       }
+      if (inline.t === "Span") {
+        return inlineText(inline.c[1]);
+      }
       return "";
     })
     .join("");
@@ -173,6 +176,22 @@ test("renders only literal Pandoc AST text into a private upload snapshot", asyn
     t: "MetaString",
     c: "DejaVu Sans",
   });
+  assert.deepEqual(ast.meta.lang, { t: "MetaString", c: "en" });
+  assert.deepEqual(ast.meta.dir, { t: "MetaString", c: "ltr" });
+  assert.deepEqual(ast.meta["babel-otherlangs"], {
+    t: "MetaList",
+    c: [
+      { t: "MetaString", c: "hebrew" },
+      { t: "MetaString", c: "arabic" },
+    ],
+  });
+  assert.deepEqual(ast.meta.babelfonts, {
+    t: "MetaMap",
+    c: {
+      hebrew: { t: "MetaString", c: "Noto Sans Hebrew" },
+      arabic: { t: "MetaString", c: "Noto Sans Arabic" },
+    },
+  });
   assert.deepEqual(
     ast.blocks
       .filter((block) => block.t === "Header")
@@ -196,6 +215,39 @@ test("renders only literal Pandoc AST text into a private upload snapshot", asyn
   assert.ok(literalStrings.includes("👩‍💻"));
   assert.ok(literalStrings.includes("✈️"));
   assert.ok(nodes.some((node) => node.t === "LineBreak"));
+  const directionalAttributes = nodes
+    .filter((node) => node.t === "Div" || node.t === "Span")
+    .map((node) => node.c[0][2]);
+  assert.ok(
+    directionalAttributes.some(
+      (attributes) =>
+        JSON.stringify(attributes) ===
+        JSON.stringify([
+          ["lang", "he"],
+          ["dir", "rtl"],
+        ]),
+    ),
+  );
+  assert.ok(
+    directionalAttributes.some(
+      (attributes) =>
+        JSON.stringify(attributes) ===
+        JSON.stringify([
+          ["lang", "ar"],
+          ["dir", "rtl"],
+        ]),
+    ),
+  );
+  assert.ok(
+    directionalAttributes.some(
+      (attributes) =>
+        JSON.stringify(attributes) ===
+        JSON.stringify([
+          ["lang", "en"],
+          ["dir", "ltr"],
+        ]),
+    ),
+  );
   assert.equal(
     JSON.stringify(ast).includes("RawInline") ||
       JSON.stringify(ast).includes("RawBlock"),
@@ -238,6 +290,142 @@ test("renders only literal Pandoc AST text into a private upload snapshot", asyn
   await artifact.cleanup();
   await artifact.cleanup();
   await assertMissing(transactionDir);
+});
+
+test("labels exact mixed Hebrew and English runs without carrying the old direction", async (t) => {
+  const stateDir = await fixture(t, "renderer-bidi-runs");
+  const calls = [];
+  const artifact = await renderResponsePdf(
+    inputFor(stateDir, {
+      responseText: "שלום-English-123-תשובה\n\nاـب-English",
+    }),
+    { execFileFn: capturingExecutor(calls) },
+  );
+  t.after(() => artifact.cleanup());
+
+  const expectedRuns = new Set([
+    "שלום-",
+    "English-123-",
+    "תשובה",
+    "اـب-",
+    "English",
+  ]);
+  const runs = allNodes(calls[0].ast)
+    .filter((node) => node.t === "Span")
+    .map((node) => ({
+      text: inlineText(node.c[1]),
+      attributes: node.c[0][2],
+    }))
+    .filter(({ text }) => expectedRuns.has(text));
+  assert.deepEqual(runs, [
+    {
+      text: "שלום-",
+      attributes: [
+        ["lang", "he"],
+        ["dir", "rtl"],
+      ],
+    },
+    {
+      text: "English-123-",
+      attributes: [
+        ["lang", "en"],
+        ["dir", "ltr"],
+      ],
+    },
+    {
+      text: "תשובה",
+      attributes: [
+        ["lang", "he"],
+        ["dir", "rtl"],
+      ],
+    },
+    {
+      text: "اـب-",
+      attributes: [
+        ["lang", "ar"],
+        ["dir", "rtl"],
+      ],
+    },
+    {
+      text: "English",
+      attributes: [
+        ["lang", "en"],
+        ["dir", "ltr"],
+      ],
+    },
+  ]);
+});
+
+test("chooses paragraph direction from letters rather than leading digits or marks", async (t) => {
+  const stateDir = await fixture(t, "renderer-bidi-strong-letters");
+  const calls = [];
+  const artifact = await renderResponsePdf(
+    inputFor(stateDir, {
+      responseText: "2026 שלום\n\n\u05B0ABC\n\n٢ test",
+    }),
+    { execFileFn: capturingExecutor(calls) },
+  );
+  t.after(() => artifact.cleanup());
+
+  const paragraphs = allNodes(calls[0].ast)
+    .filter((node) => node.t === "Div")
+    .map((node) => ({
+      text: inlineText(allNodes(node).find((child) => child.t === "Para").c),
+      attributes: node.c[0][2],
+    }))
+    .filter(({ text }) =>
+      new Set(["2026 שלום", "\u05B0ABC", "٢ test"]).has(text),
+    );
+  assert.deepEqual(paragraphs, [
+    {
+      text: "2026 שלום",
+      attributes: [
+        ["lang", "he"],
+        ["dir", "rtl"],
+      ],
+    },
+    {
+      text: "\u05B0ABC",
+      attributes: [
+        ["lang", "en"],
+        ["dir", "ltr"],
+      ],
+    },
+    {
+      text: "٢ test",
+      attributes: [
+        ["lang", "en"],
+        ["dir", "ltr"],
+      ],
+    },
+  ]);
+
+  const spans = allNodes(calls[0].ast)
+    .filter((node) => node.t === "Span")
+    .map((node) => ({
+      text: inlineText(node.c[1]),
+      attributes: node.c[0][2],
+    }));
+  assert.deepEqual(
+    spans.find(({ text }) => text === "\u05B0ABC"),
+    {
+      text: "\u05B0ABC",
+      attributes: [
+        ["lang", "en"],
+        ["dir", "ltr"],
+      ],
+    },
+  );
+  assert.deepEqual(
+    spans.find(({ text }) => text === "٢"),
+    {
+      text: "٢",
+      attributes: [
+        ["lang", "en"],
+        ["dir", "ltr"],
+      ],
+    },
+  );
 });
 
 test("uses fixed absolute sandboxed commands and a minimal private environment", async (t) => {
@@ -456,7 +644,7 @@ test("renders an immutable snapshot when the caller mutates input after invocati
   assert.equal(calls.length, 1);
   const astJson = calls[0].astBytes.toString("utf8");
   assert.deepEqual(
-    calls[0].ast.blocks
+    allNodes(calls[0].ast)
       .filter((block) => block.t === "Para")
       .map((block) => inlineText(block.c)),
     ["original selection", "original response"],

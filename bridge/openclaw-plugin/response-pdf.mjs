@@ -28,6 +28,9 @@ const REQUEST_ID_PATTERN =
 const C0_C1_EXCEPT_LF_PATTERN =
   /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/u;
 const BIDI_CONTROL_PATTERN = /\p{Bidi_Control}/u;
+const HEBREW_SCRIPT_PATTERN = /\p{Script_Extensions=Hebrew}/u;
+const ARABIC_SCRIPT_PATTERN = /\p{Script_Extensions=Arabic}/u;
+const LETTER_PATTERN = /\p{Letter}/u;
 const VERSION_CONTROL_PATTERN =
   /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 const XETEX_VERSION_LINE_PATTERN =
@@ -313,6 +316,74 @@ async function createPrivateDirectory(directory, expectedUid) {
   });
 }
 
+const ENGLISH_DIRECTION = Object.freeze({ lang: "en", dir: "ltr" });
+const HEBREW_DIRECTION = Object.freeze({ lang: "he", dir: "rtl" });
+const ARABIC_DIRECTION = Object.freeze({ lang: "ar", dir: "rtl" });
+
+function strongDirection(character) {
+  if (!LETTER_PATTERN.test(character)) {
+    return undefined;
+  }
+  if (HEBREW_SCRIPT_PATTERN.test(character)) {
+    return HEBREW_DIRECTION;
+  }
+  if (ARABIC_SCRIPT_PATTERN.test(character)) {
+    return ARABIC_DIRECTION;
+  }
+  return ENGLISH_DIRECTION;
+}
+
+function firstStrongDirection(text) {
+  for (const character of text) {
+    const direction = strongDirection(character);
+    if (direction) {
+      return direction;
+    }
+  }
+  return ENGLISH_DIRECTION;
+}
+
+function directionAttributes(direction) {
+  return [
+    "",
+    [],
+    [
+      ["lang", direction.lang],
+      ["dir", direction.dir],
+    ],
+  ];
+}
+
+function textToDirectionalSpans(text) {
+  const runs = [];
+  let run = "";
+  let runDirection;
+  for (const character of text) {
+    const characterDirection = strongDirection(character);
+    if (
+      characterDirection &&
+      runDirection &&
+      characterDirection !== runDirection
+    ) {
+      runs.push({ text: run, direction: runDirection });
+      run = "";
+      runDirection = characterDirection;
+    }
+    run += character;
+    runDirection ??= characterDirection;
+  }
+  if (run.length > 0) {
+    runs.push({
+      text: run,
+      direction: runDirection ?? ENGLISH_DIRECTION,
+    });
+  }
+  return runs.map(({ text: runText, direction }) => ({
+    t: "Span",
+    c: [directionAttributes(direction), [{ t: "Str", c: runText }]],
+  }));
+}
+
 function textToInlines(text) {
   const inlines = [];
   for (const part of text.split(/( +)/u)) {
@@ -324,7 +395,7 @@ function textToInlines(text) {
         inlines.push({ t: "Space" });
       }
     } else {
-      inlines.push({ t: "Str", c: part });
+      inlines.push(...textToDirectionalSpans(part));
     }
   }
   return inlines;
@@ -332,11 +403,24 @@ function textToInlines(text) {
 
 function textToBlocks(text) {
   const blocks = [];
-  let paragraph = [];
+  let paragraphLines = [];
   const flush = () => {
-    if (paragraph.length > 0) {
-      blocks.push({ t: "Para", c: paragraph });
-      paragraph = [];
+    if (paragraphLines.length > 0) {
+      const paragraph = [];
+      for (const line of paragraphLines) {
+        if (paragraph.length > 0) {
+          paragraph.push({ t: "LineBreak" });
+        }
+        paragraph.push(...textToInlines(line));
+      }
+      blocks.push({
+        t: "Div",
+        c: [
+          directionAttributes(firstStrongDirection(paragraphLines.join("\n"))),
+          [{ t: "Para", c: paragraph }],
+        ],
+      });
+      paragraphLines = [];
     }
   };
   for (const line of text.split("\n")) {
@@ -344,10 +428,7 @@ function textToBlocks(text) {
       flush();
       continue;
     }
-    if (paragraph.length > 0) {
-      paragraph.push({ t: "LineBreak" });
-    }
-    paragraph.push(...textToInlines(line));
+    paragraphLines.push(line);
   }
   flush();
   return blocks;
@@ -369,6 +450,19 @@ function buildPandocAst(receivedText, responseText) {
       papersize: metaString("a4"),
       fontsize: metaString("11pt"),
       mainfont: metaString("DejaVu Sans"),
+      lang: metaString("en"),
+      dir: metaString("ltr"),
+      "babel-otherlangs": {
+        t: "MetaList",
+        c: [metaString("hebrew"), metaString("arabic")],
+      },
+      babelfonts: {
+        t: "MetaMap",
+        c: {
+          hebrew: metaString("Noto Sans Hebrew"),
+          arabic: metaString("Noto Sans Arabic"),
+        },
+      },
       geometry: {
         t: "MetaList",
         c: [

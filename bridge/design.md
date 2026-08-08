@@ -105,8 +105,10 @@
   response strings through a fixed Pandoc JSON AST. It gives user text only
   literal `Str` nodes, validates exact Pandoc and bounded XeTeX version
   receipts, invokes fixed absolute binaries without a shell, isolates all
-  renderer state in private directories, uses the fixed Hebrew-capable
-  `DejaVu Sans` face, disables TeX shell escape, validates
+  renderer state in private directories, uses fixed `DejaVu Sans`,
+  `Noto Sans Hebrew`, and `Noto Sans Arabic` faces, and expresses
+  mixed English/Hebrew/Arabic direction only
+  through native Pandoc metadata, `Div`, and `Span` attributes. It disables TeX shell escape, validates
   the bounded PDF, and returns an idempotent cleanup handle.
 - `openclaw-plugin/run-context-control.mjs` is the late-call adapter for
   OpenClaw's host-owned run context. It registers one plugin-owned agent-event

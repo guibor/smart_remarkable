@@ -354,9 +354,13 @@ OpenClaw session.
   `remarkable_deliver_document` agent tool.
 - Automatic response rendering requires exact `/usr/bin/pandoc` version 3.6.3
   with Pandoc JSON API 1.23.1 and `/usr/bin/xelatex` reporting a supported
-  XeTeX/TeX Live family. The fixed `DejaVu Sans` face must be installed with
-  Latin and Hebrew coverage. Every render rechecks the executable receipts
-  inside its private no-shell environment before processing the structured AST.
+  XeTeX/TeX Live family. Fixed `DejaVu Sans`, `Noto Sans Hebrew`, and
+  `Noto Sans Arabic` faces must be installed. The AST pins an English/LTR document base,
+  preloads Babel's Hebrew and Arabic languages, and marks each paragraph and
+  text run with an explicit structured language/direction attribute. The fixed
+  XeLaTeX font set does not promise glyphs for every emoji. Every
+  render rechecks the executable receipts inside its private no-shell
+  environment before processing the structured AST.
 - In live OpenClaw configuration, explicitly grant both reviewed hook
   permissions to this non-bundled plugin:
 

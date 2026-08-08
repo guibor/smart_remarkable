@@ -869,7 +869,7 @@ those stock-process and filesystem invariants.
 The current two-button client passes its applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
 font-render output-path test filtered. The current candidate bridge and
-no-mirror delivery plugin suite passes 219 Node tests; this is local behavior
+no-mirror delivery plugin suite passes 221 Node tests; this is local behavior
 evidence, while server transaction `20260801T213248Z-32250` and its direct live
 probes separately prove only the still-installed plugin `0.4.0` generation.
 All six
@@ -1460,8 +1460,10 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   cloud-upload receipt path with in-flight coalescing and fail-closed replay.
 - `renderResponsePdf` in `bridge/openclaw-plugin/response-pdf.mjs`: validates
   bounded, well-formed, nonblank Unicode input, builds the fixed Pandoc JSON AST, runs the
-  pinned renderer with the installed Hebrew-capable `DejaVu Sans` face in
-  private bounded state, validates the resulting regular
+  pinned renderer with installed fixed `DejaVu Sans`, `Noto Sans Hebrew`, and
+  `Noto Sans Arabic` faces in private bounded state, marks
+  English/Hebrew/Arabic paragraphs and runs with
+  native structured language/direction attributes, validates the resulting regular
   PDF and hash, and returns an upload snapshot plus idempotent cleanup.
 - `createRemarkableUploadTool` in
   `bridge/openclaw-plugin/remarkable-upload.mjs`: validates and privately
