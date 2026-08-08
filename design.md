@@ -960,6 +960,22 @@ selection through each physical icon, including answer-only stock-text
 insertion for notebook-with-sparkles, followed by one harmless document
 delivery.
 
+The current coordinated server generation was promoted by guarded transaction
+`20260808T1525Z-8fd9b9a` from pushed product commit
+`8fd9b9adc74cdf4eb0d39356466db6b787501371`. Deployment canary
+`smart-remarkable-deployment-canary-20260808-1535` completed the production
+origin-v5/schema-v4 path with native WhatsApp acknowledgement and final
+receipts both `sent`, then uploaded exactly one reMarkable Cloud PDF named
+`OpenClaw response 52529b2d9cab7eed.pdf`. The strict cloud receipt recorded
+document ID `6d767c13-c503-4bb7-89df-0ab5d98c8aee` and content hash
+`86d43f27df81ca1972a194ce2e7f16f3f8361b235d97f0d357a9a179094f57fc`.
+After the transaction, Gateway PID `1133793` and bridge PID `1133870` were
+active with zero restarts, bridge health was OK, and the watchdog was
+active/waiting after a successful fresh invocation. This is real server-side
+WhatsApp and reMarkable Cloud delivery evidence; it does not claim that a
+particular tablet has physically downloaded the cloud document. No tablet was
+contacted or changed during this server-only promotion.
+
 ### Historical one-button deployment baseline
 
 The three-mode bundle is installed at
