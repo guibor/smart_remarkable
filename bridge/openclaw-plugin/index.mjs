@@ -424,6 +424,13 @@ export function registerDeliveryMethod(api, overrides = {}) {
   });
 }
 
+// OpenClaw may register prompt hooks and Gateway methods through separate API
+// registration objects in one Gateway process. Keep the bounded admission
+// registry at module scope so every registration of this exact plugin module
+// shares the same hook-activated, fixed-deadline authority. A Gateway restart
+// still clears all admissions.
+const admissionRegistry = createOriginAdmissionRegistry();
+
 export default definePluginEntry({
   id: "smart-remarkable-delivery",
   name: "Smart reMarkable delivery",
@@ -432,7 +439,6 @@ export default definePluginEntry({
   register(api) {
     requireRemarkableHookPolicy(api);
     const runContext = createRunContextControl({ api });
-    const admissionRegistry = createOriginAdmissionRegistry();
     registerDeliveryMethod(api);
     registerRemarkableOriginMethods(api, {
       admissionRegistry,

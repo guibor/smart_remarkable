@@ -496,7 +496,9 @@ and requires a live active origin admission. The prompt hook first activates
 the host run context before the model runs. Immediately after exact
 `chat.send` acceptance, the bridge repeats the idempotent bind call and
 requires an `active` receipt; that latches the hook-proven state into the
-Gateway-handler plugin instance while the host context still exists. OpenClaw's
+Gateway handler. Because OpenClaw can register the hook and methods through
+separate API objects, `index.mjs` creates their one bounded admission registry
+at module scope rather than once per registration. OpenClaw's
 callback-scoped run context may then disappear normally when that run ends;
 the handler permits that absence only while the same opaque handle, captured
 session, capability, fixed active deadline, and in-process admission remain

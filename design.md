@@ -1458,7 +1458,8 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   only when the prompt hook reports that exact transcript; recheck the exact
   active identity and final guidance in `before_agent_run`; expose an exact
   `active` idempotent-bind receipt so the bridge can latch that hook-proven,
-  fixed-deadline admission into the Gateway-handler plugin instance immediately
+  fixed-deadline admission into the module-scoped, process-bounded registry shared
+  by separate hook and Gateway-method API registrations immediately
   after `chat.send` acceptance and before OpenClaw normally tears down its
   callback-scoped run context; and authorize the
   upload tool only at the exact run/transcript/agent/session-key boundary.
