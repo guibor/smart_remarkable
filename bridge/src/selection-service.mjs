@@ -22,7 +22,6 @@ import {
   SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
   SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
   verifyOriginBinding,
-  verifyOriginActivation,
   verifyOriginClearing,
   verifyResponsePdfReceipt,
 } from "./source-provenance.mjs";
@@ -391,7 +390,6 @@ export class SelectionService {
       ackPromise: null,
       originBound: false,
       originBindingHandle: null,
-      originActivationPromise: null,
       runId: null,
       terminal: deferred(),
       replayed: false,
@@ -456,31 +454,6 @@ export class SelectionService {
     job.accepted = true;
     job.acceptedAt = Date.now();
     job.runId = payload.runId;
-
-    job.originActivationPromise ??= this.#requestForJob(
-      job,
-      ORIGIN_BIND_METHOD,
-      {
-        protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
-        requestId: job.requestId,
-        mode: job.mode,
-        selectionKind: job.selectionKind,
-        contextVersion: job.contextVersion,
-        expectedSessionId: job.sessionId,
-      },
-      { timeoutMs: this.config.sendTimeoutMs },
-    ).then((result) =>
-      verifyOriginActivation(
-        result,
-        job.requestId,
-        job.mode,
-        job.selectionKind,
-        job.sessionId,
-        job.contextVersion,
-        job.originBindingHandle,
-      ),
-    );
-    job.originActivationPromise.catch(() => {});
 
     const acknowledgementRunId = `${job.requestId}:ack`;
     job.ackPromise = this.#requestForJob(
@@ -1042,8 +1015,6 @@ export class SelectionService {
       if (!job.accepted) {
         throw new Error("OpenClaw did not acknowledge the run");
       }
-
-      await job.originActivationPromise;
 
       terminal ??= await this.#waitForCompletedText(job);
       const envelope =

@@ -492,23 +492,22 @@ arguments cannot authorize an upload.
 Creates the admin-scoped automatic response-PDF RPC. It accepts exactly the
 request ID, opaque binding handle, normalized literal transcription, and
 answer; enforces the response-envelope byte/control/line-complexity bounds;
-and requires a live active origin admission. The prompt hook first activates
-the host run context before the model runs. Immediately after exact
-`chat.send` acceptance, the bridge repeats the idempotent bind call and
-requires an `active` receipt; that latches the hook-proven state into the
-Gateway handler. Because OpenClaw can register the hook and methods through
-separate API objects, `index.mjs` creates their one bounded admission registry
-at module scope rather than once per registration. OpenClaw's
-callback-scoped run context may then disappear normally when that run ends;
-the handler permits that absence only while the same opaque handle, captured
-session, capability, fixed active deadline, and in-process admission remain
-exact. Any still-present host record must match the authority fields, and the
-bridge's explicit clear removes the admission after completion. One fingerprint binds those values,
+and requires the exact bounded server-created origin admission and opaque
+handle. The prompt hook independently activates and authenticates the host run
+context before the model runs; the bridge independently requires exact
+`chat.send` acceptance and a strictly attributable response before requesting
+the PDF. Because OpenClaw removes callback-scoped run context at run end and
+may isolate hook and Gateway registrations, PDF authorization does not depend
+on that transient active value. It remains bound to the same request, opaque
+handle, captured session, capability, fixed pending/active deadline, and
+Gateway-handler admission. Any still-present host record must match the
+authority fields, and the bridge's explicit clear removes the admission after
+completion. One fingerprint binds those values,
 the origin capability/session, and the fixed policy. Identical in-flight calls
 share one promise, at most one distinct operation may run at a time,
 conflicting or excess work fails before rendering, and an exact completed durable
 receipt returns before rendering. After a new render it rechecks the unchanged
-admission, uploads through the common no-shell receipt path, returns only the
+bounded admission, uploads through the common no-shell receipt path, returns only the
 strict cloud receipt, and always invokes the renderer cleanup handle.
 
 ### `renderResponsePdf(input, dependencies)`

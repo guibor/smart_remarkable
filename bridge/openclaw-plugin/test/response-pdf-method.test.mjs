@@ -371,6 +371,38 @@ test("keeps the activated admission through host run-context teardown", async (t
   assert.equal(afterClear.error.code, "UNAUTHORIZED");
 });
 
+test("authorizes the bridge-owned PDF from the exact bounded bind handle", async (t) => {
+  const fixture = await createFixture(t);
+  const binding = await invokeGateway(fixture.bindingHandlers.bind, {
+    protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+    requestId: OTHER_REQUEST_ID,
+    mode: "whatsapp_only",
+    selectionKind: "image",
+    contextVersion: REMARKABLE_INPUT_CONTEXT_VERSIONS[0],
+    expectedSessionId: SESSION_ID,
+  });
+  assert.equal(binding.ok, true);
+  assert.equal(binding.payload.status, "bound");
+  const tracker = { inputs: [], cleanups: 0 };
+  const handler = fixture.createHandler({
+    renderer: createRenderer(fixture.stateDir, tracker),
+    execFileFn: async () => ({
+      stdout: JSON.stringify({ id: DOCUMENT_ID, hash: CLOUD_HASH }),
+      stderr: "",
+    }),
+  });
+
+  const result = await invokeGateway(handler, {
+    ...fixture.params,
+    requestId: OTHER_REQUEST_ID,
+    bindingHandle: binding.payload.bindingHandle,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.payload.status, "uploaded");
+  assert.equal(tracker.inputs.length, 1);
+  assert.equal(tracker.cleanups, 1);
+});
+
 test("rejects unknown, malformed, inactive, expired, and wrong origin authority before rendering", async (t) => {
   const fixture = await createFixture(t);
   const tracker = { inputs: [], cleanups: 0 };

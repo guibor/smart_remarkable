@@ -434,7 +434,6 @@ function readAuthorizedResponsePdfOrigin(
   const stored = parseStoredOrigin(rawStored, request.requestId);
   if (
     !origin ||
-    origin.state !== "active" ||
     origin.expiresAt <= at ||
     !constantTimeEqual(origin.bindingHandle, request.bindingHandle) ||
     (rawStored !== undefined &&
@@ -719,7 +718,6 @@ export function createOriginAdmissionRegistry({
       const origin = entries.get(request?.requestId);
       if (
         !isBoundOrigin(origin, request?.requestId) ||
-        origin.state !== "active" ||
         origin.expiresAt <= at ||
         !constantTimeEqual(origin.bindingHandle, request?.bindingHandle) ||
         (expectedOrigin !== undefined &&

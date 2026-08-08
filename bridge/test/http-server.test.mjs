@@ -254,14 +254,9 @@ class FakeGateway {
       );
     }
     if (method === ORIGIN_BIND_METHOD) {
-      const bindCallCount = this.calls.filter(
-        (call) =>
-          call.method === ORIGIN_BIND_METHOD &&
-          call.params.requestId === params.requestId,
-      ).length;
       return Promise.resolve({
         protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
-        status: bindCallCount === 1 ? "bound" : "active",
+        status: "bound",
         runId: params.requestId,
         source: "remarkable",
         mode: params.mode,
@@ -705,7 +700,7 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   const originClearCalls = gateway.calls.filter(
     (call) => call.method === ORIGIN_CLEAR_METHOD,
   );
-  assert.equal(originBindCalls.length, 2);
+  assert.equal(originBindCalls.length, 1);
   assert.equal(originClearCalls.length, 1);
   assert.deepEqual(originBindCalls[0].params, {
     protocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
@@ -715,7 +710,6 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
     contextVersion: SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
     expectedSessionId: "test-canonical-session",
   });
-  assert.deepEqual(originBindCalls[1].params, originBindCalls[0].params);
   assert.deepEqual(originClearCalls[0].params, {
     requestId: "smart-remarkable-test-0001",
     bindingHandle: ORIGIN_BINDING_HANDLE,
@@ -724,13 +718,6 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
     gateway.calls.indexOf(originBindCalls[0]) <
       gateway.calls.indexOf(chatCalls[0]),
     "trusted origin must be bound before chat.send",
-  );
-  assert.ok(
-    gateway.calls.indexOf(originBindCalls[1]) >
-      gateway.calls.indexOf(chatCalls[0]) &&
-      gateway.calls.indexOf(originBindCalls[1]) <
-        gateway.calls.indexOf(responsePdfCalls[0]),
-    "the active hook origin must be latched after acceptance and before the response PDF",
   );
   assert.ok(
     gateway.calls.indexOf(originClearCalls[0]) >

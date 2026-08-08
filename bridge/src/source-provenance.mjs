@@ -165,38 +165,6 @@ export function verifyOriginBinding(
   return result.bindingHandle;
 }
 
-export function verifyOriginActivation(
-  result,
-  requestId,
-  mode,
-  selectionKind,
-  expectedSessionId,
-  contextVersion,
-  bindingHandle,
-) {
-  if (
-    typeof bindingHandle !== "string" ||
-    !/^[A-Za-z0-9_-]{43}$/.test(bindingHandle) ||
-    typeof requestId !== "string" ||
-    !SMART_REMARKABLE_REQUEST_ID_PATTERN.test(requestId) ||
-    typeof expectedSessionId !== "string" ||
-    !SESSION_ID_PATTERN.test(expectedSessionId) ||
-    result?.protocol !== SOURCE_PROVENANCE_PROTOCOL_VERSION ||
-    result?.status !== "active" ||
-    result?.runId !== requestId ||
-    result?.source !== "remarkable" ||
-    result?.mode !== mode ||
-    result?.selectionKind !== selectionKind ||
-    result?.contextVersion !== contextVersion ||
-    contextVersion !== SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION ||
-    result?.expectedSessionId !== expectedSessionId ||
-    result?.bindingHandle !== bindingHandle
-  ) {
-    throw new Error("OpenClaw did not latch the active reMarkable origin");
-  }
-  return true;
-}
-
 export function verifyOriginClearing(result, requestId) {
   if (
     typeof requestId !== "string" ||
