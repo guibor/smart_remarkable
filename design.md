@@ -112,7 +112,9 @@ icon (send to agent) in the stock selection menu immediately after
 `write_back`: OpenClaw delivers through WhatsApp and the tablet inserts the
 same final answer as stock text. Send to agent means `whatsapp_only`:
 OpenClaw delivers through WhatsApp and the tablet performs no text, pen, or
-touch output. Each button sets its own stock `selected` state and snapshots the
+touch output. Both modes also upload one deterministic answer PDF to the
+configured reMarkable Cloud library and report its receipt status in the final
+WhatsApp message. Each button sets its own stock `selected` state and snapshots the
 pending selection before scheduling launch with `Qt.callLater`, while shared
 pending state rejects another button tap. The deferred callback first
 revalidates the same mode, snapshot, and visible handler so the selected state
@@ -399,9 +401,11 @@ non-empty text part followed by the role-tagged selected-region and
 current-page PNGs, plus exact document/page metadata. Headers bind that context
 version, response mode, `ink`/`image`/`mixed` selection kind, and a unique
 request id in the exact `smart-remarkable-` namespace. Before reserving journal
-capacity, the bridge requires the exact plugin-0.4/origin-v4 capability receipt
-for the current authenticated Gateway connection generation, including ordered
-`selection-page-v1`, `selection`/`current_page`, and selection-kind arrays. Disconnect or
+capacity, the candidate bridge requires the exact plugin-0.5/origin-v5
+capability receipt for the current authenticated Gateway connection generation,
+including the response-PDF method, `response-pdf-cloud-v1` policy,
+`remarkable_cloud` destination, ordered `selection-page-v1`,
+`selection`/`current_page`, and selection-kind arrays. Disconnect or
 reconnect invalidates readiness; `/health` and the next admission re-probe, and
 all request-specific RPCs stay pinned to the admitted generation. The bridge
 then converts the request to native Gateway `chat.send` with fixed-name
@@ -409,7 +413,7 @@ then converts the request to native Gateway `chat.send` with fixed-name
 `sessionKey=agent:main:main`, explicit server-owned WhatsApp routing,
 `deliver=false`, disabled command interpretation, and the request id as its
 idempotency key. Before that call, the bridge invokes
-`smart_remarkable.bind_origin` with origin-v4, the same request id, response
+`smart_remarkable.bind_origin` with origin-v5, the same request id, response
 mode, trusted selection kind, `selection-page-v1`, and captured transcript. The plugin stores one immutable
 pending admission as a realm-neutral JSON string in OpenClaw's host run
 context and activates it only when the prompt hook sees the exact request run,
@@ -419,7 +423,7 @@ registries.
 
 OpenClaw closes ordinary plugin API methods after registration, so late bind
 and clear Gateway handlers do not call the public run-context facade directly.
-Plugin version 0.4.0 registers a private agent-event control subscription
+Plugin version 0.5.0 retains the private agent-event control subscription
 during `register`. Each late get, set, or clear stays in the originating
 plugin instance's bounded private map while the adapter emits only a random
 operation ID on its plugin-owned stream. The synchronous subscription callback
@@ -484,9 +488,10 @@ observed reset shape without broad transcript scanning or unsafe repinning.
 
 This `chat.send` run is the only owner of canonical transcript entries. The
 bridge appends response-envelope v3, a fixed versioned protocol that requires
-the canonical assistant final to contain exactly two bounded strings:
+the canonical assistant final to contain exactly two bounded, non-whitespace
+strings:
 `{"received_text":"...","response_text":"..."}`. `received_text` is a literal
-literal kind-aware account of the selected content and uses `[unclear]` rather
+kind-aware account of the selected content and uses `[unclear]` rather
 than guessing;
 `response_text` is the ordinary answer. The bridge parses the same envelope
 from either an exact live final event or strictly attributable bounded-history
@@ -497,13 +502,17 @@ queued canonical turn: the bridge polls bounded history for the target
 `<request-id>:user` entry and accepts only its following assistant text before
 another user entry. The request and client timeouts remain finite but allow
 ordinary long-running OpenClaw tool work: ten minutes on the bridge and a
-small final-delivery margin on the tablet HTTP client.
+small final-delivery margin on the tablet HTTP client. The response renderer
+reserves 512 bytes below WhatsApp's 32 KiB native limit for its fixed PDF
+status line, so adding a receipt cannot invalidate an otherwise accepted
+answer.
 
 It separately calls the plugin-owned
 `smart_remarkable.deliver` Gateway method for one idempotent,
 delivery-checked receipt acknowledgement saying that OpenClaw is reading and
 working, then for one atomic final formatted as `I read:`, a quoted literal
-transcription, a blank line, and `response_text`. `[unclear]` becomes an
+transcription, a blank line, `response_text`, and one fixed PDF-upload status.
+`[unclear]` becomes an
 explicit inability-to-read statement rather than a fabricated quote. The
 quote and answer share the existing `<request-id>:final` native receipt and
 idempotency identity, so this does not add a third send or crash window. That
@@ -513,6 +522,35 @@ a `mirror` or session context, and returns success only with a native WhatsApp
 provider receipt. This avoids duplicate delivery-mirror transcript messages,
 does not rely on unverified automatic delivery, and does not change the
 canonical session's persistent verbose setting.
+
+After recovering the strict response envelope, the bridge also calls
+`smart_remarkable.deliver_response_pdf` on the same authenticated Gateway
+generation with only the request ID, active origin-binding handle, and the two
+validated strings. The plugin rechecks the exact active run, captured
+transcript, main agent, canonical session, binding handle, and fixed
+`response-pdf-cloud-v1` policy. It then creates a private transaction under
+OpenClaw state and renders a one-column PDF from a Pandoc JSON AST: untrusted
+text appears only as literal `Str` nodes and is never parsed as Markdown,
+HTML, or TeX. Pandoc and XeLaTeX are invoked at pinned absolute paths without
+a shell, inside bounded private HOME/XDG/TEXMF/TMP directories, with Pandoc
+sandboxing, XeLaTeX shell escape disabled, deterministic metadata, strict
+time/output/version/PDF validation, and cleanup on every result. A deterministic
+request-derived ASCII name avoids title, path, and filename injection.
+
+The generated snapshot reuses the existing no-shell `rm-sync` upload and
+durable artifact-receipt machinery. Identical in-flight calls coalesce; a
+completed receipt returns `cached: true`; conflicting reuse and ambiguous
+outcomes fail closed rather than creating a second document. At most two
+distinct PDF operations may run at once in the Gateway process; excess work is
+rejected before rendering to protect server capacity. The bridge waits
+for this terminal receipt before sending the WhatsApp final so that WhatsApp
+can say whether reMarkable Cloud accepted the PDF. Upload failure is additive:
+the fixed failure status and schema-v4 journal outcome do not erase a
+receipt-confirmed WhatsApp answer or an otherwise safe `write_back` result.
+The destination is the configured reMarkable Cloud library, so every tablet
+on that account may sync it; neither the current request schema nor the
+forward-only SSH tunnel can target only the originating physical tablet or
+append a PDF into the source notebook.
 
 For every verified v3 reMarkable run, the plugin's prompt hook treats the lasso
 as the focal request and uses its kind, same-frame page view, document-id-bound name,
@@ -536,9 +574,9 @@ magic, snapshots it to private plugin state, and invokes the already-installed
 environment and no shell. A durable artifact journal binds request id,
 artifact key, content hash, name, and destination before upload; an ambiguous
 reservation never retries automatically. Only validated cloud document
-id/hash JSON becomes a success receipt. WhatsApp remains the place where
-OpenClaw quotes what it received and reports the upload; reMarkable Cloud is
-only the requested artifact destination.
+id/hash JSON becomes a success receipt. This richer, model-created artifact is
+separate from the automatic response summary PDF; an explicit document request
+may therefore create both when that is what the user asked for.
 
 For `write_back`, the bridge returns only the delivery-validated
 `response_text`; the main-owned `draw_text` callback first requires the exact
@@ -562,13 +600,14 @@ crop/image slots, request mode, and tool state are cleared before admission is
 released for another request.
 
 The persistent bridge journal validates the same request-id namespace and uses
-schema v3 to bind the fingerprint, response mode, selection kind, exact
+schema v4 to bind the fingerprint, response mode, selection kind, exact
 `selection-page-v1` context, both images, and canonical metadata. A completed
-schema-v3 response can replay without new Gateway work. Any schema-v1 or
-schema-v2 reservation or completion remains a capacity-consuming HTTP-409
+schema-v4 response also contains the exact safe uploaded/failed PDF outcome and
+can replay without new Gateway, WhatsApp, render, or upload work. Any schema-v1,
+schema-v2, or schema-v3 reservation or completion remains a capacity-consuming HTTP-409
 barrier: it is never replayed, resubmitted, deleted, or treated as absent.
-Origin-v4/plugin-0.4 and the schema-v3 bridge therefore require one quiesced
-guarded server promotion while the tablet buttons are inert; the
+Origin-v5/plugin-0.5, the renderer, and the schema-v4 bridge therefore require
+one quiesced guarded server promotion while the tablet buttons are idle; the
 current-generation capability probe is the readiness gate after Gateway reload.
 
 For firmware 3.28.0.164, the deployed native-button integration is a two-button
@@ -829,10 +868,11 @@ those stock-process and filesystem invariants.
 
 The current two-button client passes its applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
-font-render output-path test filtered. The current local bridge and no-mirror
-delivery plugin suite contains 165 Node tests; this is local behavior evidence,
-while server transaction `20260801T213248Z-32250` and its direct live probes
-separately prove plugin `0.4.0` deployment. All six
+font-render output-path test filtered. The current candidate bridge and
+no-mirror delivery plugin suite passes 219 Node tests; this is local behavior
+evidence, while server transaction `20260801T213248Z-32250` and its direct live
+probes separately prove only the still-installed plugin `0.4.0` generation.
+All six
 settings/runtime/protocol/artifact shell suites pass. The native tests cover
 strict nonce/orientation/freshness parsing, exact acknowledgement binding,
 distinct legacy generations, explicit-orientation framebuffer normalization,
@@ -851,8 +891,10 @@ recovery, user-anchor attribution barriers, durable pre-`chat.send`
 reservation, cross-process races, per-caller replay labeling, a hard
 no-eviction capacity, ownership-marker races, an eagerly writable private
 systemd state directory, explicit provider `sent` receipts, the strict request
-namespace, schema-v1/schema-v2 migration barriers, exact two-image role/order
-and metadata validation, selection-page fingerprints, response-envelope v3,
+namespace, schema-v1/schema-v2/schema-v3 migration barriers under schema v4,
+exact two-image role/order and metadata validation, selection-page
+fingerprints, response-envelope v3, origin-v5/plugin-0.5 capability binding,
+automatic response-PDF authorization/render/upload/replay/failure behavior,
 explicit sensitive-hook policy,
 final-prompt admission gating, current-generation capability re-probing,
 reconnect-race refusal, and dynamic health failure before journal reservation.
@@ -1084,8 +1126,8 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
 - `bridge/`: implements the loopback-only, narrow-token HTTP adapter. It
   validates the strict one-prompt/two-role-PNG `selection-page-v1` request,
   bounded document/page metadata, exact request-ID namespace, and trusted
-  selection kind. It proves the exact plugin `0.4.0`/origin-v4 capability
-  contract for
+  selection kind. It proves the exact plugin `0.5.0`/origin-v5 capability
+  contract, including the response-PDF RPC, policy, and destination, for
   the current authenticated Gateway generation before persistently reserving
   the request identity, then captures the current transcript as an exact recovery and authority
   locator, binds trusted reMarkable origin/session state, and submits one canonical
@@ -1098,11 +1140,14 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   and reconciles either same-session current history or the exact active/reset
   captured transcript. It refuses to resubmit any incomplete reservation after
   restart and uses the plugin-owned no-mirror delivery method for the ordered
-  acknowledgement and final. The schema-v3 request journal stores hashes,
-  mode, selection kind, context version, state, and a bounded cached response
-  but never either PNG, the prompt, or the raw document-display-name request
-  field. The cached safe response may naturally mention that title. Schema-v1 and
-  schema-v2 entries remain fail-closed capacity barriers. Its atomically
+  acknowledgement and final. After strict completion it requests the one
+  authenticated response PDF, waits for its terminal receipt, reports that
+  status in WhatsApp, and records the safe outcome. The schema-v4 request
+  journal stores hashes, mode, selection kind, context version, state, and a
+  bounded cached response plus PDF receipt metadata, but never either PNG, PDF
+  bytes, the prompt, or the raw document-display-name request field. The cached
+  safe response may naturally mention that title. Schema-v1, schema-v2, and
+  schema-v3 entries remain fail-closed capacity barriers. Its atomically
   claimed fixed-capacity slots are never automatically evicted; a leaked slot
   safely reduces capacity. The production bridge is a system service that
   drops to `User=mdf`, eagerly prepares its single private writable
@@ -1110,11 +1155,11 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   current-generation capability readiness. The service makes the rest of the server
   home read-only. A system service is required because the server's systemd
   249 user manager does not enforce `ProtectHome=` or `ProtectSystem=`.
-- `bridge/src/response-envelope.mjs`: owns the versioned canonical reply instruction, strict two-field JSON parser, normalization and byte limits, `[unclear]` handling, and atomic WhatsApp quote-plus-answer rendering.
+- `bridge/src/response-envelope.mjs`: owns the versioned canonical reply instruction, strict two-field JSON parser, normalization and byte limits, `[unclear]` handling, and WhatsApp quote-plus-answer rendering with a fixed reserve for the server-added PDF status.
 - `bridge/src/source-provenance.mjs`: defines the versioned trusted origin,
-  exact capability/bind/clear RPC names, strict request namespace, pinned
-  plugin/version/selection-kind contract, durable `systemInputProvenance`, and
-  strict bridge-side receipt validation.
+  exact capability/bind/clear/response-PDF RPC names, strict request namespace,
+  pinned plugin/version/selection-kind/PDF-policy contract, durable
+  `systemInputProvenance`, and strict bridge-side receipt validation.
 - `bridge/src/transcript-recovery.mjs`: reads only the transcript ID captured
   during preflight, using a validated filename component, active-file
   precedence, at most 128 exact reset-archive names, `O_NOFOLLOW`, a 64 MiB
@@ -1126,16 +1171,18 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   record symlinks are each rejected before a cached response can be read.
 - `bridge/openclaw-plugin/`: defines the tightly scoped
   `smart_remarkable.deliver`, `smart_remarkable.capabilities`,
-  `smart_remarkable.bind_origin`, and `smart_remarkable.clear_origin` Gateway
+  `smart_remarkable.bind_origin`, `smart_remarkable.clear_origin`, and
+  `smart_remarkable.deliver_response_pdf` Gateway
   methods, model-admission/prompt/tool-call hooks, and
   `remarkable_deliver_document` agent tool. Delivery accepts only a bounded
   request ID, kind, and text; derives the direct `agent:main:main` WhatsApp
   route inside OpenClaw; coalesces exact retries; sends through the public
   durable channel outbound API without transcript-mirror metadata; and exposes
   only normalized provider receipts or fixed errors. Delivery remains
-  `operator.write`; origin bind and clear require `operator.admin`. Origin binding stores a
+  `operator.write`; origin bind, clear, and response-PDF delivery require
+  `operator.admin`. Origin binding stores a
   server-generated capability and separate cleanup handle as a scalar host
-  run-context record before model admission. The deployed version-0.4.0 generation
+  run-context record before model admission. The candidate version-0.5.0 generation
   requires explicit live prompt-injection and conversation-access policy, then reaches
   that host state after registration through its synchronous agent-event
   adapter. The event contains only a random operation ID; the complete bounded
@@ -1158,6 +1205,11 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   directories and records without following links, validates ownership,
   identity, private mode, link count, size, and UTF-8 before accepting cached
   success.
+- `bridge/openclaw-plugin/response-pdf.mjs`: creates a private deterministic
+  response-summary PDF from only the strict selection transcription and answer.
+  It uses a structured Pandoc JSON AST with no raw nodes, pinned no-shell
+  Pandoc/XeLaTeX execution, private caches, fixed styling and naming, strict
+  text/dependency/time/output/PDF checks, and an idempotent cleanup handle.
 - `scripts/run-selected-once.sh`: provides the constrained SSH-triggered Paper
   Pro launcher. It validates both tunnel ports, starts and health-checks a
   restricted SSH port forward to the loopback bridge rather than the
@@ -1372,7 +1424,9 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   reset archive is strictly and stably proven unanchored and the new history
   contains the exact request anchor plus persisted Smart reMarkable
   provenance. It verifies any live candidate against the eligible history
-  anchor and commits the mode-specific safe response.
+  anchor, requests one binding-scoped response PDF, waits for its strict cloud
+  receipt, sends the final WhatsApp answer with that status, and commits the
+  mode-specific schema-v4 safe response.
 - `createRunContextControl` in
   `bridge/openclaw-plugin/run-context-control.mjs`: registers the plugin-owned
   subscription while the API is open, then adapts late synchronous
@@ -1399,6 +1453,16 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   only when the prompt hook reports that exact transcript; recheck the exact
   active identity and final guidance in `before_agent_run`; and authorize the
   upload tool only at the exact run/transcript/agent/session-key boundary.
+- `createRemarkableResponsePdfHandler` in
+  `bridge/openclaw-plugin/remarkable-upload.mjs`: validates the exact bridge
+  RPC, rechecks its opaque active-origin handle and canonical run identity,
+  renders one deterministic response PDF, and routes it through the durable
+  cloud-upload receipt path with in-flight coalescing and fail-closed replay.
+- `renderResponsePdf` in `bridge/openclaw-plugin/response-pdf.mjs`: validates
+  bounded, well-formed, nonblank Unicode input, builds the fixed Pandoc JSON AST, runs the
+  pinned renderer with the installed Hebrew-capable `DejaVu Sans` face in
+  private bounded state, validates the resulting regular
+  PDF and hash, and returns an upload snapshot plus idempotent cleanup.
 - `createRemarkableUploadTool` in
   `bridge/openclaw-plugin/remarkable-upload.mjs`: validates and privately
   snapshots a workspace PDF or EPUB, invokes the pinned reMarkable Cloud CLI

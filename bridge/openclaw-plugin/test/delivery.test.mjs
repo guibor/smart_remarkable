@@ -9,6 +9,7 @@ import {
   CANONICAL_SESSION_KEY,
   DELIVERY_METHOD,
   REMARKABLE_CAPABILITIES_METHOD,
+  REMARKABLE_RESPONSE_PDF_METHOD,
   createDeliveryHandler,
   default as deliveryPlugin,
   registerDeliveryMethod,
@@ -263,12 +264,14 @@ test("the real plugin entry registers without requesting restricted keyed state"
       REMARKABLE_CAPABILITIES_METHOD,
       "smart_remarkable.bind_origin",
       "smart_remarkable.clear_origin",
+      REMARKABLE_RESPONSE_PDF_METHOD,
     ],
   );
   assert.deepEqual(
     registrations.map((entry) => entry.options),
     [
       { scope: "operator.write" },
+      { scope: "operator.admin" },
       { scope: "operator.admin" },
       { scope: "operator.admin" },
       { scope: "operator.admin" },

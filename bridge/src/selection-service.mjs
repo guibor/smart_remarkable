@@ -9,18 +9,21 @@ import {
 } from "./request-journal.mjs";
 import {
   buildResponseEnvelopeProtocolInstruction,
+  MAX_WHATSAPP_DELIVERY_BYTES,
   parseResponseEnvelope,
   renderResponseEnvelope,
 } from "./response-envelope.mjs";
 import {
   ORIGIN_BIND_METHOD,
   ORIGIN_CLEAR_METHOD,
+  RESPONSE_PDF_METHOD,
   SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   SOURCE_PROVENANCE_PROTOCOL_VERSION,
   SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
   SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
   verifyOriginBinding,
   verifyOriginClearing,
+  verifyResponsePdfReceipt,
 } from "./source-provenance.mjs";
 import {
   proveCapturedResetTranscriptUnanchored,
@@ -37,6 +40,7 @@ const CHAT_HISTORY_TRUNCATION_MARKERS = [
   "[chat.history unavailable: transcript too large to display; the full history is preserved on disk]",
 ];
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const RESPONSE_PDF_FAILURE_STATUS = Object.freeze({ status: "failed" });
 
 function deferred() {
   let resolve;
@@ -128,6 +132,21 @@ function verifyNativeSend(result, expectedRunId, expectedChannel) {
     throw new Error("OpenClaw did not confirm the WhatsApp send");
   }
   return result;
+}
+
+function renderResponsePdfStatus(remarkableDocument) {
+  if (remarkableDocument.status === "uploaded") {
+    return `PDF: sent to your reMarkable Cloud library as ${remarkableDocument.name}.`;
+  }
+  return "PDF: I could not confirm delivery to your reMarkable Cloud library.";
+}
+
+function buildWhatsappFinal(envelope, remarkableDocument) {
+  const message = `${renderResponseEnvelope(envelope)}\n\n${renderResponsePdfStatus(remarkableDocument)}`;
+  if (Buffer.byteLength(message, "utf8") > MAX_WHATSAPP_DELIVERY_BYTES) {
+    throw new Error("WhatsApp final response exceeded the delivery limit");
+  }
+  return message;
 }
 
 function translateJournalError(error) {
@@ -1000,10 +1019,33 @@ export class SelectionService {
       terminal ??= await this.#waitForCompletedText(job);
       const envelope =
         terminal.envelope ?? parseResponseEnvelope(terminal.text);
-      const whatsappFinal = renderResponseEnvelope(envelope);
+      const responsePdfPromise = this.#requestForJob(
+        job,
+        RESPONSE_PDF_METHOD,
+        {
+          requestId: job.requestId,
+          bindingHandle: job.originBindingHandle,
+          receivedText: envelope.received_text,
+          responseText: envelope.response_text,
+        },
+        { timeoutMs: this.config.runTimeoutMs },
+      )
+        .then((result) => verifyResponsePdfReceipt(result, job.requestId))
+        .catch(() => {
+          this.logger.error?.(
+            `reMarkable response PDF delivery failed for ${job.requestId}`,
+          );
+          return RESPONSE_PDF_FAILURE_STATUS;
+        });
       // Preserve visible WhatsApp ordering: finish the acknowledgement
-      // attempt before submitting the final, even when the ack failed.
-      const ack = await job.ackPromise;
+      // attempt before submitting the final, even when the ack failed.  The
+      // response PDF begins independently but reaches a terminal receipt
+      // before the final is sent, so WhatsApp can report its honest status.
+      const [ack, remarkableDocument] = await Promise.all([
+        job.ackPromise,
+        responsePdfPromise,
+      ]);
+      const whatsappFinal = buildWhatsappFinal(envelope, remarkableDocument);
       const finalRunId = `${job.requestId}:final`;
       const finalDelivery = await this.#requestForJob(
         job,
@@ -1033,6 +1075,7 @@ export class SelectionService {
         text: envelope.response_text,
         ack,
         finalDelivery,
+        remarkableDocument,
         replayed: job.replayed,
       });
       try {

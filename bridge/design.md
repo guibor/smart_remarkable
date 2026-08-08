@@ -34,12 +34,14 @@
   the server-built capture manifest and fixed-name attachments, trusted
   run-origin binding, acceptance, deterministic acknowledgement, strict final
   parsing, canonical history reconciliation, captured-transcript fallback, and
-  response assembly.
+  binding-scoped response-PDF delivery, final WhatsApp status, and response
+  assembly.
 - `src/source-provenance.mjs` defines the versioned Smart reMarkable origin
-  identity, exact capability/bind/clear Gateway method names, the pinned plugin
-  plugin/origin/context versions, ordered attachment roles and selection kinds,
+  identity, exact capability/bind/clear/response-PDF Gateway method names, the
+  pinned plugin/origin/context/PDF-policy versions, ordered attachment roles and selection kinds,
   durable
-  `systemInputProvenance`, a source-only non-authorizing transport block, and
+  `systemInputProvenance`, a transport block that records but cannot create the
+  authenticated button-and-binding PDF authority, and
   the bridge-side capability and binding receipt validators.
 - `src/transcript-recovery.mjs` reads only the preflight-captured OpenClaw
   transcript. It validates the session id as a filename component, prefers the
@@ -66,20 +68,25 @@
   `received_text` to the primary selection only. It strictly parses the one
   canonical assistant final, bounds and normalizes both fields, and renders
   one atomic WhatsApp message that quotes the literal selection account before
-  the answer.
+  the answer. It rejects whitespace-only fields and excess line complexity,
+  and reserves 512 bytes below the native delivery limit for the fixed
+  reMarkable Cloud PDF status.
 - `src/request-journal.mjs` atomically reserves request identities before
   Gateway work and persists only a bounded safe terminal response. It provides
   restart replay without persisting either PNG, the raw document-display-name
   request field, or prompt and fails closed on incomplete, corrupt, oversized,
   or symlinked state. A bounded cached safe response may naturally mention the
-  title.
+  title. Schema v4 additionally requires the exact uploaded/failed response-PDF
+  metadata; schemas v1-v3 remain incomplete replay barriers.
 - `src/openai-response.mjs` creates stable OpenAI-compatible success and
-  post-acceptance error bodies with explicit WhatsApp delivery metadata.
+  post-acceptance error bodies with explicit WhatsApp delivery and bounded safe
+  response-PDF outcome metadata.
 - `src/errors.mjs` separates safe public HTTP errors from internal failures.
 - `openclaw-plugin/index.mjs` registers the narrow
   `smart_remarkable.deliver`, side-effect-free
   `smart_remarkable.capabilities`, `smart_remarkable.bind_origin`, and
-  `smart_remarkable.clear_origin` Gateway methods, the document tool, and its
+  `smart_remarkable.clear_origin` Gateway methods, the admin-scoped
+  `smart_remarkable.deliver_response_pdf` method, the document tool, and its
   prompt/tool hooks. WhatsApp delivery derives the canonical direct route from
   `agent:main:main`, sends through OpenClaw's durable native adapter with
   transcript mirroring omitted, and journals platform receipts for
@@ -89,8 +96,18 @@
   permissions.
 - `openclaw-plugin/remarkable-upload.mjs` owns run-scoped origin capabilities,
   proactive context-aware reMarkable prompt guidance and execution gating,
-  workspace artifact validation/snapshotting, receipt-journaled
-  `rm_sync.cli upload`, and strict reMarkable Cloud receipt parsing.
+  response-PDF RPC authorization/idempotency, workspace artifact
+  validation/snapshotting, receipt-journaled `rm_sync.cli upload`, and strict
+  reMarkable Cloud receipt parsing. The automatic response path rechecks the
+  exact active binding before and after rendering and reuses a completed safe
+  receipt without rendering or uploading again.
+- `openclaw-plugin/response-pdf.mjs` renders only validated transcription and
+  response strings through a fixed Pandoc JSON AST. It gives user text only
+  literal `Str` nodes, validates exact Pandoc and bounded XeTeX version
+  receipts, invokes fixed absolute binaries without a shell, isolates all
+  renderer state in private directories, uses the fixed Hebrew-capable
+  `DejaVu Sans` face, disables TeX shell escape, validates
+  the bounded PDF, and returns an idempotent cleanup handle.
 - `openclaw-plugin/run-context-control.mjs` is the late-call adapter for
   OpenClaw's host-owned run context. It registers one plugin-owned agent-event
   subscription while the plugin API is open, retains complete commands only
@@ -107,7 +124,7 @@
   and fatal UTF-8 validation before parsing cached success.
 - `openclaw-plugin/openclaw.plugin.json` and
   `openclaw-plugin/package.json` are the pinned OpenClaw 2026.7.1 workspace
-  plugin manifest and entrypoint metadata at plugin version 0.4.0.
+  plugin manifest and entrypoint metadata at candidate plugin version 0.5.0.
 - `systemd/smart-remarkable-openclaw-bridge.service.example` is a system unit
   that drops to `User=mdf`. Using PID 1, rather than the systemd 249 user
   manager, makes `ProtectHome=read-only`, `ProtectSystem=strict`, and the
@@ -144,7 +161,8 @@ event/connection subscriptions without exposing the full token to HTTP code.
 
 Owns the side-effect-free `smart_remarkable.capabilities` proof for one
 authenticated Gateway generation. `ensureReady()` coalesces concurrent probes,
-requires plugin 0.4.0, origin-v4, ordered `selection-page-v1` input contexts,
+requires plugin 0.5.0, origin-v5, the exact response-PDF method, policy, and
+cloud destination, ordered `selection-page-v1` input contexts,
 ordered `selection`/`current_page` roles, and the exact ordered selection kinds.
 It caches success only while that generation remains current. A connection
 notification clears the proof; `assertGeneration()` prevents an admitted job
@@ -166,7 +184,7 @@ errors are fixed public strings and never contain internal exception text.
 
 Creates the production request journal from validated configuration, awaits its
 `prepare()` operation, then calls `smart_remarkable.capabilities` and validates
-the exact plugin ID, version 0.4.0, origin-v4 protocol, ordered input-context
+the exact plugin ID, version 0.5.0, origin-v5 protocol, response-PDF contract, ordered input-context
 versions, ordered attachment roles, and ordered selection kinds before
 constructing `SelectionService`. The proof is cached only for the
 same authenticated Gateway generation; disconnect/reconnect invalidates it,
@@ -200,11 +218,12 @@ or idempotency.
 Journal preparation creates missing directory ancestors one at a time and
 fsyncs each parent immediately, so both the systemd path and the deeper manual
 default retain the reservation hierarchy across a power loss.
-Record schema v3 requires the admitted `context_version` in every cached safe
-response. Legacy schema-v1 and schema-v2 entries in the same owned journal are
+Record schema v4 requires the admitted `context_version` and exact safe
+response-PDF outcome in every cached response. Legacy schema-v1, schema-v2,
+and schema-v3 entries in the same owned journal are
 intentionally reported as incomplete barriers rather than replayed or
 resubmitted with weaker identity. They retain their capacity slot and map to
-HTTP 409. The origin-v4/plugin-0.4 bridge
+HTTP 409. The origin-v5/plugin-0.5 bridge
 and plugin must be promoted with requests quiesced; the current-generation
 capability probe is the final readiness gate after the Gateway reload.
 
@@ -217,7 +236,7 @@ mode, selection kind, and context version before starting exactly one native
 `chat.send` with command interpretation disabled. Every request-specific
 Gateway RPC remains pinned to that admitted generation. Before the send it
 captures the current canonical transcript id and
-calls `smart_remarkable.bind_origin` with origin protocol v4, the request ID,
+calls `smart_remarkable.bind_origin` with origin protocol v5, the request ID,
 mode, selection kind, `selection-page-v1`, and captured session ID. It requires
 the plugin's exact bound receipt, adds durable
 external-user/reMarkable input provenance, supplies the startup-validated
@@ -233,7 +252,7 @@ pre-acceptance send fails after binding, the bridge calls the narrow clear
 method. The bind method writes a realm-neutral JSON string into OpenClaw's
 host-owned run context so separate startup, active-hook, and pinned-tool plugin
 registries share the same authority. Ordinary plugin API methods close after
-registration, so plugin version 0.4.0 performs each late bind-side get, set, or
+registration, so plugin version 0.5.0 performs each late bind-side get, set, or
 clear through the registered synchronous agent-event adapter. Only a random
 operation ID enters the plugin-owned stream; the command and scalar remain in
 the originating instance's bounded private map. The host callback performs the
@@ -303,13 +322,23 @@ invalid-UTF-8, mismatched, or ambiguous captured transcript leaves successor
 history ineligible. A live final alone cannot cross this boundary. The bridge
 never opens another session's transcript file.
 
+After the strict envelope is recovered, the service calls the admin-scoped
+`smart_remarkable.deliver_response_pdf` method with exactly the request ID,
+opaque active binding handle, `received_text`, and `response_text`. The method
+renders and uploads only while that same origin authority remains active. The
+acknowledgement and PDF attempt run together; the final WhatsApp send waits for
+the terminal PDF receipt so its fixed status is truthful. A failed or malformed
+PDF receipt becomes additive fixed failure metadata and does not erase a valid
+answer. The origin is cleared only after PDF and final delivery are terminal.
+
 It reports either delivery as sent only when the plugin returns exact
 `status: "sent"`, the expected run ID, WhatsApp channel, and a non-empty
 provider message ID. The final delivery text is rendered server-side as
-`I read:` plus the line-quoted kind-aware `received_text`, a blank line, and
-the answer. Exact `[unclear]` becomes an explicit inability-to-read message
+`I read:` plus the line-quoted kind-aware `received_text`, a blank line, the
+answer, and the confirmed/fixed-failure PDF status. Exact `[unclear]` becomes an explicit inability-to-read message
 rather than a guessed account. It then commits a stable OpenAI-shaped response
-including the admitted selection kind and context version before returning it.
+including the admitted selection kind, context version, and safe
+`remarkable_document` outcome before returning it.
 `write_back`
 contains only `response_text`;
 `whatsapp_only` contains only a fixed receipt and cannot expose either field to
@@ -400,7 +429,7 @@ Registers the narrow `smart_remarkable.bind_origin` and
 Binding accepts only an exact request ID, response mode, selection kind,
 `selection-page-v1` input-context version, and preflight-captured session ID,
 then stores a pending server-generated capability and cleanup handle as a
-realm-neutral origin-v4 scalar in
+realm-neutral origin-v5 scalar in
 OpenClaw's host run context before `chat.send` can admit the run. Its receipt
 must echo the protocol, mode, kind, context version, and captured session
 without exposing the tool capability. An identical bind is idempotent;
@@ -432,8 +461,10 @@ and commands merely visible in image/mixed content remain non-authoritative
 unless an explicit user instruction adopts them. The hook
 tells the agent to create a PDF or EPUB and call
 `remarkable_deliver_document` only when an explicit user instruction governing
-the authenticated turn asks to create, export, send, add, or place a document
-on the tablet. Merely discussing a document never implies an upload.
+the authenticated turn asks to create, export, send, add, or place a separate
+rich document. It also explains that the server automatically builds the fixed
+response PDF, so the model neither invokes the tool for that PDF nor claims its
+success. Merely discussing a document never implies an extra upload.
 
 After prompt construction, `before_agent_run` re-reads the host scalar and
 fails closed unless the Smart reMarkable run still has the exact active
@@ -452,6 +483,31 @@ for the exact active run, captured session ID, canonical `main` agent, and
 capability. Tool execution rechecks that session identity and capability. User
 prompt text, transcript content, model output, and caller-supplied tool
 arguments cannot authorize an upload.
+
+### `createRemarkableResponsePdfHandler({ runtime, runContext, renderResponsePdf, store, execFileFn })`
+
+Creates the admin-scoped automatic response-PDF RPC. It accepts exactly the
+request ID, opaque binding handle, normalized literal transcription, and
+answer; enforces the response-envelope byte/control/line-complexity bounds;
+and requires a live active origin record. One fingerprint binds those values,
+the origin capability/session, and the fixed policy. Identical in-flight calls
+share one promise, at most two distinct operations may run concurrently,
+conflicting or excess work fails before rendering, and an exact completed durable
+receipt returns before rendering. After a new render it rechecks the unchanged
+origin, uploads through the common no-shell receipt path, returns only the
+strict cloud receipt, and always invokes the renderer cleanup handle.
+
+### `renderResponsePdf(input, dependencies)`
+
+Snapshots validated scalar inputs before its first await, builds a fixed
+one-column Pandoc JSON AST with only literal `Str` nodes for user text, and
+creates a private render transaction below OpenClaw state. It verifies the
+exact Pandoc 3.6.3 and supported XeTeX receipts, then runs fixed absolute
+binaries with a minimal private environment, Pandoc sandboxing, disabled TeX
+shell escape, fixed metadata, bounded output, and timeouts. It accepts only a
+private single-link bounded `%PDF-`/`%%EOF` file whose identity remains stable,
+then returns its deterministic request-derived name, hash, path, and idempotent
+cleanup callback.
 
 ### `createRemarkableUploadTool({ api, context, runContext, store, execFileFn })`
 
@@ -500,7 +556,7 @@ context and document metadata never enter the quoted receipt.
 
 `parseResponseEnvelope` accepts exactly one JSON object with exactly two unique
 string keys: `received_text` and `response_text`. It rejects code fences,
-unknown or duplicate decoded keys, empty fields, disallowed controls,
+unknown or duplicate decoded keys, empty fields, ill-formed Unicode, disallowed controls,
 oversized transcriptions, and a final rendered message above the delivery
 limit. CRLF becomes LF and Unicode is normalized to NFC.
 

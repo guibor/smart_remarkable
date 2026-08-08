@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -18,6 +19,9 @@ import {
   ORIGIN_CAPABILITIES_METHOD,
   ORIGIN_BIND_METHOD,
   ORIGIN_CLEAR_METHOD,
+  RESPONSE_PDF_DESTINATION,
+  RESPONSE_PDF_METHOD,
+  RESPONSE_PDF_POLICY,
   SOURCE_PROVENANCE_PROTOCOL_VERSION,
   SMART_REMARKABLE_ATTACHMENT_ROLES,
   SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
@@ -62,8 +66,31 @@ function responseEnvelope(
 function renderedResponse(
   responseText,
   receivedText = DEFAULT_RECEIVED_TEXT,
+  requestId = "smart-remarkable-test-0001",
 ) {
-  return `I read:\n> ${receivedText}\n\n${responseText}`;
+  return `I read:\n> ${receivedText}\n\n${responseText}\n\nPDF: sent to your reMarkable Cloud library as ${pdfName(requestId)}.`;
+}
+
+function pdfName(requestId) {
+  const suffix = crypto
+    .createHash("sha256")
+    .update(requestId)
+    .digest("hex")
+    .slice(0, 16);
+  return `OpenClaw response ${suffix}.pdf`;
+}
+
+function pdfReceipt(requestId, overrides = {}) {
+  return {
+    status: "uploaded",
+    request_id: requestId,
+    artifact_key: RESPONSE_PDF_POLICY,
+    name: pdfName(requestId),
+    document_id: "123e4567-e89b-42d3-a456-426614174000",
+    cloud_hash: "a".repeat(64),
+    cached: false,
+    ...overrides,
+  };
 }
 
 function deferred() {
@@ -82,6 +109,9 @@ function exactCapabilities() {
     pluginId: OPENCLAW_PLUGIN_ID,
     pluginVersion: OPENCLAW_PLUGIN_VERSION,
     originProtocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
+    responsePdfMethod: RESPONSE_PDF_METHOD,
+    responsePdfPolicy: RESPONSE_PDF_POLICY,
+    responsePdfDestination: RESPONSE_PDF_DESTINATION,
     inputContextVersions: [SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION],
     attachmentRoles: [...SMART_REMARKABLE_ATTACHMENT_ROLES],
     selectionKinds: [...SMART_REMARKABLE_SELECTION_KINDS],
@@ -101,6 +131,9 @@ class FakeGateway {
     this.ackError = null;
     this.ackDeferred = null;
     this.finalError = null;
+    this.pdfError = null;
+    this.pdfDeferred = null;
+    this.pdfResultOverride = null;
     this.sendResultOverride = null;
     this.chatResultOverride = null;
     this.historyResult = {
@@ -183,6 +216,20 @@ class FakeGateway {
           messageId: `message-${runId}`,
           channel: "whatsapp",
         },
+      );
+    }
+    if (method === RESPONSE_PDF_METHOD) {
+      if (this.pdfError) {
+        return Promise.reject(this.pdfError);
+      }
+      if (this.pdfDeferred) {
+        return this.pdfDeferred.promise;
+      }
+      const receipt = pdfReceipt(params.requestId);
+      return Promise.resolve(
+        typeof this.pdfResultOverride === "function"
+          ? this.pdfResultOverride(params)
+          : (this.pdfResultOverride ?? receipt),
       );
     }
     if (method === "chat.history") {
@@ -617,6 +664,15 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   );
   assert.equal(result.json.openclaw_delivery.acknowledgement.status, "sent");
   assert.equal(result.json.openclaw_delivery.final.status, "sent");
+  assert.deepEqual(result.json.remarkable_document, {
+    requested: true,
+    destination: RESPONSE_PDF_DESTINATION,
+    status: "uploaded",
+    name: pdfName("smart-remarkable-test-0001"),
+    document_id: "123e4567-e89b-42d3-a456-426614174000",
+    cloud_hash: "a".repeat(64),
+    cached: false,
+  });
 
   const chatCalls = gateway.calls.filter((call) => call.method === "chat.send");
   const ackCalls = gateway.calls.filter((call) =>
@@ -625,9 +681,19 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   const finalCalls = gateway.calls.filter((call) =>
     isDeliveryKind(call, "final"),
   );
+  const responsePdfCalls = gateway.calls.filter(
+    (call) => call.method === RESPONSE_PDF_METHOD,
+  );
   assert.equal(chatCalls.length, 1);
   assert.equal(ackCalls.length, 1);
   assert.equal(finalCalls.length, 1);
+  assert.equal(responsePdfCalls.length, 1);
+  assert.deepEqual(responsePdfCalls[0].params, {
+    requestId: "smart-remarkable-test-0001",
+    bindingHandle: ORIGIN_BINDING_HANDLE,
+    receivedText: "What is six times seven?",
+    responseText: "The answer is 42.",
+  });
   const originBindCalls = gateway.calls.filter(
     (call) => call.method === ORIGIN_BIND_METHOD,
   );
@@ -657,6 +723,11 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
     gateway.calls.indexOf(originClearCalls[0]) >
       gateway.calls.indexOf(finalCalls[0]),
     "trusted origin must remain active through final delivery",
+  );
+  assert.ok(
+    gateway.calls.indexOf(responsePdfCalls[0]) <
+      gateway.calls.indexOf(finalCalls[0]),
+    "the final WhatsApp status must follow the terminal PDF receipt",
   );
   assert.deepEqual(
     {
@@ -707,7 +778,11 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   );
   assert.match(
     SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
-    /does not classify capture intent or authorize any side effect/u,
+    /authorize exactly one server-generated response PDF/u,
+  );
+  assert.match(
+    SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
+    /do not authorize any other side effect/u,
   );
   assert.equal(chatCalls[0].params.message.includes("/verbose"), false);
   assert.equal(chatCalls[0].params.suppressCommandInterpretation, true);
@@ -765,7 +840,7 @@ test("withholds HTTP headers until Gateway acceptance, then returns final text",
   assert.equal(finalCalls[0].params.channel, undefined);
   assert.equal(
     finalCalls[0].params.text,
-    "I read:\n> What is six times seven?\n\nThe answer is 42.",
+    renderedResponse("The answer is 42."),
   );
   assert.equal(finalCalls[0].params.sessionKey, undefined);
   assert.ok(
@@ -1175,6 +1250,10 @@ for (const [label, provenance] of [
       gateway.calls.filter((call) => isDeliveryKind(call, "final")).length,
       0,
     );
+    assert.equal(
+      gateway.calls.filter((call) => call.method === RESPONSE_PDF_METHOD).length,
+      0,
+    );
   });
 }
 
@@ -1325,6 +1404,10 @@ for (const [label, rawOutput] of [
       gateway.calls.filter((call) => isDeliveryKind(call, "final")).length,
       0,
     );
+    assert.equal(
+      gateway.calls.filter((call) => call.method === RESPONSE_PDF_METHOD).length,
+      0,
+    );
 
     const callCount = gateway.calls.length;
     const replay = await post({
@@ -1373,12 +1456,103 @@ test("waits for the acknowledgement attempt before submitting the final send", a
   assert.ok(ackCallIndex >= 0 && finalCallIndex > ackCallIndex);
 });
 
+test("keeps the origin bound and withholds the final until the PDF receipt is terminal", async () => {
+  const { gateway, port } = await fixture();
+  const requestId = "smart-remarkable-pdf-order-0001";
+  gateway.pdfDeferred = deferred();
+  const pending = post({ port, requestId, mode: "write_back" });
+  await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
+  gateway.accept();
+  gateway.finish("The PDF must finish first.");
+  await waitFor(
+    () => gateway.calls.some((call) => call.method === RESPONSE_PDF_METHOD),
+    "response PDF was not requested",
+  );
+  assert.equal(
+    gateway.calls.filter((call) => isDeliveryKind(call, "final")).length,
+    0,
+  );
+  assert.equal(
+    gateway.calls.filter((call) => call.method === ORIGIN_CLEAR_METHOD).length,
+    0,
+  );
+
+  gateway.pdfDeferred.resolve(pdfReceipt(requestId));
+  const result = await pending.body;
+  assert.equal(result.json.openclaw_delivery.final.status, "sent");
+  assert.equal(result.json.remarkable_document.status, "uploaded");
+  const pdfCallIndex = gateway.calls.findIndex(
+    (call) => call.method === RESPONSE_PDF_METHOD,
+  );
+  const finalCallIndex = gateway.calls.findIndex((call) =>
+    isDeliveryKind(call, "final"),
+  );
+  const clearCallIndex = gateway.calls.findIndex(
+    (call) => call.method === ORIGIN_CLEAR_METHOD,
+  );
+  assert.ok(pdfCallIndex >= 0 && finalCallIndex > pdfCallIndex);
+  assert.ok(clearCallIndex > finalCallIndex);
+});
+
+test("reports PDF failure in WhatsApp without erasing a successful answer", async () => {
+  const { gateway, port } = await fixture();
+  const requestId = "smart-remarkable-pdf-failure-0001";
+  gateway.pdfError = new Error("private cloud provider detail");
+  const pending = post({ port, requestId, mode: "write_back" });
+  await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
+  gateway.accept();
+  gateway.finish("Keep this answer despite the PDF failure.");
+  const result = await pending.body;
+
+  assert.equal(result.json.choices[0].finish_reason, "stop");
+  assert.equal(
+    result.json.choices[0].message.content,
+    "Keep this answer despite the PDF failure.",
+  );
+  assert.deepEqual(result.json.remarkable_document, {
+    requested: true,
+    destination: RESPONSE_PDF_DESTINATION,
+    status: "failed",
+    error: "reMarkable response PDF delivery could not be confirmed.",
+  });
+  const finalCall = gateway.calls.find((call) =>
+    isDeliveryKind(call, "final"),
+  );
+  assert.equal(
+    finalCall.params.text,
+    `I read:\n> ${DEFAULT_RECEIVED_TEXT}\n\nKeep this answer despite the PDF failure.\n\nPDF: I could not confirm delivery to your reMarkable Cloud library.`,
+  );
+  assert.equal(JSON.stringify(result.json).includes("private cloud"), false);
+});
+
+test("treats a protocol-invalid PDF receipt as a fixed PDF failure", async () => {
+  const { gateway, port } = await fixture();
+  const requestId = "smart-remarkable-pdf-bad-receipt-0001";
+  gateway.pdfResultOverride = pdfReceipt(requestId, {
+    request_id: "smart-remarkable-wrong-request-0001",
+  });
+  const pending = post({ port, requestId, mode: "whatsapp_only" });
+  await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
+  gateway.accept();
+  gateway.finish("The WhatsApp answer remains valid.");
+  const result = await pending.body;
+
+  assert.equal(result.json.choices[0].finish_reason, "stop");
+  assert.equal(
+    result.json.choices[0].message.content,
+    "OpenClaw handled this selection through WhatsApp.",
+  );
+  assert.equal(result.json.remarkable_document.status, "failed");
+  assert.equal(result.json.openclaw_delivery.final.status, "sent");
+});
+
 for (const mode of ["write_back", "whatsapp_only"]) {
   test(`preserves ${mode} mode in its OpenAI-compatible response`, async () => {
     const { gateway, port } = await fixture();
+    const requestId = `smart-remarkable-mode-${mode}`;
     const pending = post({
       port,
-      requestId: `smart-remarkable-mode-${mode}`,
+      requestId,
       mode,
     });
     await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
@@ -1394,13 +1568,18 @@ for (const mode of ["write_back", "whatsapp_only"]) {
       result.json.x_smart_remarkable.selection_kind,
       "ink",
     );
+    assert.equal(result.json.remarkable_document.status, "uploaded");
+    assert.equal(
+      gateway.calls.filter((call) => call.method === RESPONSE_PDF_METHOD).length,
+      1,
+    );
     const responseText = result.json.choices[0].message.content;
     const finalCall = gateway.calls.find((call) =>
       isDeliveryKind(call, "final"),
     );
     assert.equal(
       finalCall.params.text,
-      renderedResponse(`final for ${mode}`),
+      renderedResponse(`final for ${mode}`, DEFAULT_RECEIVED_TEXT, requestId),
     );
     if (mode === "write_back") {
       assert.equal(responseText, "final for write_back");
@@ -1454,6 +1633,10 @@ test("coalesces duplicate IDs into one turn, acknowledgement, and final send", a
   assert.equal(
     gateway.calls.filter((call) => call.method === DELIVERY_METHOD).length,
     2,
+  );
+  assert.equal(
+    gateway.calls.filter((call) => call.method === RESPONSE_PDF_METHOD).length,
+    1,
   );
 });
 
@@ -1684,7 +1867,11 @@ test("reports final WhatsApp failure without claiming delivery", async () => {
   assert.equal(finalCalls.length, 1);
   assert.equal(
     finalCalls[0].params.text,
-    renderedResponse("Keep this exact final text."),
+    renderedResponse(
+      "Keep this exact final text.",
+      DEFAULT_RECEIVED_TEXT,
+      "smart-remarkable-final-failure-0001",
+    ),
   );
 });
 
@@ -1882,7 +2069,11 @@ test("recovers a completed Gateway replay from attributable chat history", async
   assert.equal(finalCalls.length, 1);
   assert.equal(
     finalCalls[0].params.text,
-    "I read:\n> Please recover this answer\n\nRecovered exact response.",
+    renderedResponse(
+      "Recovered exact response.",
+      "Please recover this answer",
+      requestId,
+    ),
   );
 });
 
@@ -2246,7 +2437,11 @@ test("recovers from history after an empty live final event", async () => {
   );
   assert.equal(
     finalCall.params.text,
-    "I read:\n> Can you still answer this?\n\nRecovered after the empty event.",
+    renderedResponse(
+      "Recovered after the empty event.",
+      "Can you still answer this?",
+      requestId,
+    ),
   );
   assert.ok(gateway.historyCallCount >= 2);
 });
@@ -2301,7 +2496,11 @@ test("recovers a native started run from canonical history without a live final 
   );
   assert.equal(
     finalCall.params.text,
-    "I read:\n> What did I write?\n\nRecovered native started response.",
+    renderedResponse(
+      "Recovered native started response.",
+      "What did I write?",
+      requestId,
+    ),
   );
   assert.equal(
     gateway.calls.filter((call) => call.method === "chat.send").length,

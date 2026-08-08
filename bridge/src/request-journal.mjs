@@ -2,19 +2,23 @@ import crypto from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { PUBLIC_REMARKABLE_DOCUMENT_ERROR } from "./openai-response.mjs";
 import {
+  RESPONSE_PDF_DESTINATION,
   SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   SMART_REMARKABLE_REQUEST_ID_PATTERN,
 } from "./source-provenance.mjs";
 
 const ENVELOPE_VERSION = 1;
-const RECORD_VERSION = 3;
+const RECORD_VERSION = 4;
 const RECORD_FILE = "record.json";
 const SLOT_DIRECTORY = ".capacity-slots";
 const OWNERSHIP_FILE = ".smart-remarkable-request-journal-v1";
 const OWNERSHIP_MARKER = "smart-remarkable-request-journal-v1\n";
 const MAX_RECORD_BYTES = 128 * 1024;
 const FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
+const CLOUD_DOCUMENT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MODES = new Set(["write_back", "whatsapp_only"]);
 const SELECTION_KINDS = new Set(["ink", "image", "mixed"]);
 const SLOT_PATTERN = /^\d{8}\.claim$/;
@@ -75,6 +79,74 @@ function assertPlainObject(value, message) {
   }
 }
 
+function hasExactKeys(value, expectedKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value).sort();
+  return (
+    keys.length === expectedKeys.length &&
+    keys.every((key, index) => key === expectedKeys[index])
+  );
+}
+
+function isSafePdfName(value) {
+  return (
+    typeof value === "string" &&
+    value.length > 4 &&
+    value === value.normalize("NFC") &&
+    value === value.trim() &&
+    value !== "." &&
+    value !== ".." &&
+    Buffer.byteLength(value, "utf8") <= 255 &&
+    !/[\u0000-\u001f\u007f-\u009f/\\]/u.test(value) &&
+    /\.pdf$/iu.test(value)
+  );
+}
+
+function validateRemarkableDocumentOutcome(value) {
+  if (
+    hasExactKeys(value, [
+      "cached",
+      "cloud_hash",
+      "destination",
+      "document_id",
+      "name",
+      "requested",
+      "status",
+    ]) &&
+    value.requested === true &&
+    value.destination === RESPONSE_PDF_DESTINATION &&
+    value.status === "uploaded" &&
+    isSafePdfName(value.name) &&
+    typeof value.document_id === "string" &&
+    CLOUD_DOCUMENT_ID_PATTERN.test(value.document_id) &&
+    typeof value.cloud_hash === "string" &&
+    FINGERPRINT_PATTERN.test(value.cloud_hash) &&
+    typeof value.cached === "boolean"
+  ) {
+    return;
+  }
+  if (
+    hasExactKeys(value, [
+      "destination",
+      "error",
+      "requested",
+      "status",
+    ]) &&
+    value.requested === true &&
+    value.destination === RESPONSE_PDF_DESTINATION &&
+    value.status === "failed" &&
+    value.error === PUBLIC_REMARKABLE_DOCUMENT_ERROR
+  ) {
+    return;
+  }
+  throw journalError(
+    "corrupt",
+    "Completed request reMarkable document outcome is invalid",
+  );
+}
+
 function validateStoredResponse(response, identity) {
   assertPlainObject(response, "Completed request response is invalid");
   const encoded = JSON.stringify(response);
@@ -95,12 +167,17 @@ function validateStoredResponse(response, identity) {
   ) {
     throw journalError("corrupt", "Completed request response failed validation");
   }
+  validateRemarkableDocumentOutcome(response.remarkable_document);
   return structuredClone(response);
 }
 
 function validateRecord(record, expectedRequestId) {
   assertPlainObject(record, "Request journal record is invalid");
-  if (record.schemaVersion === 1 || record.schemaVersion === 2) {
+  if (
+    record.schemaVersion === 1 ||
+    record.schemaVersion === 2 ||
+    record.schemaVersion === 3
+  ) {
     throw journalError(
       "incomplete",
       "Legacy request journal entry cannot be safely replayed",

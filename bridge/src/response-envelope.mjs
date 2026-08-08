@@ -1,7 +1,11 @@
 export const RESPONSE_ENVELOPE_PROTOCOL_VERSION =
   "smart-remarkable.response-envelope.v3";
 export const MAX_RECEIVED_TEXT_BYTES = 2_048;
-export const MAX_RENDERED_RESPONSE_BYTES = 32_768;
+export const MAX_COMBINED_LINE_BREAKS = 512;
+export const MAX_WHATSAPP_DELIVERY_BYTES = 32_768;
+export const RESPONSE_PDF_STATUS_RESERVE_BYTES = 512;
+export const MAX_RENDERED_RESPONSE_BYTES =
+  MAX_WHATSAPP_DELIVERY_BYTES - RESPONSE_PDF_STATUS_RESERVE_BYTES;
 
 const SELECTION_KINDS = new Set(["ink", "image", "mixed"]);
 
@@ -31,12 +35,12 @@ export function buildResponseEnvelopeProtocolInstruction(selectionKind) {
   return [
     `Response protocol ${RESPONSE_ENVELOPE_PROTOCOL_VERSION}:`,
     "Return exactly one JSON object and nothing else.",
-    'The object must contain exactly the keys "received_text" and "response_text", and both values must be non-empty strings.',
+    'The object must contain exactly the keys "received_text" and "response_text", and both values must be strings containing non-whitespace text.',
     ...receivedTextInstruction(selectionKind),
     '"received_text" applies only to the primary selection attachment named "remarkable-selection.png". Never include text or a description from the current-page context image, document display name, or page metadata.',
     '"response_text" must contain the answer or action result intended for the user.',
-    "Do not use Markdown code fences. Do not include NUL or other C0/C1 control characters except LF newlines.",
-    `"received_text" must be at most ${MAX_RECEIVED_TEXT_BYTES} UTF-8 bytes, and the final rendered message must fit within ${MAX_RENDERED_RESPONSE_BYTES} UTF-8 bytes.`,
+    "Do not use Markdown code fences. Do not include NUL, Unicode bidi controls, or other C0/C1 control characters except LF newlines.",
+    `"received_text" must be at most ${MAX_RECEIVED_TEXT_BYTES} UTF-8 bytes, the two fields together must contain at most ${MAX_COMBINED_LINE_BREAKS} LF line breaks, and the rendered response before the server-added reMarkable PDF status must fit within ${MAX_RENDERED_RESPONSE_BYTES} UTF-8 bytes.`,
   ].join("\n");
 }
 
@@ -46,6 +50,7 @@ export const RESPONSE_ENVELOPE_PROTOCOL_INSTRUCTION =
 const REQUIRED_KEYS = new Set(["received_text", "response_text"]);
 const FORBIDDEN_CONTROL_PATTERN =
   /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/u;
+const FORBIDDEN_BIDI_CONTROL_PATTERN = /\p{Bidi_Control}/u;
 const CODE_FENCE_PATTERN = /`{3,}|~{3,}/u;
 const JSON_WHITESPACE_PATTERN = /[\u0009\u000a\u000d\u0020]/u;
 
@@ -175,15 +180,21 @@ function normalizeField(name, value) {
   if (typeof value !== "string") {
     fail("invalid_shape", `${name} must be a string`);
   }
+  if (!value.isWellFormed()) {
+    fail("invalid_unicode", `${name} must contain well-formed Unicode`);
+  }
   const normalized = value.replaceAll("\r\n", "\n").normalize("NFC");
-  if (normalized.length === 0) {
-    fail("empty_field", `${name} must be non-empty`);
+  if (normalized.trim().length === 0) {
+    fail("empty_field", `${name} must contain non-whitespace text`);
   }
   if (FORBIDDEN_CONTROL_PATTERN.test(normalized)) {
     fail(
       "control_character",
       `${name} must not contain NUL or C0/C1 controls except LF`,
     );
+  }
+  if (FORBIDDEN_BIDI_CONTROL_PATTERN.test(normalized)) {
+    fail("bidi_control", `${name} must not contain Unicode bidi controls`);
   }
   if (CODE_FENCE_PATTERN.test(normalized)) {
     fail("code_fence", `${name} must not contain Markdown code fences`);
@@ -225,6 +236,16 @@ function normalizeEnvelope(entries) {
     fail(
       "received_text_too_large",
       `received_text must be at most ${MAX_RECEIVED_TEXT_BYTES} UTF-8 bytes`,
+    );
+  }
+
+  const lineBreaks =
+    envelope.received_text.split("\n").length - 1 +
+    envelope.response_text.split("\n").length - 1;
+  if (lineBreaks > MAX_COMBINED_LINE_BREAKS) {
+    fail(
+      "document_complexity",
+      `Response envelope must contain at most ${MAX_COMBINED_LINE_BREAKS} LF line breaks`,
     );
   }
 

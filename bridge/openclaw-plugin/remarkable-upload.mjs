@@ -13,12 +13,18 @@ export const REMARKABLE_CLEAR_ORIGIN_METHOD =
   "smart_remarkable.clear_origin";
 export const REMARKABLE_CAPABILITIES_METHOD =
   "smart_remarkable.capabilities";
+export const REMARKABLE_RESPONSE_PDF_METHOD =
+  "smart_remarkable.deliver_response_pdf";
 export const REMARKABLE_UPLOAD_TOOL =
   "remarkable_deliver_document";
 export const REMARKABLE_RUN_CONTEXT_NAMESPACE =
-  "smart-remarkable-origin-v4";
+  "smart-remarkable-origin-v5";
 export const REMARKABLE_PLUGIN_ID = "smart-remarkable-delivery";
-export const REMARKABLE_PLUGIN_VERSION = "0.4.0";
+export const REMARKABLE_PLUGIN_VERSION = "0.5.0";
+export const REMARKABLE_RESPONSE_PDF_POLICY =
+  "response-pdf-cloud-v1";
+export const REMARKABLE_RESPONSE_PDF_DESTINATION =
+  "remarkable_cloud";
 export const REMARKABLE_INPUT_CONTEXT_VERSIONS = Object.freeze([
   "selection-page-v1",
 ]);
@@ -39,12 +45,15 @@ export const DEFAULT_RM_SYNC_CONFIG =
 export const DEFAULT_ORIGIN_PENDING_TTL_MS = 12 * 60 * 1000;
 export const DEFAULT_ORIGIN_ACTIVE_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_MAX_ORIGIN_BINDINGS = 128;
+export const DEFAULT_MAX_RESPONSE_PDF_IN_FLIGHT = 2;
 
 const CANONICAL_AGENT_ID = "main";
 const CANONICAL_SESSION_KEY = "agent:main:main";
 const ORIGIN_METHOD_SCOPE = "operator.admin";
 const UPLOAD_JOURNAL_NAMESPACE =
   "smart-remarkable-cloud-upload-receipts-v1";
+const RESPONSE_PDF_JOURNAL_NAMESPACE =
+  "smart-remarkable-response-pdf-receipts-v1";
 const UPLOAD_JOURNAL_SCHEMA_VERSION = 1;
 const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const DEFAULT_UPLOAD_TIMEOUT_MS = 180_000;
@@ -76,6 +85,19 @@ const CLEAR_PARAM_KEYS = Object.freeze([
   "bindingHandle",
   "requestId",
 ]);
+const RESPONSE_PDF_PARAM_KEYS = Object.freeze([
+  "bindingHandle",
+  "receivedText",
+  "requestId",
+  "responseText",
+]);
+const MAX_RESPONSE_PDF_RECEIVED_TEXT_BYTES = 2_048;
+const MAX_RESPONSE_PDF_RESPONSE_TEXT_BYTES = 32_256;
+const MAX_RESPONSE_PDF_LINE_BREAKS = 512;
+const MAX_RESPONSE_PDF_BYTES = 32 * 1024 * 1024;
+const RESPONSE_PDF_FORBIDDEN_CONTROL_PATTERN =
+  /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/u;
+const RESPONSE_PDF_BIDI_CONTROL_PATTERN = /\p{Bidi_Control}/u;
 const INTERNAL_REQUEST_ID = "__smart_remarkable_request_id";
 const INTERNAL_CAPABILITY = "__smart_remarkable_capability";
 const nodeExecFileAsync = promisify(nodeExecFile);
@@ -154,6 +176,20 @@ function uploadUnavailable() {
   return publicError(
     "UNAVAILABLE",
     "reMarkable Cloud upload could not be confirmed without duplicate risk",
+  );
+}
+
+function responsePdfUnauthorized() {
+  return publicError(
+    "UNAUTHORIZED",
+    "Response PDF delivery is available only for the active reMarkable request",
+  );
+}
+
+function responsePdfUnavailable() {
+  return publicError(
+    "UNAVAILABLE",
+    "reMarkable response PDF upload could not be confirmed without duplicate risk",
   );
 }
 
@@ -250,6 +286,74 @@ function validateClearParams(params) {
   });
 }
 
+function requireResponsePdfText(value, label, maxBytes) {
+  if (
+    typeof value !== "string" ||
+    !value.isWellFormed() ||
+    value.length === 0 ||
+    value.length > maxBytes ||
+    Buffer.byteLength(value, "utf8") > maxBytes ||
+    value.trim().length === 0 ||
+    value !== value.replaceAll("\r\n", "\n").normalize("NFC") ||
+    RESPONSE_PDF_FORBIDDEN_CONTROL_PATTERN.test(value) ||
+    RESPONSE_PDF_BIDI_CONTROL_PATTERN.test(value) ||
+    /`{3,}|~{3,}/u.test(value)
+  ) {
+    throw invalidRequest(`${label} is not valid response-envelope text`);
+  }
+  return value;
+}
+
+function validateResponsePdfParams(params) {
+  if (!hasExactKeys(params, RESPONSE_PDF_PARAM_KEYS)) {
+    throw invalidRequest(
+      "Response PDF delivery requires only requestId, bindingHandle, receivedText, and responseText",
+    );
+  }
+  const requestId = requireRequestId(params.requestId);
+  if (
+    typeof params.bindingHandle !== "string" ||
+    !BINDING_HANDLE_PATTERN.test(params.bindingHandle)
+  ) {
+    throw invalidRequest("Invalid Smart reMarkable binding handle");
+  }
+  const receivedText = requireResponsePdfText(
+    params.receivedText,
+    "receivedText",
+    MAX_RESPONSE_PDF_RECEIVED_TEXT_BYTES,
+  );
+  const responseText = requireResponsePdfText(
+    params.responseText,
+    "responseText",
+    MAX_RESPONSE_PDF_RESPONSE_TEXT_BYTES,
+  );
+  const lineBreaks =
+    (receivedText.match(/\n/gu)?.length ?? 0) +
+    (responseText.match(/\n/gu)?.length ?? 0);
+  if (lineBreaks > MAX_RESPONSE_PDF_LINE_BREAKS) {
+    throw invalidRequest("Response PDF text exceeds the line-break limit");
+  }
+  const renderedPrefix =
+    receivedText === "[unclear]"
+      ? "I could not confidently read the selection."
+      : `I read:\n${receivedText
+          .split("\n")
+          .map((line) => `> ${line}`)
+          .join("\n")}`;
+  if (
+    Buffer.byteLength(`${renderedPrefix}\n\n${responseText}`, "utf8") >
+    MAX_RESPONSE_PDF_RESPONSE_TEXT_BYTES
+  ) {
+    throw invalidRequest("Response PDF text exceeds the response-envelope limit");
+  }
+  return Object.freeze({
+    requestId,
+    bindingHandle: params.bindingHandle,
+    receivedText,
+    responseText,
+  });
+}
+
 function isBoundOrigin(value, requestId = undefined) {
   return (
     isRecord(value) &&
@@ -312,6 +416,119 @@ function readStoredOrigin(runContext, requestId) {
     readRawStoredOrigin(runContext, requestId),
     requestId,
   );
+}
+
+function readAuthorizedResponsePdfOrigin(
+  request,
+  runContext,
+  now,
+  expectedOrigin = undefined,
+) {
+  const at = now();
+  if (!Number.isSafeInteger(at) || at < 0) {
+    throw responsePdfUnavailable();
+  }
+  const origin = readStoredOrigin(runContext, request.requestId);
+  if (
+    !origin ||
+    origin.state !== "active" ||
+    origin.expiresAt <= at ||
+    !constantTimeEqual(origin.bindingHandle, request.bindingHandle) ||
+    (expectedOrigin !== undefined &&
+      (origin.expectedSessionId !== expectedOrigin.expectedSessionId ||
+        origin.createdAt !== expectedOrigin.createdAt ||
+        origin.expiresAt !== expectedOrigin.expiresAt ||
+        !constantTimeEqual(
+          origin.bindingHandle,
+          expectedOrigin.bindingHandle,
+        ) ||
+        !constantTimeEqual(origin.capability, expectedOrigin.capability)))
+  ) {
+    throw responsePdfUnauthorized();
+  }
+  return origin;
+}
+
+function buildAuthorizedResponsePdfRequest(validated, origin) {
+  const fingerprint = crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        schemaVersion: 1,
+        protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+        method: REMARKABLE_RESPONSE_PDF_METHOD,
+        policy: REMARKABLE_RESPONSE_PDF_POLICY,
+        requestId: validated.requestId,
+        bindingHandle: validated.bindingHandle,
+        expectedSessionId: origin.expectedSessionId,
+        capability: origin.capability,
+        receivedText: validated.receivedText,
+        responseText: validated.responseText,
+      }),
+    )
+    .digest("hex");
+  return Object.freeze({
+    ...validated,
+    expectedOrigin: Object.freeze({
+      bindingHandle: origin.bindingHandle,
+      expectedSessionId: origin.expectedSessionId,
+      capability: origin.capability,
+      createdAt: origin.createdAt,
+      expiresAt: origin.expiresAt,
+    }),
+    fingerprint,
+    uploadId: `${validated.requestId}:artifact:${REMARKABLE_RESPONSE_PDF_POLICY}`,
+  });
+}
+
+function expectedResponsePdfName(requestId) {
+  const suffix = crypto
+    .createHash("sha256")
+    .update(requestId)
+    .digest("hex")
+    .slice(0, 16);
+  return `OpenClaw response ${suffix}.pdf`;
+}
+
+function validateRenderedResponsePdf(artifact, request, stateDir) {
+  const expectedStagingRoot = path.join(
+    path.resolve(stateDir),
+    "plugins",
+    "smart-remarkable-delivery",
+    "response-pdf-staging",
+  );
+  if (
+    !Object.isFrozen(artifact) ||
+    !hasExactKeys(
+      artifact,
+      Object.freeze([
+        "artifactKey",
+        "cleanup",
+        "contentHash",
+        "sizeBytes",
+        "snapshotPath",
+        "visibleName",
+      ]),
+    ) ||
+    artifact.artifactKey !== REMARKABLE_RESPONSE_PDF_POLICY ||
+    artifact.visibleName !== expectedResponsePdfName(request.requestId) ||
+    typeof artifact.snapshotPath !== "string" ||
+    !path.isAbsolute(artifact.snapshotPath) ||
+    !isPathInside(
+      expectedStagingRoot,
+      path.resolve(artifact.snapshotPath),
+    ) ||
+    path.extname(artifact.snapshotPath).toLowerCase() !== ".pdf" ||
+    typeof artifact.contentHash !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(artifact.contentHash) ||
+    !Number.isSafeInteger(artifact.sizeBytes) ||
+    artifact.sizeBytes < 16 ||
+    artifact.sizeBytes > MAX_RESPONSE_PDF_BYTES ||
+    typeof artifact.cleanup !== "function"
+  ) {
+    throw responsePdfUnavailable();
+  }
+  return artifact;
 }
 
 function clearStoredOrigin(runContext, requestId) {
@@ -700,6 +917,10 @@ export function registerRemarkableOriginMethods(api, overrides = {}) {
           ],
           attachmentRoles: [...REMARKABLE_ATTACHMENT_ROLES],
           selectionKinds: [...REMARKABLE_SELECTION_KINDS],
+          responsePdfMethod: REMARKABLE_RESPONSE_PDF_METHOD,
+          responsePdfPolicy: REMARKABLE_RESPONSE_PDF_POLICY,
+          responsePdfDestination:
+            REMARKABLE_RESPONSE_PDF_DESTINATION,
         },
         undefined,
       );
@@ -740,9 +961,10 @@ function buildRemarkableTurnGuidance(origin) {
     responseDestination,
     ...selectionGuidance,
     'Keep "received_text" a literal, kind-aware account of remarkable-selection.png only under the response protocol. Never include the current-page image, document display name, or page metadata there. Put interpretation, explanation, assumptions, and action results only in "response_text".',
-    `If, and only if, an explicit user instruction governing this authenticated turn asks you to create, export, send, add, or place a document for the user, create a finished PDF or EPUB inside the current workspace and call ${REMARKABLE_UPLOAD_TOOL}. The document's artifact destination is the user's reMarkable Cloud library.`,
-    "Do not upload anything merely because the user discusses, summarizes, edits, or asks about a document. Do not upload drafts or unsupported formats.",
-    "Use one stable artifact_key per requested artifact. Never claim that a document reached reMarkable unless the tool returns status=uploaded; report an upload failure plainly.",
+    `For both response modes, the trusted server automatically renders the validated received_text and response_text as one ${REMARKABLE_RESPONSE_PDF_POLICY} PDF and attempts to upload it to the user's reMarkable Cloud library. Do not call ${REMARKABLE_UPLOAD_TOOL} for that automatic response PDF, and do not claim its upload succeeded inside response_text; the server reports the confirmed receipt separately.`,
+    `If, and only if, an explicit user instruction governing this authenticated turn asks you to create, export, send, add, or place a separate rich document in addition to the automatic response PDF, create a finished PDF or EPUB inside the current workspace and call ${REMARKABLE_UPLOAD_TOOL}. That explicitly requested extra document's artifact destination is the user's reMarkable Cloud library.`,
+    `Do not use ${REMARKABLE_UPLOAD_TOOL} merely because the user discusses, summarizes, edits, or asks about a document. Do not upload drafts or unsupported formats as extra artifacts.`,
+    "For each explicitly requested extra artifact, use one stable artifact_key. Never claim that an extra document reached reMarkable unless the tool returns status=uploaded; report an upload failure plainly.",
   ].join("\n");
 }
 
@@ -1348,19 +1570,33 @@ function validateCliReceipt(stdout) {
 
 function buildUploadIdentity(request, artifact) {
   const uploadId = `${request.requestId}:artifact:${request.artifactKey}`;
+  if (
+    Object.hasOwn(request, "requestFingerprint") &&
+    (typeof request.requestFingerprint !== "string" ||
+      !/^[0-9a-f]{64}$/u.test(request.requestFingerprint))
+  ) {
+    throw uploadUnavailable();
+  }
+  const requestFingerprint =
+    typeof request.requestFingerprint === "string" &&
+    /^[0-9a-f]{64}$/u.test(request.requestFingerprint)
+      ? request.requestFingerprint
+      : undefined;
+  const fingerprintInput = {
+    schemaVersion: UPLOAD_JOURNAL_SCHEMA_VERSION,
+    protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+    requestId: request.requestId,
+    artifactKey: request.artifactKey,
+    contentHash: artifact.contentHash,
+    visibleName: artifact.visibleName,
+    parent: "",
+    ...(requestFingerprint === undefined
+      ? {}
+      : { requestFingerprint }),
+  };
   const fingerprint = crypto
     .createHash("sha256")
-    .update(
-      JSON.stringify({
-        schemaVersion: UPLOAD_JOURNAL_SCHEMA_VERSION,
-        protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
-        requestId: request.requestId,
-        artifactKey: request.artifactKey,
-        contentHash: artifact.contentHash,
-        visibleName: artifact.visibleName,
-        parent: "",
-      }),
-    )
+    .update(JSON.stringify(fingerprintInput))
     .digest("hex");
   return Object.freeze({
     uploadId,
@@ -1369,6 +1605,9 @@ function buildUploadIdentity(request, artifact) {
     artifactKey: request.artifactKey,
     contentHash: artifact.contentHash,
     visibleName: artifact.visibleName,
+    ...(requestFingerprint === undefined
+      ? {}
+      : { requestFingerprint }),
   });
 }
 
@@ -1380,7 +1619,8 @@ function sameUpload(record, identity) {
     record.requestId === identity.requestId &&
     record.artifactKey === identity.artifactKey &&
     record.contentHash === identity.contentHash &&
-    record.visibleName === identity.visibleName
+    record.visibleName === identity.visibleName &&
+    record.requestFingerprint === identity.requestFingerprint
   );
 }
 
@@ -1421,6 +1661,9 @@ async function loadOrReserveUpload(store, identity) {
         artifactKey: identity.artifactKey,
         contentHash: identity.contentHash,
         visibleName: identity.visibleName,
+        ...(identity.requestFingerprint === undefined
+          ? {}
+          : { requestFingerprint: identity.requestFingerprint }),
         state: "reserved",
       },
     );
@@ -1456,6 +1699,9 @@ async function markUploadAmbiguous(store, identity) {
       artifactKey: identity.artifactKey,
       contentHash: identity.contentHash,
       visibleName: identity.visibleName,
+      ...(identity.requestFingerprint === undefined
+        ? {}
+        : { requestFingerprint: identity.requestFingerprint }),
       state: "ambiguous",
     });
   } catch {
@@ -1472,6 +1718,7 @@ async function executeRmSync({
   uploadTimeoutMs,
   signal,
   execFileFn,
+  beforeUpload,
 }) {
   await Promise.all([
     validateExecutable(pythonPath),
@@ -1481,6 +1728,12 @@ async function executeRmSync({
     throw uploadUnavailable();
   }
   const reservation = await loadOrReserveUpload(store, identity);
+  if (beforeUpload !== undefined) {
+    if (typeof beforeUpload !== "function") {
+      throw uploadUnavailable();
+    }
+    await beforeUpload();
+  }
   if (reservation.kind === "cached") {
     return reservation.receipt;
   }
@@ -1533,6 +1786,9 @@ async function executeRmSync({
       artifactKey: identity.artifactKey,
       contentHash: identity.contentHash,
       visibleName: identity.visibleName,
+      ...(identity.requestFingerprint === undefined
+        ? {}
+        : { requestFingerprint: identity.requestFingerprint }),
       state: "sent",
       receipt: durableReceipt,
     });
@@ -1548,6 +1804,273 @@ async function executeRmSync({
     cloud_hash: cloudReceipt.cloudHash,
     cached: false,
   });
+}
+
+async function loadResponsePdfReplay(receiptStore, request) {
+  const existing = await receiptStore.lookup(request.uploadId);
+  if (!existing) {
+    return undefined;
+  }
+  if (
+    !isRecord(existing) ||
+    existing.schemaVersion !== UPLOAD_JOURNAL_SCHEMA_VERSION ||
+    existing.requestId !== request.requestId ||
+    existing.artifactKey !== REMARKABLE_RESPONSE_PDF_POLICY ||
+    existing.visibleName !== expectedResponsePdfName(request.requestId) ||
+    existing.requestFingerprint !== request.fingerprint ||
+    typeof existing.contentHash !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(existing.contentHash)
+  ) {
+    throw uploadConflict();
+  }
+  const identity = buildUploadIdentity(
+    {
+      requestId: request.requestId,
+      artifactKey: REMARKABLE_RESPONSE_PDF_POLICY,
+      requestFingerprint: request.fingerprint,
+    },
+    {
+      contentHash: existing.contentHash,
+      visibleName: existing.visibleName,
+    },
+  );
+  if (!sameUpload(existing, identity)) {
+    throw uploadConflict();
+  }
+  if (existing.state === "sent") {
+    const receipt = validateStoredUploadReceipt(existing.receipt, identity);
+    if (receipt) {
+      return receipt;
+    }
+  }
+  if (
+    existing.state === "reserved" ||
+    existing.state === "ambiguous" ||
+    existing.state === "sent"
+  ) {
+    throw uploadUnavailable();
+  }
+  throw uploadConflict();
+}
+
+async function executeResponsePdfUpload({
+  request,
+  runContext,
+  stateDir,
+  receiptStore,
+  renderResponsePdf,
+  pythonPath,
+  configPath,
+  uploadTimeoutMs,
+  execFileFn,
+  now,
+}) {
+  let rendered;
+  try {
+    const replay = await loadResponsePdfReplay(receiptStore, request);
+    if (replay) {
+      readAuthorizedResponsePdfOrigin(
+        request,
+        runContext,
+        now,
+        request.expectedOrigin,
+      );
+      return replay;
+    }
+    rendered = await renderResponsePdf({
+      stateDir,
+      requestId: request.requestId,
+      receivedText: request.receivedText,
+      responseText: request.responseText,
+    });
+    const artifact = validateRenderedResponsePdf(
+      rendered,
+      request,
+      stateDir,
+    );
+    readAuthorizedResponsePdfOrigin(
+      request,
+      runContext,
+      now,
+      request.expectedOrigin,
+    );
+    const identity = buildUploadIdentity(
+      {
+        requestId: request.requestId,
+        artifactKey: REMARKABLE_RESPONSE_PDF_POLICY,
+        requestFingerprint: request.fingerprint,
+      },
+      artifact,
+    );
+    if (identity.uploadId !== request.uploadId) {
+      throw responsePdfUnavailable();
+    }
+    return await executeRmSync({
+      identity,
+      artifact,
+      store: receiptStore,
+      pythonPath,
+      configPath,
+      uploadTimeoutMs,
+      execFileFn,
+      beforeUpload: () =>
+        readAuthorizedResponsePdfOrigin(
+          request,
+          runContext,
+          now,
+          request.expectedOrigin,
+        ),
+    });
+  } finally {
+    if (typeof rendered?.cleanup === "function") {
+      await rendered.cleanup();
+    }
+  }
+}
+
+function respondWithResponsePdfError(respond, error) {
+  if (
+    error?.code === "INVALID_REQUEST" ||
+    error?.code === "UNAUTHORIZED" ||
+    error?.code === "IDEMPOTENCY_CONFLICT"
+  ) {
+    respond(false, undefined, {
+      code: error.code,
+      message: error.message,
+    });
+    return;
+  }
+  const safe = responsePdfUnavailable();
+  respond(false, undefined, {
+    code: safe.code,
+    message: safe.message,
+  });
+}
+
+export function createRemarkableResponsePdfHandler({
+  runtime,
+  logger,
+  runContext,
+  renderResponsePdf,
+  store,
+  execFileFn = nodeExecFileAsync,
+  pythonPath = DEFAULT_RM_SYNC_PYTHON,
+  configPath = DEFAULT_RM_SYNC_CONFIG,
+  uploadTimeoutMs = DEFAULT_UPLOAD_TIMEOUT_MS,
+  maxInFlight = DEFAULT_MAX_RESPONSE_PDF_IN_FLIGHT,
+  now = Date.now,
+} = {}) {
+  if (
+    !runtime?.state ||
+    typeof runtime.state.resolveStateDir !== "function" ||
+    !runContext ||
+    typeof runContext.getRunContext !== "function" ||
+    typeof renderResponsePdf !== "function" ||
+    typeof execFileFn !== "function" ||
+    typeof now !== "function" ||
+    !Number.isSafeInteger(uploadTimeoutMs) ||
+    uploadTimeoutMs <= 0 ||
+    !Number.isSafeInteger(maxInFlight) ||
+    maxInFlight <= 0 ||
+    maxInFlight > DEFAULT_MAX_RESPONSE_PDF_IN_FLIGHT
+  ) {
+    throw new Error("Smart reMarkable response PDF delivery is unavailable");
+  }
+  const stateDir = runtime.state.resolveStateDir();
+  if (typeof stateDir !== "string" || !path.isAbsolute(stateDir)) {
+    throw new Error("Smart reMarkable response PDF state is unavailable");
+  }
+  const receiptStore =
+    store ??
+    createFileReceiptJournal({
+      stateDir,
+      namespace: RESPONSE_PDF_JOURNAL_NAMESPACE,
+    });
+  const inFlight = new Map();
+
+  return async function handleResponsePdf({ params, respond }) {
+    let request;
+    try {
+      const validated = validateResponsePdfParams(params);
+      const origin = readAuthorizedResponsePdfOrigin(
+        validated,
+        runContext,
+        now,
+      );
+      request = buildAuthorizedResponsePdfRequest(validated, origin);
+    } catch (error) {
+      respondWithResponsePdfError(respond, error);
+      return;
+    }
+
+    const existing = inFlight.get(request.uploadId);
+    if (existing && existing.fingerprint !== request.fingerprint) {
+      respondWithResponsePdfError(respond, uploadConflict());
+      return;
+    }
+    if (!existing && inFlight.size >= maxInFlight) {
+      respondWithResponsePdfError(respond, responsePdfUnavailable());
+      return;
+    }
+
+    let promise = existing?.promise;
+    if (!promise) {
+      promise = executeResponsePdfUpload({
+        request,
+        runContext,
+        stateDir,
+        receiptStore,
+        renderResponsePdf,
+        pythonPath,
+        configPath,
+        uploadTimeoutMs,
+        execFileFn,
+        now,
+      });
+      inFlight.set(request.uploadId, {
+        fingerprint: request.fingerprint,
+        promise,
+      });
+    }
+
+    try {
+      const receipt = await promise;
+      respond(
+        true,
+        {
+          ...receipt,
+          cached: Boolean(existing) || receipt.cached,
+        },
+        undefined,
+      );
+    } catch (error) {
+      logger?.error?.(
+        `Smart reMarkable response PDF delivery failed for ${request.requestId}`,
+      );
+      respondWithResponsePdfError(respond, error);
+    } finally {
+      if (inFlight.get(request.uploadId)?.promise === promise) {
+        inFlight.delete(request.uploadId);
+      }
+    }
+  };
+}
+
+export function registerRemarkableResponsePdfMethod(
+  api,
+  overrides = {},
+) {
+  const handler = createRemarkableResponsePdfHandler({
+    runtime: api.runtime,
+    logger: api.logger,
+    runContext: api.runContext,
+    ...overrides,
+  });
+  api.registerGatewayMethod(
+    REMARKABLE_RESPONSE_PDF_METHOD,
+    handler,
+    { scope: ORIGIN_METHOD_SCOPE },
+  );
 }
 
 export function createRemarkableUploadTool({
@@ -1582,9 +2105,9 @@ export function createRemarkableUploadTool({
     name: REMARKABLE_UPLOAD_TOOL,
     label: "Deliver to reMarkable",
     description:
-      "Upload a completed PDF or EPUB from the current workspace to the user's reMarkable Cloud library. Use only when the current reMarkable-origin request asks for a document to be created, exported, sent, added, or placed there.",
+      "Upload a completed PDF or EPUB from the current workspace to the user's reMarkable Cloud library. Use only when the current reMarkable-origin request explicitly asks for a separate rich document in addition to its automatic response PDF.",
     promptSnippet:
-      "Deliver a requested finished PDF or EPUB to the user's reMarkable.",
+      "Deliver an explicitly requested extra finished PDF or EPUB to the user's reMarkable.",
     parameters: UPLOAD_TOOL_SCHEMA,
     executionMode: "parallel",
     async execute(_toolCallId, params, signal) {

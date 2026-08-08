@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,12 +8,16 @@ import { loadConfig } from "../src/config.mjs";
 import {
   OPENCLAW_PLUGIN_ID,
   OPENCLAW_PLUGIN_VERSION,
+  RESPONSE_PDF_DESTINATION,
+  RESPONSE_PDF_METHOD,
+  RESPONSE_PDF_POLICY,
   SOURCE_PROVENANCE_PROTOCOL_VERSION,
   SMART_REMARKABLE_ATTACHMENT_ROLES,
   SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
   SMART_REMARKABLE_SELECTION_KINDS,
   verifyOriginBinding,
   verifyPluginCapabilities,
+  verifyResponsePdfReceipt,
 } from "../src/source-provenance.mjs";
 import {
   authenticateRequest,
@@ -364,6 +369,9 @@ test("startup capability receipt must match the exact plugin contract", () => {
     pluginId: OPENCLAW_PLUGIN_ID,
     pluginVersion: OPENCLAW_PLUGIN_VERSION,
     originProtocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
+    responsePdfMethod: RESPONSE_PDF_METHOD,
+    responsePdfPolicy: RESPONSE_PDF_POLICY,
+    responsePdfDestination: RESPONSE_PDF_DESTINATION,
     inputContextVersions: [SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION],
     attachmentRoles: [...SMART_REMARKABLE_ATTACHMENT_ROLES],
     selectionKinds: [...SMART_REMARKABLE_SELECTION_KINDS],
@@ -386,6 +394,9 @@ test("startup capability receipt must match the exact plugin contract", () => {
     /capability contract mismatch/,
   );
   for (const mismatch of [
+    { responsePdfMethod: "smart_remarkable.wrong" },
+    { responsePdfPolicy: "response-pdf-cloud-v0" },
+    { responsePdfDestination: "local_tablet" },
     { inputContextVersions: [] },
     {
       inputContextVersions: [
@@ -399,6 +410,44 @@ test("startup capability receipt must match the exact plugin contract", () => {
     assert.throws(
       () => verifyPluginCapabilities({ ...receipt, ...mismatch }),
       /capability contract mismatch/,
+    );
+  }
+});
+
+test("response-PDF receipt must be exact and attributable to this request", () => {
+  const requestId = "smart-remarkable-pdf-receipt-0001";
+  const receipt = {
+    status: "uploaded",
+    request_id: requestId,
+    artifact_key: RESPONSE_PDF_POLICY,
+    name: `OpenClaw response ${crypto
+      .createHash("sha256")
+      .update(requestId)
+      .digest("hex")
+      .slice(0, 16)}.pdf`,
+    document_id: "123e4567-e89b-42d3-a456-426614174000",
+    cloud_hash: "a".repeat(64),
+    cached: false,
+  };
+  assert.deepEqual(verifyResponsePdfReceipt(receipt, requestId), {
+    status: "uploaded",
+    name: receipt.name,
+    documentId: receipt.document_id,
+    cloudHash: receipt.cloud_hash,
+    cached: false,
+  });
+  for (const candidate of [
+    { ...receipt, request_id: "smart-remarkable-wrong-0001" },
+    { ...receipt, artifact_key: "response-pdf-cloud-v0" },
+    { ...receipt, name: "../response.pdf" },
+    { ...receipt, document_id: "not-a-document-id" },
+    { ...receipt, cloud_hash: "A".repeat(64) },
+    { ...receipt, cached: "false" },
+    { ...receipt, extra: true },
+  ]) {
+    assert.throws(
+      () => verifyResponsePdfReceipt(candidate, requestId),
+      /did not confirm the reMarkable response PDF upload/,
     );
   }
 });

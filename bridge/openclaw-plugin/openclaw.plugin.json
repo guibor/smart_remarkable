@@ -1,8 +1,8 @@
 {
   "id": "smart-remarkable-delivery",
   "name": "Smart reMarkable delivery",
-  "description": "Preserves canonical WhatsApp continuity for Smart reMarkable turns and safely delivers requested PDF or EPUB artifacts to reMarkable Cloud.",
-  "version": "0.4.0",
+  "description": "Preserves canonical WhatsApp continuity for Smart reMarkable turns, automatically delivers each response as a PDF, and safely delivers separately requested PDF or EPUB artifacts to reMarkable Cloud.",
+  "version": "0.5.0",
   "activation": {
     "onStartup": true
   },

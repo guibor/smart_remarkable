@@ -8,6 +8,7 @@ import {
   createRequestJournal,
   RequestJournalError,
 } from "../src/request-journal.mjs";
+import { PUBLIC_REMARKABLE_DOCUMENT_ERROR } from "../src/openai-response.mjs";
 import { SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION } from "../src/source-provenance.mjs";
 
 const REQUEST_ID = "smart-remarkable-journal-test-0001";
@@ -22,6 +23,8 @@ const FINGERPRINT = crypto
   .update("\0")
   .update(PAGE_IMAGE_BASE64)
   .digest("hex");
+const DOCUMENT_ID = "123e4567-e89b-42d3-a456-426614174000";
+const CLOUD_HASH = "a".repeat(64);
 
 function identity(
   requestId = REQUEST_ID,
@@ -54,6 +57,15 @@ function response(requestId = REQUEST_ID, replayed = false) {
       channel: "whatsapp",
       acknowledgement: { status: "sent" },
       final: { status: "sent" },
+    },
+    remarkable_document: {
+      requested: true,
+      destination: "remarkable_cloud",
+      status: "uploaded",
+      name: "OpenClaw response.pdf",
+      document_id: DOCUMENT_ID,
+      cloud_hash: CLOUD_HASH,
+      cached: false,
     },
     x_smart_remarkable: {
       request_id: requestId,
@@ -104,12 +116,19 @@ async function rewriteEntryAsLegacySchema(
   if (schemaVersion === 1) {
     delete envelope.record.selectionKind;
   }
-  delete envelope.record.contextVersion;
+  if (schemaVersion === 1 || schemaVersion === 2) {
+    delete envelope.record.contextVersion;
+  }
   if (envelope.record.state === "completed") {
     if (schemaVersion === 1) {
       delete envelope.record.response.x_smart_remarkable.selection_kind;
     }
-    delete envelope.record.response.x_smart_remarkable.context_version;
+    if (schemaVersion === 1 || schemaVersion === 2) {
+      delete envelope.record.response.x_smart_remarkable.context_version;
+    }
+    if (schemaVersion === 3) {
+      delete envelope.record.response.remarkable_document;
+    }
     envelope.record.responseHash = responseDigest(envelope.record.response);
   }
   await fs.writeFile(recordPath, `${JSON.stringify(envelope)}\n`, {
@@ -152,6 +171,15 @@ test("durably replays a completed response without persisting the raw request ti
     replay.response.choices[0].message.content,
     "Safe final response.",
   );
+  assert.deepEqual(replay.response.remarkable_document, {
+    requested: true,
+    destination: "remarkable_cloud",
+    status: "uploaded",
+    name: "OpenClaw response.pdf",
+    document_id: DOCUMENT_ID,
+    cloud_hash: CLOUD_HASH,
+    cached: false,
+  });
   await assert.rejects(
     journal.reserve(identity(REQUEST_ID, FINGERPRINT, "image")),
     (error) =>
@@ -172,7 +200,7 @@ test("durably replays a completed response without persisting the raw request ti
     "record.json",
   );
   const recordEnvelope = JSON.parse(await fs.readFile(recordPath, "utf8"));
-  assert.equal(recordEnvelope.record.schemaVersion, 3);
+  assert.equal(recordEnvelope.record.schemaVersion, 4);
   assert.equal(
     recordEnvelope.record.contextVersion,
     SMART_REMARKABLE_CONTEXT_PROTOCOL_VERSION,
@@ -187,6 +215,122 @@ test("durably replays a completed response without persisting the raw request ti
       name.endsWith(".tmp"),
     ),
     false,
+  );
+});
+
+test("v4 replays a fixed failed response-PDF outcome without changing the successful answer", async (t) => {
+  const requestId = "smart-remarkable-journal-pdf-failed-0001";
+  const { journal } = await temporaryJournal(t);
+  const completedResponse = response(requestId);
+  completedResponse.remarkable_document = {
+    requested: true,
+    destination: "remarkable_cloud",
+    status: "failed",
+    error: PUBLIC_REMARKABLE_DOCUMENT_ERROR,
+  };
+  await journal.reserve(identity(requestId));
+  await journal.complete({
+    ...identity(requestId),
+    response: completedResponse,
+  });
+
+  const replay = await journal.reserve(identity(requestId));
+  assert.equal(replay.kind, "completed");
+  assert.equal(replay.response.choices[0].finish_reason, "stop");
+  assert.equal(
+    replay.response.choices[0].message.content,
+    "Safe final response.",
+  );
+  assert.deepEqual(replay.response.remarkable_document, {
+    requested: true,
+    destination: "remarkable_cloud",
+    status: "failed",
+    error: PUBLIC_REMARKABLE_DOCUMENT_ERROR,
+  });
+});
+
+test("v4 rejects missing, malformed, or non-exact response-PDF outcomes", async (t) => {
+  const { journal } = await temporaryJournal(t, 20);
+  const cases = [
+    (candidate) => {
+      delete candidate.remarkable_document;
+    },
+    (candidate) => {
+      candidate.remarkable_document.name = "../unsafe.pdf";
+    },
+    (candidate) => {
+      candidate.remarkable_document.document_id = "not-a-document-id";
+    },
+    (candidate) => {
+      candidate.remarkable_document.cloud_hash = "A".repeat(64);
+    },
+    (candidate) => {
+      candidate.remarkable_document.cached = "false";
+    },
+    (candidate) => {
+      candidate.remarkable_document.extra = true;
+    },
+    (candidate) => {
+      candidate.remarkable_document = {
+        requested: true,
+        destination: "remarkable_cloud",
+        status: "failed",
+        error: "internal failure detail",
+      };
+    },
+    (candidate) => {
+      candidate.remarkable_document = {
+        requested: true,
+        destination: "remarkable_cloud",
+        status: "failed",
+        error: PUBLIC_REMARKABLE_DOCUMENT_ERROR,
+        cached: false,
+      };
+    },
+  ];
+
+  for (const [index, mutate] of cases.entries()) {
+    const requestId = `smart-remarkable-journal-pdf-invalid-${index}`;
+    const candidate = response(requestId);
+    mutate(candidate);
+    await journal.reserve(identity(requestId));
+    await assert.rejects(
+      journal.complete({
+        ...identity(requestId),
+        response: candidate,
+      }),
+      (error) =>
+        error instanceof RequestJournalError && error.code === "corrupt",
+    );
+  }
+});
+
+test("v4 rejects a stored response-PDF outcome even when its tampered hash matches", async (t) => {
+  const requestId = "smart-remarkable-journal-pdf-tampered-0001";
+  const { journal, rootDirectory } = await temporaryJournal(t);
+  await journal.reserve(identity(requestId));
+  await journal.complete({
+    ...identity(requestId),
+    response: response(requestId),
+  });
+
+  const recordPath = path.join(
+    rootDirectory,
+    digest(requestId),
+    "record.json",
+  );
+  const envelope = JSON.parse(await fs.readFile(recordPath, "utf8"));
+  envelope.record.response.remarkable_document.name = "../unsafe.pdf";
+  envelope.record.responseHash = responseDigest(envelope.record.response);
+  await fs.writeFile(recordPath, `${JSON.stringify(envelope)}\n`, {
+    mode: 0o600,
+  });
+
+  const restarted = createRequestJournal({ rootDirectory, maxEntries: 10 });
+  await assert.rejects(
+    restarted.reserve(identity(requestId)),
+    (error) =>
+      error instanceof RequestJournalError && error.code === "corrupt",
   );
 });
 
@@ -221,9 +365,9 @@ test("journal identities require the request namespace and exact context version
   }
 });
 
-test("schema-v1 and schema-v2 reservations remain fail-closed barriers", async (t) => {
+test("schema-v1, schema-v2, and schema-v3 reservations remain fail-closed barriers", async (t) => {
   const { journal, rootDirectory } = await temporaryJournal(t);
-  for (const schemaVersion of [1, 2]) {
+  for (const schemaVersion of [1, 2, 3]) {
     const requestId =
       `smart-remarkable-schema-v${schemaVersion}-reserved-0001`;
     await journal.reserve(identity(requestId));
@@ -240,6 +384,24 @@ test("schema-v1 and schema-v2 reservations remain fail-closed barriers", async (
         error instanceof RequestJournalError && error.code === "incomplete",
     );
   }
+});
+
+test("a schema-v3 completion without a response-PDF outcome is never replayed", async (t) => {
+  const requestId = "smart-remarkable-schema-v3-completed-0001";
+  const { journal, rootDirectory } = await temporaryJournal(t);
+  await journal.reserve(identity(requestId));
+  await journal.complete({
+    ...identity(requestId),
+    response: response(requestId),
+  });
+  await rewriteEntryAsLegacySchema(rootDirectory, requestId, 3);
+
+  const restarted = createRequestJournal({ rootDirectory, maxEntries: 10 });
+  await assert.rejects(
+    restarted.reserve(identity(requestId)),
+    (error) =>
+      error instanceof RequestJournalError && error.code === "incomplete",
+  );
 });
 
 test("a schema-v2 completion is never replayed", async (t) => {

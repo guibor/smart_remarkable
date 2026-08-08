@@ -10,6 +10,9 @@ import {
   REMARKABLE_CLEAR_ORIGIN_METHOD,
   REMARKABLE_PLUGIN_ID,
   REMARKABLE_PLUGIN_VERSION,
+  REMARKABLE_RESPONSE_PDF_DESTINATION,
+  REMARKABLE_RESPONSE_PDF_METHOD,
+  REMARKABLE_RESPONSE_PDF_POLICY,
   REMARKABLE_INPUT_CONTEXT_VERSIONS,
   REMARKABLE_RUN_CONTEXT_NAMESPACE,
   REMARKABLE_SELECTION_KINDS,
@@ -388,6 +391,9 @@ test("registers exact side-effect-free capability, bind, and clear methods", asy
     inputContextVersions: [...REMARKABLE_INPUT_CONTEXT_VERSIONS],
     attachmentRoles: [...REMARKABLE_ATTACHMENT_ROLES],
     selectionKinds: [...REMARKABLE_SELECTION_KINDS],
+    responsePdfMethod: REMARKABLE_RESPONSE_PDF_METHOD,
+    responsePdfPolicy: REMARKABLE_RESPONSE_PDF_POLICY,
+    responsePdfDestination: REMARKABLE_RESPONSE_PDF_DESTINATION,
   });
   const invalidCapabilities = await invokeGateway(
     registrations[0].handler,
@@ -866,6 +872,18 @@ test("prompt guidance trusts only an exact admitted run and transcript", async (
   assert.match(
     result.appendSystemContext,
     /received_text.*remarkable-selection\.png only/is,
+  );
+  assert.match(
+    result.appendSystemContext,
+    /For both response modes.*automatically.*response-pdf-cloud-v1/is,
+  );
+  assert.match(
+    result.appendSystemContext,
+    /Do not call remarkable_deliver_document for that automatic response PDF/i,
+  );
+  assert.match(
+    result.appendSystemContext,
+    /separate rich document in addition to the automatic response PDF/i,
   );
   assert.match(
     result.appendSystemContext,
@@ -1822,7 +1840,11 @@ test("manifest declares the document tool contract", async () => {
       "utf8",
     ),
   );
-  assert.equal(manifest.version, "0.4.0");
+  assert.equal(manifest.version, "0.5.0");
+  const packageMetadata = JSON.parse(
+    await fs.readFile(new URL("../package.json", import.meta.url), "utf8"),
+  );
+  assert.equal(packageMetadata.version, manifest.version);
   assert.deepEqual(manifest.contracts.tools, [
     REMARKABLE_UPLOAD_TOOL,
   ]);

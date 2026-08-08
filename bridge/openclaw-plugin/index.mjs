@@ -2,24 +2,30 @@ import crypto from "node:crypto";
 import { sendDurableMessageBatch } from "openclaw/plugin-sdk/channel-outbound";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { createFileReceiptJournal } from "./file-receipt-journal.mjs";
+import { renderResponsePdf } from "./response-pdf.mjs";
 import { createRunContextControl } from "./run-context-control.mjs";
 import {
   REMARKABLE_PLUGIN_ID,
   createOriginAdmissionRegistry,
   registerRemarkableOriginHooks,
   registerRemarkableOriginMethods,
+  registerRemarkableResponsePdfMethod,
   registerRemarkableUploadTool,
 } from "./remarkable-upload.mjs";
 
 export {
   DEFAULT_RM_SYNC_CONFIG,
   DEFAULT_RM_SYNC_PYTHON,
+  DEFAULT_MAX_RESPONSE_PDF_IN_FLIGHT,
   REMARKABLE_CAPABILITIES_METHOD,
   REMARKABLE_ATTACHMENT_ROLES,
   REMARKABLE_BIND_ORIGIN_METHOD,
   REMARKABLE_CLEAR_ORIGIN_METHOD,
   REMARKABLE_PLUGIN_ID,
   REMARKABLE_PLUGIN_VERSION,
+  REMARKABLE_RESPONSE_PDF_DESTINATION,
+  REMARKABLE_RESPONSE_PDF_METHOD,
+  REMARKABLE_RESPONSE_PDF_POLICY,
   REMARKABLE_INPUT_CONTEXT_VERSIONS,
   REMARKABLE_RUN_CONTEXT_NAMESPACE,
   REMARKABLE_SELECTION_KINDS,
@@ -27,9 +33,11 @@ export {
   createOriginAdmissionRegistry,
   createOriginBindingHandlers,
   createRemarkableOriginHooks,
+  createRemarkableResponsePdfHandler,
   createRemarkableUploadTool,
   registerRemarkableOriginHooks,
   registerRemarkableOriginMethods,
+  registerRemarkableResponsePdfMethod,
   registerRemarkableUploadTool,
 } from "./remarkable-upload.mjs";
 export {
@@ -420,7 +428,7 @@ export default definePluginEntry({
   id: "smart-remarkable-delivery",
   name: "Smart reMarkable delivery",
   description:
-    "Native WhatsApp continuity and safe reMarkable Cloud document delivery.",
+    "Native WhatsApp continuity, automatic response PDFs, and safe reMarkable Cloud document delivery.",
   register(api) {
     requireRemarkableHookPolicy(api);
     const runContext = createRunContextControl({ api });
@@ -429,6 +437,10 @@ export default definePluginEntry({
     registerRemarkableOriginMethods(api, {
       admissionRegistry,
       runContext,
+    });
+    registerRemarkableResponsePdfMethod(api, {
+      runContext,
+      renderResponsePdf,
     });
     registerRemarkableUploadTool(api, { runContext });
     registerRemarkableOriginHooks(api, { runContext });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildResponseEnvelopeProtocolInstruction,
+  MAX_COMBINED_LINE_BREAKS,
   MAX_RECEIVED_TEXT_BYTES,
   MAX_RENDERED_RESPONSE_BYTES,
   parseResponseEnvelope,
@@ -172,7 +173,7 @@ test("requires exactly two unique decoded keys and string values", () => {
   );
 });
 
-test("requires both strings to be non-empty without silently trimming them", () => {
+test("requires non-whitespace text without silently trimming valid fields", () => {
   assertEnvelopeError(
     () => parseResponseEnvelope(json("", "answer")),
     "empty_field",
@@ -181,9 +182,17 @@ test("requires both strings to be non-empty without silently trimming them", () 
     () => parseResponseEnvelope(json("received", "")),
     "empty_field",
   );
-  assert.deepEqual(parseResponseEnvelope(json(" ", " ")), {
-    received_text: " ",
-    response_text: " ",
+  assertEnvelopeError(
+    () => parseResponseEnvelope(json(" ", "answer")),
+    "empty_field",
+  );
+  assertEnvelopeError(
+    () => parseResponseEnvelope(json("received", "\n ")),
+    "empty_field",
+  );
+  assert.deepEqual(parseResponseEnvelope(json(" received ", " answer ")), {
+    received_text: " received ",
+    response_text: " answer ",
   });
 });
 
@@ -216,6 +225,27 @@ test("allows LF but rejects every other C0/C1 control after JSON decoding", () =
   }
 });
 
+test("rejects bidi controls but preserves ordinary invisible Unicode", () => {
+  assertEnvelopeError(
+    () => parseResponseEnvelope(json("selection", "left\u202eright")),
+    "bidi_control",
+  );
+  const emojiSequence = "family: 👨‍👩‍👧";
+  assert.equal(
+    parseResponseEnvelope(json("selection", emojiSequence)).response_text,
+    emojiSequence,
+  );
+});
+
+test("rejects escaped unpaired surrogates as ill-formed Unicode", () => {
+  for (const source of [
+    '{"received_text":"selection","response_text":"unpaired \\ud800 surrogate"}',
+    '{"received_text":"unpaired \\udc00 surrogate","response_text":"answer"}',
+  ]) {
+    assertEnvelopeError(() => parseResponseEnvelope(source), "invalid_unicode");
+  }
+});
+
 test("enforces the received_text UTF-8 byte limit at the exact boundary", () => {
   const twoByteCharacter = "é";
   const exact = twoByteCharacter.repeat(MAX_RECEIVED_TEXT_BYTES / 2);
@@ -226,6 +256,24 @@ test("enforces the received_text UTF-8 byte limit at the exact boundary", () => 
   assertEnvelopeError(
     () => parseResponseEnvelope(json(`${exact}a`)),
     "received_text_too_large",
+  );
+});
+
+test("bounds combined line complexity for deterministic PDF rendering", () => {
+  assert.doesNotThrow(() =>
+    parseResponseEnvelope(
+      json("selection", `answer${"\nline".repeat(MAX_COMBINED_LINE_BREAKS)}`),
+    ),
+  );
+  assertEnvelopeError(
+    () =>
+      parseResponseEnvelope(
+        json(
+          "selection\n",
+          `answer${"\nline".repeat(MAX_COMBINED_LINE_BREAKS)}`,
+        ),
+      ),
+    "document_complexity",
   );
 });
 
