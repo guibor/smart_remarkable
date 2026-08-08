@@ -461,11 +461,26 @@ its current `sessionId`. It deliberately does not send that value in
 routing input rather than a compare-and-swap precondition, so a stale value
 could resurrect or rotate session state. Completion first reconciles bounded
 history at the canonical key. If the key was remapped, a no-follow,
-size-bounded JSONL reader examines only the captured transcript file and
-requires one exact `<request-id>:user` anchor followed by a protocol-valid
-assistant response before any later user turn. This recovers the observed
-successful-but-remapped run without broad transcript scanning or unsafe
-repinning.
+size-bounded JSONL reader first examines only the captured transcript file. An
+exact `<request-id>:user` anchor there retains precedence and must be followed
+by a protocol-valid assistant response before any later user turn. If
+canonical history names a successor while that captured response is pending,
+an unscoped live event is ineligible; only the captured durable transcript can
+complete it. If that
+captured transcript has become exactly one finalized reset archive, a separate
+negative-proof reader uses one pre-read descriptor stat both to enforce the
+regular-file/64 MiB limit and to bound the read, then requires matching final
+identity and size, fatal UTF-8 decoding, strict bounded JSONL, exactly one
+session header, line-size enforcement before narrow ASCII JSON-whitespace
+blank handling, an unchanged candidate set, a reopened-path identity match,
+and zero request anchors. An active transcript cannot provide this negative
+proof. Only then may the newly canonical bounded
+`chat.history` prove a post-admission automatic canonical-session successor
+with exactly one matching request anchor, the exact persisted Smart reMarkable
+external-user provenance, and the same strict response interval. An
+unavailable, malformed, ambiguous, active, changed, or anchored captured
+transcript never authorizes successor-session history. This recovers the
+observed reset shape without broad transcript scanning or unsafe repinning.
 
 This `chat.send` run is the only owner of canonical transcript entries. The
 bridge appends response-envelope v3, a fixed versioned protocol that requires
@@ -815,7 +830,7 @@ those stock-process and filesystem invariants.
 The current two-button client passes its applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
 font-render output-path test filtered. The current local bridge and no-mirror
-delivery plugin suite contains 148 Node tests; this is local behavior evidence,
+delivery plugin suite contains 165 Node tests; this is local behavior evidence,
 while server transaction `20260801T213248Z-32250` and its direct live probes
 separately prove plugin `0.4.0` deployment. All six
 settings/runtime/protocol/artifact shell suites pass. The native tests cover
@@ -1351,9 +1366,13 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   and authority, binds trusted reMarkable origin/session state, sends the
   canonical WhatsApp-routed turn with the fixed routing contract but without a
   caller-supplied transcript ID, waits for ordered acknowledgement/final
-  receipts, accepts current history only for the captured session, verifies a
-  live candidate against its request anchor, reconciles exact active/reset
-  transcript output, and commits the mode-specific safe response.
+  receipts, reconciles same-session current history, prefers exact
+  request-anchored active/reset transcript output after a remap, and admits a
+  newly canonical successor history only after exactly one finalized captured
+  reset archive is strictly and stably proven unanchored and the new history
+  contains the exact request anchor plus persisted Smart reMarkable
+  provenance. It verifies any live candidate against the eligible history
+  anchor and commits the mode-specific safe response.
 - `createRunContextControl` in
   `bridge/openclaw-plugin/run-context-control.mjs`: registers the plugin-owned
   subscription while the API is open, then adapts late synchronous
@@ -1366,6 +1385,13 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   archives without following links, validates the first session record and
   unique request anchor, and returns the exact user/assistant interval without
   reading another session's transcript.
+- `proveCapturedResetTranscriptUnanchored` in
+  `bridge/src/transcript-recovery.mjs`: provides the narrower negative proof
+  needed for an automatic canonical-session successor. It rejects any active
+  transcript or non-unique reset set, requires a stable no-follow read with
+  fatal UTF-8 and strict bounded JSONL, rechecks the candidate set and reopened
+  path identity, and returns true only for the exact captured-session reset
+  archive with zero request anchors.
 - `createOriginBindingHandlers` and `createRemarkableOriginHooks` in
   `bridge/openclaw-plugin/remarkable-upload.mjs`: store the server-generated
   per-run authority plus selection kind, `selection-page-v1`, and captured

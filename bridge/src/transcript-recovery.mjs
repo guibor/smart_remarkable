@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { TextDecoder } from "node:util";
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
+const MAX_TRANSCRIPT_BYTES_BIGINT = BigInt(MAX_TRANSCRIPT_BYTES);
 const MAX_TRANSCRIPT_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_RESET_ARCHIVE_CANDIDATES = 128;
 const RESET_ARCHIVE_TIMESTAMP_PATTERN =
@@ -59,13 +61,17 @@ function parseResetArchiveTimestamp(raw) {
   return Number.isNaN(timestamp) ? undefined : timestamp;
 }
 
+async function openCandidate(candidatePath) {
+  return fs.promises.open(
+    candidatePath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+}
+
 async function inspectCandidate(candidatePath) {
   let handle;
   try {
-    handle = await fs.promises.open(
-      candidatePath,
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-    );
+    handle = await openCandidate(candidatePath);
     const stat = await handle.stat();
     if (!stat.isFile()) {
       throw new Error("OpenClaw transcript is not a regular file");
@@ -267,6 +273,155 @@ async function readTranscriptCandidate({
   }
 }
 
+function stableStatMatches(before, after) {
+  return (
+    before.dev === after.dev &&
+    before.ino === after.ino &&
+    before.mode === after.mode &&
+    before.nlink === after.nlink &&
+    before.size === after.size &&
+    before.mtimeNs === after.mtimeNs &&
+    before.ctimeNs === after.ctimeNs
+  );
+}
+
+async function inspectStrictUnanchoredCandidate({
+  candidatePath,
+  sessionId,
+  requestId,
+}) {
+  let handle;
+  try {
+    handle = await openCandidate(candidatePath);
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile()) {
+      throw new Error("OpenClaw transcript is not a regular file");
+    }
+    if (before.size > MAX_TRANSCRIPT_BYTES_BIGINT) {
+      throw new Error("OpenClaw transcript exceeded the recovery limit");
+    }
+    const chunks = [];
+    let bytesRead = 0;
+    if (before.size > 0n) {
+      const input = handle.createReadStream({
+        autoClose: false,
+        start: 0,
+        end: Number(before.size) - 1,
+      });
+      for await (const chunk of input) {
+        bytesRead += chunk.length;
+        chunks.push(chunk);
+      }
+    }
+    const after = await handle.stat({ bigint: true });
+    if (
+      BigInt(bytesRead) !== before.size ||
+      !stableStatMatches(before, after)
+    ) {
+      throw new Error(
+        "OpenClaw captured transcript changed during rollover verification",
+      );
+    }
+
+    let text;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.concat(chunks, bytesRead),
+      );
+    } catch {
+      throw new Error(
+        "OpenClaw captured transcript is not valid UTF-8",
+      );
+    }
+
+    let sessionHeaderSeen = false;
+    let anchorCount = 0;
+    for (const line of text.split("\n")) {
+      if (Buffer.byteLength(line, "utf8") > MAX_TRANSCRIPT_LINE_BYTES) {
+        throw new Error(
+          "OpenClaw captured transcript line exceeded the recovery limit",
+        );
+      }
+      if (/^[\x20\t\r]*$/.test(line)) {
+        continue;
+      }
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        throw new Error(
+          "OpenClaw captured transcript is not valid JSONL",
+        );
+      }
+      if (!sessionHeaderSeen) {
+        if (
+          !record ||
+          typeof record !== "object" ||
+          Array.isArray(record) ||
+          record.type !== "session" ||
+          typeof record.id !== "string"
+        ) {
+          throw new Error(
+            "OpenClaw transcript session header is invalid",
+          );
+        }
+        if (record.id !== sessionId) {
+          return Object.freeze({
+            headerMatches: false,
+            anchored: false,
+            identity: after,
+          });
+        }
+        sessionHeaderSeen = true;
+        continue;
+      }
+      if (record?.type === "session") {
+        throw new Error(
+          "OpenClaw captured transcript contained another session header",
+        );
+      }
+      const message =
+        record?.type === "message" &&
+        record.message &&
+        typeof record.message === "object"
+          ? record.message
+          : null;
+      if (message && isRequestUserMessage(message, requestId)) {
+        anchorCount += 1;
+        if (anchorCount > 1) {
+          throw new Error(
+            "OpenClaw request appeared more than once in its transcript",
+          );
+        }
+      }
+    }
+    if (!sessionHeaderSeen) {
+      throw new Error("OpenClaw transcript session header is missing");
+    }
+    return Object.freeze({
+      headerMatches: true,
+      anchored: anchorCount === 1,
+      identity: after,
+    });
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function recheckCandidateIdentity(candidatePath, expected) {
+  let handle;
+  try {
+    handle = await fs.promises.open(
+      candidatePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const current = await handle.stat({ bigint: true });
+    return current.isFile() && stableStatMatches(expected, current);
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 export async function recoverTranscriptMessages({
   sessionsPath,
   sessionId,
@@ -311,4 +466,66 @@ export async function recoverTranscriptMessages({
   throw new Error(
     "OpenClaw transcript session header did not match the captured session",
   );
+}
+
+export async function proveCapturedResetTranscriptUnanchored({
+  sessionsPath,
+  sessionId,
+  requestId,
+}) {
+  const location = safeTranscriptLocation(sessionsPath, sessionId);
+  const candidates = await resolveTranscriptCandidates(
+    sessionsPath,
+    sessionId,
+  );
+  if (
+    candidates.some(
+      (candidate) => candidate.candidatePath === location.activePath,
+    )
+  ) {
+    throw new Error(
+      "OpenClaw active transcript cannot prove a completed session rollover",
+    );
+  }
+  if (candidates.length !== 1) {
+    throw new Error(
+      "OpenClaw captured reset transcript is not unique",
+    );
+  }
+  const result = await inspectStrictUnanchoredCandidate({
+    candidatePath: candidates[0].candidatePath,
+    sessionId,
+    requestId,
+  });
+  const recheckedCandidates = await resolveTranscriptCandidates(
+    sessionsPath,
+    sessionId,
+  );
+  if (
+    recheckedCandidates.length !== candidates.length ||
+    recheckedCandidates.some(
+      (candidate, index) =>
+        candidate.candidatePath !== candidates[index].candidatePath,
+    )
+  ) {
+    throw new Error(
+      "OpenClaw captured transcript set changed during rollover verification",
+    );
+  }
+  if (
+    !(await recheckCandidateIdentity(
+      candidates[0].candidatePath,
+      result.identity,
+    ))
+  ) {
+    throw new Error(
+      "OpenClaw captured transcript path changed during rollover verification",
+    );
+  }
+  if (!result.headerMatches) {
+    throw new Error(
+      "OpenClaw transcript session header did not match the captured session",
+    );
+  }
+  return result.anchored === false;
 }

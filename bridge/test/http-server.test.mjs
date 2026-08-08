@@ -836,6 +836,7 @@ test("captures the starting session for exact transcript recovery without repinn
             {
               role: "user",
               idempotencyKey: `${requestId}:user`,
+              provenance: SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
               content: [{ type: "text", text: "replacement request" }],
             },
             {
@@ -884,8 +885,8 @@ test("captures the starting session for exact transcript recovery without repinn
   );
 });
 
-test("a replacement-session live final cannot bypass the captured transcript anchor", async () => {
-  const requestId = "smart-remarkable-remapped-live-final-0001";
+test("recovers an exact post-admission automatic session successor after proving the captured reset is unanchored", async () => {
+  const requestId = "smart-remarkable-session-rollover-0001";
   const sessionsDirectory = await fs.mkdtemp(
     path.join(os.tmpdir(), "smart-remarkable-sessions-"),
   );
@@ -922,7 +923,104 @@ test("a replacement-session live final cannot bypass the captured transcript anc
             {
               role: "user",
               idempotencyKey: `${requestId}:user`,
+              provenance: SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
               content: [{ type: "text", text: "replacement request" }],
+            },
+            ...(callCount >= 3
+              ? [
+                  {
+                    role: "assistant",
+                    content: [
+                      {
+                        type: "text",
+                        text: responseEnvelope(
+                          "Recovered from the new canonical session.",
+                        ),
+                      },
+                    ],
+                  },
+                ]
+              : []),
+          ],
+        };
+
+  const pending = post({
+    port,
+    requestId,
+    mode: "write_back",
+  });
+  await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
+  gateway.accept();
+  gateway.resolveChat({ status: "accepted", runId: requestId });
+  const result = await pending.body;
+
+  assert.equal(result.json.choices[0].finish_reason, "stop");
+  assert.equal(
+    result.json.choices[0].message.content,
+    "Recovered from the new canonical session.",
+  );
+  assert.equal(
+    gateway.calls.filter((call) => isDeliveryKind(call, "final")).length,
+    1,
+  );
+  assert.ok(
+    gateway.historyCallCount >= 3,
+    "rollover recovery must tolerate the exact request pending in the new session",
+  );
+});
+
+test("an anchored pending captured session blocks successor history and its live final", async () => {
+  const requestId = "smart-remarkable-anchored-pending-rollover-0001";
+  const sessionsDirectory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "smart-remarkable-sessions-"),
+  );
+  cleanups.push(() =>
+    fs.rm(sessionsDirectory, { recursive: true, force: true }),
+  );
+  const sessionsPath = path.join(sessionsDirectory, "sessions.json");
+  await fs.writeFile(sessionsPath, "{}\n", { mode: 0o600 });
+  await fs.writeFile(
+    path.join(
+      sessionsDirectory,
+      "captured-session.jsonl.reset.2026-07-28T10-00-00.000Z",
+    ),
+    [
+      {
+        type: "session",
+        id: "captured-session",
+        version: 3,
+      },
+      {
+        type: "message",
+        message: {
+          role: "user",
+          idempotencyKey: `${requestId}:user`,
+          content: [{ type: "text", text: "captured request" }],
+        },
+      },
+    ]
+      .map((record) => JSON.stringify(record))
+      .join("\n") + "\n",
+    { mode: 0o600 },
+  );
+
+  const { gateway, port } = await fixture({
+    configOverrides: {
+      openclawSessionsPath: sessionsPath,
+      runTimeoutMs: 75,
+    },
+  });
+  gateway.historyResult = ({ callCount }) =>
+    callCount === 1
+      ? { sessionId: "captured-session", messages: [] }
+      : {
+          sessionId: "replacement-session",
+          messages: [
+            {
+              role: "user",
+              idempotencyKey: `${requestId}:user`,
+              provenance: SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+              content: [{ type: "text", text: "successor request" }],
             },
             {
               role: "assistant",
@@ -930,7 +1028,7 @@ test("a replacement-session live final cannot bypass the captured transcript anc
                 {
                   type: "text",
                   text: responseEnvelope(
-                    "REPLACEMENT_HISTORY_MUST_NOT_BE_USED",
+                    "SUCCESSOR_HISTORY_MUST_NOT_BE_USED",
                   ),
                 },
               ],
@@ -945,19 +1043,198 @@ test("a replacement-session live final cannot bypass the captured transcript anc
   });
   await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
   gateway.accept();
-  gateway.finish("LIVE_REPLACEMENT_MUST_NOT_BE_USED");
+  gateway.finish("SUCCESSOR_LIVE_FINAL_MUST_NOT_BE_USED");
   const result = await pending.body;
 
   assert.equal(result.json.choices[0].finish_reason, "error");
   assert.equal(
     JSON.stringify(result.json).includes(
-      "REPLACEMENT_HISTORY_MUST_NOT_BE_USED",
+      "SUCCESSOR_HISTORY_MUST_NOT_BE_USED",
     ),
     false,
   );
   assert.equal(
     JSON.stringify(result.json).includes(
-      "LIVE_REPLACEMENT_MUST_NOT_BE_USED",
+      "SUCCESSOR_LIVE_FINAL_MUST_NOT_BE_USED",
+    ),
+    false,
+  );
+  assert.equal(
+    gateway.calls.filter((call) => isDeliveryKind(call, "final")).length,
+    0,
+  );
+  assert.ok(
+    gateway.historyCallCount >= 2,
+    "captured-session precedence must survive successor polling",
+  );
+});
+
+for (const [label, provenance] of [
+  ["missing", undefined],
+  [
+    "wrong-kind",
+    {
+      ...SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+      kind: "internal_system",
+    },
+  ],
+  [
+    "wrong-source-channel",
+    {
+      ...SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+      sourceChannel: "whatsapp",
+    },
+  ],
+  [
+    "wrong-source-tool",
+    {
+      ...SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+      sourceTool: "lookalike_smart_remarkable",
+    },
+  ],
+]) {
+  test(`does not trust a ${label}-provenance rollover anchor or its live final`, async () => {
+    const requestId = `smart-remarkable-${label}-provenance-rollover-0001`;
+    const sessionsDirectory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "smart-remarkable-sessions-"),
+    );
+    cleanups.push(() =>
+      fs.rm(sessionsDirectory, { recursive: true, force: true }),
+    );
+    const sessionsPath = path.join(sessionsDirectory, "sessions.json");
+    await fs.writeFile(sessionsPath, "{}\n", { mode: 0o600 });
+    await fs.writeFile(
+      path.join(
+        sessionsDirectory,
+        "captured-session.jsonl.reset.2026-07-28T10-00-00.000Z",
+      ),
+      `${JSON.stringify({
+        type: "session",
+        id: "captured-session",
+        version: 3,
+      })}\n`,
+      { mode: 0o600 },
+    );
+
+    const { gateway, port } = await fixture({
+      configOverrides: {
+        openclawSessionsPath: sessionsPath,
+        runTimeoutMs: 75,
+      },
+    });
+    gateway.historyResult = ({ callCount }) =>
+      callCount === 1
+        ? { sessionId: "captured-session", messages: [] }
+        : {
+            sessionId: "replacement-session",
+            messages: [
+              {
+                role: "user",
+                idempotencyKey: `${requestId}:user`,
+                ...(provenance ? { provenance } : {}),
+                content: [{ type: "text", text: "lookalike request" }],
+              },
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "text",
+                    text: responseEnvelope(
+                      "LOOKALIKE_HISTORY_MUST_NOT_BE_USED",
+                    ),
+                  },
+                ],
+              },
+            ],
+          };
+
+    const pending = post({
+      port,
+      requestId,
+      mode: "write_back",
+    });
+    await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
+    gateway.accept();
+    gateway.finish("LOOKALIKE_LIVE_FINAL_MUST_NOT_BE_USED");
+    const result = await pending.body;
+
+    assert.equal(result.json.choices[0].finish_reason, "error");
+    assert.equal(
+      JSON.stringify(result.json).includes(
+        "LOOKALIKE_HISTORY_MUST_NOT_BE_USED",
+      ),
+      false,
+    );
+    assert.equal(
+      JSON.stringify(result.json).includes(
+        "LOOKALIKE_LIVE_FINAL_MUST_NOT_BE_USED",
+      ),
+      false,
+    );
+    assert.equal(
+      gateway.calls.filter((call) => isDeliveryKind(call, "final")).length,
+      0,
+    );
+  });
+}
+
+test("does not trust rollover history when the captured transcript cannot be verified", async () => {
+  const requestId = "smart-remarkable-unverified-rollover-0001";
+  const sessionsDirectory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "smart-remarkable-sessions-"),
+  );
+  cleanups.push(() =>
+    fs.rm(sessionsDirectory, { recursive: true, force: true }),
+  );
+  const sessionsPath = path.join(sessionsDirectory, "sessions.json");
+  await fs.writeFile(sessionsPath, "{}\n", { mode: 0o600 });
+
+  const { gateway, port } = await fixture({
+    configOverrides: {
+      openclawSessionsPath: sessionsPath,
+      runTimeoutMs: 75,
+    },
+  });
+  gateway.historyResult = ({ callCount }) =>
+    callCount === 1
+      ? { sessionId: "captured-session", messages: [] }
+      : {
+          sessionId: "replacement-session",
+          messages: [
+            {
+              role: "user",
+              idempotencyKey: `${requestId}:user`,
+              provenance: SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
+              content: [{ type: "text", text: "unverified request" }],
+            },
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "text",
+                  text: responseEnvelope(
+                    "UNVERIFIED_ROLLOVER_MUST_NOT_BE_USED",
+                  ),
+                },
+              ],
+            },
+          ],
+        };
+
+  const pending = post({
+    port,
+    requestId,
+    mode: "write_back",
+  });
+  await waitFor(() => gateway.chat.length === 1, "chat.send was not called");
+  gateway.accept();
+  gateway.resolveChat({ status: "accepted", runId: requestId });
+  const result = await pending.body;
+
+  assert.equal(result.json.choices[0].finish_reason, "error");
+  assert.equal(
+    JSON.stringify(result.json).includes(
+      "UNVERIFIED_ROLLOVER_MUST_NOT_BE_USED",
     ),
     false,
   );

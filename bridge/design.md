@@ -47,7 +47,19 @@
   `.jsonl.reset.<safe-ISO-timestamp>` archives. Every candidate is a
   no-follow regular file no larger than 64 MiB whose first record identifies
   the captured session. It returns only a unique exact request-anchored
-  interval and rejects ambiguous archives.
+  interval, reports no visible anchor when one eligible header-matching
+  transcript yields none, and rejects ambiguous archives. That tolerant
+  no-anchor result is not successor-session negative proof.
+- The same module's `proveCapturedResetTranscriptUnanchored` is the stricter
+  negative-proof path for a post-admission automatic canonical-session
+  successor. It refuses an active transcript, requires exactly one finalized
+  reset candidate, uses the same pre-read no-follow descriptor stat to enforce
+  the regular-file/64 MiB limit and set the read bound, requires matching final
+  identity and size, decodes UTF-8 fatally, parses every bounded JSONL line,
+  enforces the line limit before accepting only narrow ASCII JSON-whitespace
+  blank lines, validates exactly one matching session header, rechecks the
+  candidate set and reopened-path identity, and succeeds only with zero exact
+  request anchors.
 - `src/response-envelope.mjs` defines the versioned
   `received_text`/`response_text` contract and builds kind-aware instructions
   without changing that exact two-field shape. Version v3 restricts
@@ -264,20 +276,32 @@ accepts the first assistant record in that interval that passes the strict
 envelope parser; assistant record IDs are deliberately irrelevant. Duplicate
 anchors, crossing another user, target-interval truncation, malformed finals,
 or missing attribution fail closed. Older history may exist when the exact
-anchor is already present. Current history is eligible only while its
+anchor is already present. Current history is immediately eligible while its
 `sessionId` still equals the captured ID, and a live final is merely a
-candidate until the exact captured-session request anchor is verified. This
+candidate until the exact eligible-history request anchor is verified. This
 polling path remains active after a
 post-acceptance request-callback failure, so a queued or tool-using run is not
 lost merely because the ephemeral live final was missing.
-If canonical history has remapped and no longer contains the anchor, the
-service prefers `<captured-session-id>.jsonl` beside the trusted sessions file.
+If canonical history has remapped, the service first prefers
+`<captured-session-id>.jsonl` beside the trusted sessions file.
 If OpenClaw has reset that transcript, it considers only bounded exact-prefix
 `.jsonl.reset.<safe-ISO-timestamp>` candidates. Each is opened with
 `O_NOFOLLOW`, limited to 64 MiB and 8 MiB per line, and required to begin with
 the exact captured session header. Exactly one archive may contain the request
 anchor; multiple anchored or otherwise ambiguous matching archives fail
-closed. It never examines a transcript belonging to another session.
+closed. If the safely verified captured transcript contains the request, it
+retains precedence even while pending. Once canonical history names a
+successor, an unscoped live event cannot complete that captured request; only
+its durable transcript interval can. If it is verified and unanchored, and
+only if that negative proof came from the one finalized reset archive under
+the stricter stable reader, the newly canonical bounded Gateway history may
+prove a post-admission automatic canonical-session successor with exactly one
+matching request anchor, exact persisted
+`external_user`/`remarkable`/`smart_remarkable` provenance, and the normal
+strict assistant interval. A missing, active, changed, malformed, oversized,
+invalid-UTF-8, mismatched, or ambiguous captured transcript leaves successor
+history ineligible. A live final alone cannot cross this boundary. The bridge
+never opens another session's transcript file.
 
 It reports either delivery as sent only when the plugin returns exact
 `status: "sent"`, the expected run ID, WhatsApp channel, and a non-empty

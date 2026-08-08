@@ -22,7 +22,10 @@ import {
   verifyOriginBinding,
   verifyOriginClearing,
 } from "./source-provenance.mjs";
-import { recoverTranscriptMessages } from "./transcript-recovery.mjs";
+import {
+  proveCapturedResetTranscriptUnanchored,
+  recoverTranscriptMessages,
+} from "./transcript-recovery.mjs";
 
 const DELIVERY_METHOD = "smart_remarkable.deliver";
 const CHAT_HISTORY_MAX_CHARS = 500_000;
@@ -192,6 +195,18 @@ function isRequestUserMessage(message, requestId) {
   return (
     message?.role === "user" &&
     messageIdempotencyKey(message) === `${requestId}:user`
+  );
+}
+
+function hasSmartRemarkableInputProvenance(message) {
+  const provenance = message?.provenance;
+  return (
+    provenance?.kind ===
+      SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE.kind &&
+    provenance?.sourceChannel ===
+      SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE.sourceChannel &&
+    provenance?.sourceTool ===
+      SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE.sourceTool
   );
 }
 
@@ -527,6 +542,7 @@ export class SelectionService {
   ) {
     let history;
     let historyError = null;
+    let rolloverHistory = null;
     try {
       history = await this.#readCanonicalHistory(job, timeoutMs);
       const currentSessionId = requireSessionId(history);
@@ -534,6 +550,7 @@ export class SelectionService {
         historyError = new Error(
           "OpenClaw canonical session changed during the request",
         );
+        rolloverHistory = history;
       } else {
         const recovered = this.#extractCompletedText(job, history, {
           allowPending,
@@ -557,14 +574,49 @@ export class SelectionService {
         if (transcript) {
           const recovered = this.#extractCompletedText(job, transcript, {
             allowPending,
-            liveCandidate,
+            // Once canonical history points at a successor, its live event
+            // has no transcript identity.  The captured transcript owns this
+            // request anchor, so only its durable assistant interval may
+            // complete the turn; an unscoped live final could belong to the
+            // successor and must not cross back into the captured session.
+            liveCandidate: rolloverHistory ? null : liveCandidate,
           });
+          if (recovered) {
+            return recovered;
+          }
+          // The request belongs to the captured transcript. Even while its
+          // assistant response is still pending, a same-key replacement
+          // session is not eligible for attribution.
+          rolloverHistory = null;
+        } else if (
+          rolloverHistory &&
+          (await proveCapturedResetTranscriptUnanchored({
+            sessionsPath: this.config.openclawSessionsPath,
+            sessionId: job.sessionId,
+            requestId: job.requestId,
+          }))
+        ) {
+          // OpenClaw may create an automatic canonical-session successor as
+          // chat.send admits the turn. The preflight transcript remains our
+          // authority boundary:
+          // only after its exact finalized reset archive has a stable strict
+          // snapshot and contains no request anchor may the newly canonical
+          // history prove the rollover with that exact anchor and provenance.
+          const recovered = this.#extractCompletedText(
+            job,
+            rolloverHistory,
+            {
+              allowPending,
+              liveCandidate,
+              requireSmartRemarkableProvenance: true,
+            },
+          );
           if (recovered) {
             return recovered;
           }
         }
       } catch (error) {
-        historyError ??= error;
+        historyError = error;
       }
     }
 
@@ -594,7 +646,11 @@ export class SelectionService {
   #extractCompletedText(
     job,
     history,
-    { allowPending, liveCandidate = null },
+    {
+      allowPending,
+      liveCandidate = null,
+      requireSmartRemarkableProvenance = false,
+    },
   ) {
     const messages = Array.isArray(history?.messages) ? history.messages : [];
     if (history?.truncated === true) {
@@ -622,6 +678,14 @@ export class SelectionService {
       );
     }
     const requestIndex = requestIndexes[0];
+    if (
+      requireSmartRemarkableProvenance &&
+      !hasSmartRemarkableInputProvenance(messages[requestIndex])
+    ) {
+      throw new Error(
+        "OpenClaw rollover request provenance did not match Smart reMarkable",
+      );
+    }
     if (
       historyIndicatesTruncation(
         history,

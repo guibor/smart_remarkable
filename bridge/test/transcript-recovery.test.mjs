@@ -3,7 +3,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { recoverTranscriptMessages } from "../src/transcript-recovery.mjs";
+import {
+  proveCapturedResetTranscriptUnanchored,
+  recoverTranscriptMessages,
+} from "../src/transcript-recovery.mjs";
 
 const SESSION_ID = "captured-session";
 const REQUEST_ID = "smart-remarkable-transcript-test-0001";
@@ -63,6 +66,14 @@ async function writeJsonl(filePath, records) {
 
 async function recover(sessionsPath) {
   return recoverTranscriptMessages({
+    sessionsPath,
+    sessionId: SESSION_ID,
+    requestId: REQUEST_ID,
+  });
+}
+
+async function proveUnanchoredReset(sessionsPath) {
+  return proveCapturedResetTranscriptUnanchored({
     sessionsPath,
     sessionId: SESSION_ID,
     requestId: REQUEST_ID,
@@ -243,5 +254,190 @@ test("bounds exact reset archive discovery", async (t) => {
   await assert.rejects(
     recover(fixture.sessionsPath),
     /candidates exceeded the limit/,
+  );
+});
+
+test("strictly proves a stable finalized reset archive is unanchored", async (t) => {
+  const fixture = await createFixture(t);
+  await writeJsonl(
+    archivePath(fixture.directory, SESSION_ID),
+    transcriptRecords({ includeAnchor: false }),
+  );
+
+  assert.equal(await proveUnanchoredReset(fixture.sessionsPath), true);
+});
+
+test("strict negative proof requires exactly one matching reset archive", async (t) => {
+  const fixture = await createFixture(t);
+  await writeJsonl(
+    archivePath(
+      fixture.directory,
+      SESSION_ID,
+      "2026-07-28T10-00-00.000Z",
+    ),
+    transcriptRecords({ includeAnchor: false }),
+  );
+  await writeJsonl(
+    archivePath(
+      fixture.directory,
+      SESSION_ID,
+      "2026-07-28T11-00-00.000Z",
+    ),
+    transcriptRecords({
+      sessionId: "replacement-session",
+      includeAnchor: false,
+    }),
+  );
+
+  await assert.rejects(
+    proveUnanchoredReset(fixture.sessionsPath),
+    /reset transcript is not unique/,
+  );
+});
+
+test("strict negative proof rejects malformed reset transcript JSONL", async (t) => {
+  const fixture = await createFixture(t);
+  await fs.writeFile(
+    archivePath(fixture.directory, SESSION_ID),
+    `${JSON.stringify({
+      type: "session",
+      id: SESSION_ID,
+      version: 3,
+    })}\n{"type":"message"`,
+    { mode: 0o600 },
+  );
+
+  await assert.rejects(
+    proveUnanchoredReset(fixture.sessionsPath),
+    /not valid JSONL/,
+  );
+});
+
+test("strict negative proof rejects a second session header", async (t) => {
+  const fixture = await createFixture(t);
+  await writeJsonl(
+    archivePath(fixture.directory, SESSION_ID),
+    [
+      { type: "session", id: SESSION_ID, version: 3 },
+      { type: "session", id: SESSION_ID, version: 3 },
+    ],
+  );
+
+  await assert.rejects(
+    proveUnanchoredReset(fixture.sessionsPath),
+    /another session header/,
+  );
+});
+
+test("strict negative proof rejects an oversized pre-anchor line", async (t) => {
+  const fixture = await createFixture(t);
+  await fs.writeFile(
+    archivePath(fixture.directory, SESSION_ID),
+    `${JSON.stringify({
+      type: "session",
+      id: SESSION_ID,
+      version: 3,
+    })}\n${"x".repeat(8 * 1024 * 1024 + 1)}\n`,
+    { mode: 0o600 },
+  );
+
+  await assert.rejects(
+    proveUnanchoredReset(fixture.sessionsPath),
+    /line exceeded the recovery limit/,
+  );
+});
+
+test("strict negative proof rejects oversized whitespace before blank-line handling", async (t) => {
+  const fixture = await createFixture(t);
+  await fs.writeFile(
+    archivePath(fixture.directory, SESSION_ID),
+    `${JSON.stringify({
+      type: "session",
+      id: SESSION_ID,
+      version: 3,
+    })}\n${" ".repeat(8 * 1024 * 1024 + 1)}\n`,
+    { mode: 0o600 },
+  );
+
+  await assert.rejects(
+    proveUnanchoredReset(fixture.sessionsPath),
+    /line exceeded the recovery limit/,
+  );
+});
+
+for (const [label, whitespace] of [
+  ["non-breaking-space", "\u00a0"],
+  ["line-separator", "\u2028"],
+]) {
+  test(`strict negative proof rejects ${label} as a blank JSONL line`, async (t) => {
+    const fixture = await createFixture(t);
+    await fs.writeFile(
+      archivePath(fixture.directory, SESSION_ID),
+      `${JSON.stringify({
+        type: "session",
+        id: SESSION_ID,
+        version: 3,
+      })}\n${whitespace}\n`,
+      { mode: 0o600 },
+    );
+
+    await assert.rejects(
+      proveUnanchoredReset(fixture.sessionsPath),
+      /not valid JSONL/,
+    );
+  });
+}
+
+test("strict negative proof rechecks the reset file size immediately before reading", async (t) => {
+  const fixture = await createFixture(t);
+  const resetPath = archivePath(fixture.directory, SESSION_ID);
+  await writeJsonl(
+    resetPath,
+    transcriptRecords({ includeAnchor: false }),
+  );
+  await fs.truncate(resetPath, 64 * 1024 * 1024 + 1);
+
+  await assert.rejects(
+    proveUnanchoredReset(fixture.sessionsPath),
+    /transcript exceeded the recovery limit/,
+  );
+});
+
+test("strict negative proof rejects invalid UTF-8", async (t) => {
+  const fixture = await createFixture(t);
+  const header = Buffer.from(
+    `${JSON.stringify({
+      type: "session",
+      id: SESSION_ID,
+      version: 3,
+    })}\n`,
+    "utf8",
+  );
+  await fs.writeFile(
+    archivePath(fixture.directory, SESSION_ID),
+    Buffer.concat([header, Buffer.from([0xff, 0x0a])]),
+    { mode: 0o600 },
+  );
+
+  await assert.rejects(
+    proveUnanchoredReset(fixture.sessionsPath),
+    /not valid UTF-8/,
+  );
+});
+
+test("an active transcript cannot mask an anchored reset archive as negative proof", async (t) => {
+  const fixture = await createFixture(t);
+  await writeJsonl(
+    path.join(fixture.directory, `${SESSION_ID}.jsonl`),
+    transcriptRecords({ includeAnchor: false }),
+  );
+  await writeJsonl(
+    archivePath(fixture.directory, SESSION_ID),
+    transcriptRecords(),
+  );
+
+  await assert.rejects(
+    proveUnanchoredReset(fixture.sessionsPath),
+    /active transcript cannot prove/,
   );
 });

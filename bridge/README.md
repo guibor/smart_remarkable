@@ -156,12 +156,18 @@ attempt cannot silently consume the next tap.
    scoped to `operator.write`, derives the direct WhatsApp destination from
    `agent:main:main`, and accepts no caller-supplied route.
 8. The bridge accepts a matching live final only when that envelope is valid.
-   Current history is eligible only while its transcript ID still matches the
-   captured ID; a live final remains only a candidate until that same
-   transcript contains the exact `<requestId>:user` anchor. If the canonical
-   mapping changed, recovery prefers the exact preflight-captured transcript
-   and otherwise considers only bounded exact-name reset archives with
-   no-follow, size, session-header, uniqueness, and request-anchor checks.
+   Current history is immediately eligible while its transcript ID still
+   matches the captured ID; a live final remains only a candidate until an
+   eligible history contains the exact `<requestId>:user` anchor. If the
+   canonical mapping changed, recovery first checks the exact
+   preflight-captured active or bounded exact-name reset transcript with
+   no-follow, size, session-header, uniqueness, and request-anchor checks. A
+   request anchored there stays there; while canonical history names a
+   successor, an unscoped live final cannot complete that pending captured
+   request. Only a separate strict negative proof
+   over exactly one finalized reset archive permits the newly canonical
+   bounded history to prove a post-admission automatic session successor with
+   its own exact request anchor and persisted Smart reMarkable provenance.
 9. The bridge waits for the acknowledgement attempt, then renders and sends one
    atomic final through `smart_remarkable.deliver`: `I read:`, the line-quoted
    kind-aware `received_text`, a blank line, and the answer. For `ink`, the
@@ -279,16 +285,31 @@ when the exact anchor is already in the returned tail. `status: "in_flight"` is
 treated as accepted only with the same exact ID and uses the same bounded
 live-event/history reconciliation.
 
-If the canonical session mapping changes after admission, recovery is limited
-to the exact transcript ID captured before the send. The reader validates that
-ID as a filename component and first tries its active JSONL. If OpenClaw reset
-it, the reader considers at most 128 exact
+If the canonical session mapping changes after admission, recovery first
+examines the exact transcript ID captured before the send. The reader validates
+that ID as a filename component and first tries its active JSONL. If OpenClaw
+reset it, the reader considers at most 128 exact
 `.jsonl.reset.<safe-ISO-timestamp>` names, opens each with `O_NOFOLLOW`, bounds
 the file at 64 MiB and each line at 8 MiB, validates the first session record,
-and requires one unique exact request anchor. It never examines another
-session's transcript. The captured ID is a recovery locator and authority
-constraint only; it is never used to repin or mutate the current OpenClaw
-session.
+and requires at most one unique exact request anchor. An anchor in that
+captured transcript retains precedence. If the ordinary tolerant recovery
+reader reports no visible anchor, that alone is not enough to authorize
+successor history. The negative-proof reader
+requires that no active transcript exists, exactly one reset candidate remains,
+one pre-read descriptor stat both enforces the regular-file/64 MiB limit and
+sets the read bound, its final identity, size, mtime, and ctime match, every
+bounded line is valid UTF-8 JSONL, exactly one header identifies the captured
+session, every line is size-checked before only narrow ASCII JSON-whitespace
+blank lines are skipped, the candidate set remains unchanged, its path reopens
+to the same identity, and it contains zero request anchors.
+Only then is newly canonical bounded Gateway history eligible, and only when
+it contains exactly one request anchor with persisted
+`external_user`/`remarkable`/`smart_remarkable` provenance followed by the
+strict response interval. A live final alone cannot cross this boundary.
+Missing or unsafe captured-transcript evidence fails closed. The bridge never
+opens another session's transcript file. The captured ID is a recovery locator
+and authority constraint only; it is never used to repin or mutate the current
+OpenClaw session.
 
 ## Runtime prerequisites
 
@@ -437,7 +458,7 @@ npm test
 node --test openclaw-plugin/test/*.test.mjs
 ```
 
-The 148 bridge/plugin tests use a fake Gateway client and temporary filesystem
+The 165 bridge/plugin tests use a fake Gateway client and temporary filesystem
 journals. They verify pre-acceptance header
 withholding, both modes, all three strict selection kinds, kind-bound
 fingerprints and origin receipts, the exact request-ID namespace, strict
@@ -458,7 +479,10 @@ run-context adapter, exact set/clear read-back, missing synchronous receipt
 failure, wrong-plugin event rejection, bounded reentrant control,
 routing-contract drift,
 durable provenance, active and real reset-archive transcript recovery,
-replacement-session/live-final rejection, production service wiring, and
+strict finalized-reset negative proof, persisted-provenance successor-session
+recovery, pending captured-session precedence, unsafe replacement-session and
+live-final rejection, production
+service wiring, and
 pre-health journal preparation. They also exercise current-generation
 capability invalidation/re-probing, a reconnect crossing an in-flight RPC,
 dynamic health failure, admission refusal before journal reservation, explicit
