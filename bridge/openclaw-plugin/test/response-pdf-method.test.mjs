@@ -171,6 +171,7 @@ async function createFixture(t) {
   });
   assert.equal(binding.ok, true);
   const hooks = createRemarkableOriginHooks({
+    admissionRegistry,
     runContext,
     now,
   });
@@ -202,6 +203,7 @@ async function createFixture(t) {
   });
 
   return {
+    admissionRegistry,
     stateDir,
     pythonPath,
     configPath,
@@ -224,6 +226,7 @@ async function createFixture(t) {
       return createRemarkableResponsePdfHandler({
         runtime,
         logger,
+        admissionRegistry,
         runContext,
         renderResponsePdf: renderer,
         store: receiptStore,
@@ -251,6 +254,7 @@ test("registers the exact operator.admin response-PDF RPC", async (t) => {
       },
     },
     {
+      admissionRegistry: fixture.admissionRegistry,
       renderResponsePdf: createRenderer(fixture.stateDir, tracker),
       store: fixture.store,
       execFileFn: async () => ({
@@ -328,6 +332,43 @@ test("renders, uploads, and returns only the exact confirmed receipt", async (t)
   assert.equal(options.shell, false);
   assert.equal(options.env.REMARKABLE_SYNC_CONFIG, fixture.configPath);
   await assert.rejects(fs.stat(args[3]), { code: "ENOENT" });
+});
+
+test("keeps the activated admission through host run-context teardown", async (t) => {
+  const fixture = await createFixture(t);
+  const tracker = { inputs: [], cleanups: 0 };
+  fixture.runContext.clearRunContext({
+    runId: REQUEST_ID,
+    namespace: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+  });
+  const handler = fixture.createHandler({
+    renderer: createRenderer(fixture.stateDir, tracker),
+    execFileFn: async () => ({
+      stdout: JSON.stringify({ id: DOCUMENT_ID, hash: CLOUD_HASH }),
+      stderr: "",
+    }),
+  });
+
+  const result = await invokeGateway(handler, fixture.params);
+  assert.equal(result.ok, true);
+  assert.equal(result.payload.status, "uploaded");
+  assert.equal(tracker.inputs.length, 1);
+  assert.equal(tracker.cleanups, 1);
+
+  const cleared = await invokeGateway(
+    fixture.bindingHandlers.clear,
+    {
+      requestId: REQUEST_ID,
+      bindingHandle: fixture.params.bindingHandle,
+    },
+  );
+  assert.equal(cleared.ok, true);
+  const afterClear = await invokeGateway(handler, {
+    ...fixture.params,
+    responseText: "A different response after explicit clear.",
+  });
+  assert.equal(afterClear.ok, false);
+  assert.equal(afterClear.error.code, "UNAUTHORIZED");
 });
 
 test("rejects unknown, malformed, inactive, expired, and wrong origin authority before rendering", async (t) => {
@@ -539,6 +580,7 @@ test("coalesces identical concurrency, rejects conflicts, and cleans one artifac
 test("caps distinct render jobs while still coalescing an admitted request", async (t) => {
   const fixture = await createFixture(t);
   const hooks = createRemarkableOriginHooks({
+    admissionRegistry: fixture.admissionRegistry,
     runContext: fixture.runContext,
     now: fixture.now,
   });

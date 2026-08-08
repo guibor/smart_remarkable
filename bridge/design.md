@@ -487,17 +487,23 @@ capability. Tool execution rechecks that session identity and capability. User
 prompt text, transcript content, model output, and caller-supplied tool
 arguments cannot authorize an upload.
 
-### `createRemarkableResponsePdfHandler({ runtime, runContext, renderResponsePdf, store, execFileFn })`
+### `createRemarkableResponsePdfHandler({ runtime, runContext, admissionRegistry, renderResponsePdf, store, execFileFn })`
 
 Creates the admin-scoped automatic response-PDF RPC. It accepts exactly the
 request ID, opaque binding handle, normalized literal transcription, and
 answer; enforces the response-envelope byte/control/line-complexity bounds;
-and requires a live active origin record. One fingerprint binds those values,
+and requires a live active origin admission. The prompt hook copies the exact
+activated admission into the plugin process before the model runs. OpenClaw's
+callback-scoped run context may then disappear normally when that run ends;
+the handler permits that absence only while the same opaque handle, captured
+session, capability, fixed active deadline, and in-process admission remain
+exact. Any still-present host record must match the authority fields, and the
+bridge's explicit clear removes the admission after completion. One fingerprint binds those values,
 the origin capability/session, and the fixed policy. Identical in-flight calls
 share one promise, at most one distinct operation may run at a time,
 conflicting or excess work fails before rendering, and an exact completed durable
 receipt returns before rendering. After a new render it rechecks the unchanged
-origin, uploads through the common no-shell receipt path, returns only the
+admission, uploads through the common no-shell receipt path, returns only the
 strict cloud receipt, and always invokes the renderer cleanup handle.
 
 ### `renderResponsePdf(input, dependencies)`

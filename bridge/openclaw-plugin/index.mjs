@@ -439,10 +439,14 @@ export default definePluginEntry({
       runContext,
     });
     registerRemarkableResponsePdfMethod(api, {
+      admissionRegistry,
       runContext,
       renderResponsePdf,
     });
     registerRemarkableUploadTool(api, { runContext });
-    registerRemarkableOriginHooks(api, { runContext });
+    registerRemarkableOriginHooks(api, {
+      admissionRegistry,
+      runContext,
+    });
   },
 });

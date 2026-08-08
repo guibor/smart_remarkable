@@ -421,6 +421,7 @@ function readStoredOrigin(runContext, requestId) {
 function readAuthorizedResponsePdfOrigin(
   request,
   runContext,
+  admissionRegistry,
   now,
   expectedOrigin = undefined,
 ) {
@@ -428,12 +429,28 @@ function readAuthorizedResponsePdfOrigin(
   if (!Number.isSafeInteger(at) || at < 0) {
     throw responsePdfUnavailable();
   }
-  const origin = readStoredOrigin(runContext, request.requestId);
+  const origin = admissionRegistry.authorize(request, expectedOrigin);
+  const rawStored = readRawStoredOrigin(runContext, request.requestId);
+  const stored = parseStoredOrigin(rawStored, request.requestId);
   if (
     !origin ||
     origin.state !== "active" ||
     origin.expiresAt <= at ||
     !constantTimeEqual(origin.bindingHandle, request.bindingHandle) ||
+    (rawStored !== undefined &&
+      (!stored ||
+        stored.state !== origin.state ||
+        stored.mode !== origin.mode ||
+        stored.selectionKind !== origin.selectionKind ||
+        stored.contextVersion !== origin.contextVersion ||
+        stored.expectedSessionId !== origin.expectedSessionId ||
+        stored.createdAt !== origin.createdAt ||
+        stored.expiresAt !== origin.expiresAt ||
+        !constantTimeEqual(stored.capability, origin.capability) ||
+        !constantTimeEqual(
+          stored.bindingHandle,
+          origin.bindingHandle,
+        ))) ||
     (expectedOrigin !== undefined &&
       (origin.expectedSessionId !== expectedOrigin.expectedSessionId ||
         origin.createdAt !== expectedOrigin.createdAt ||
@@ -634,6 +651,18 @@ export function createOriginAdmissionRegistry({
         const stored = parseStoredOrigin(raw, requestId);
         if (!stored || stored.expiresAt <= at) {
           if (
+            raw === undefined &&
+            reserved.state === "active" &&
+            reserved.expiresAt > at
+          ) {
+            // OpenClaw's callback-scoped run context ends with the agent run,
+            // while the bridge still needs the exact activated admission to
+            // render and upload its response PDF. The in-process admission is
+            // cleared explicitly by the bridge or expires at its fixed active
+            // deadline.
+            continue;
+          }
+          if (
             raw !== undefined &&
             !clearStoredOrigin(runContext, requestId)
           ) {
@@ -645,6 +674,7 @@ export function createOriginAdmissionRegistry({
         if (!sameReservation(reserved, stored)) {
           throw originUnavailable();
         }
+        entries.set(requestId, Object.freeze({ ...stored }));
       }
     },
 
@@ -663,6 +693,53 @@ export function createOriginAdmissionRegistry({
         throw originUnavailable();
       }
       entries.set(origin.requestId, origin);
+      return origin;
+    },
+
+    activate(origin) {
+      const at = currentTime();
+      if (
+        !isBoundOrigin(origin, origin?.requestId) ||
+        origin.state !== "active" ||
+        origin.expiresAt <= at
+      ) {
+        throw originUnavailable();
+      }
+      const existing = entries.get(origin.requestId);
+      if (!existing || !sameReservation(existing, origin)) {
+        throw originUnavailable();
+      }
+      const active = Object.freeze({ ...origin });
+      entries.set(origin.requestId, active);
+      return active;
+    },
+
+    authorize(request, expectedOrigin = undefined) {
+      const at = currentTime();
+      const origin = entries.get(request?.requestId);
+      if (
+        !isBoundOrigin(origin, request?.requestId) ||
+        origin.state !== "active" ||
+        origin.expiresAt <= at ||
+        !constantTimeEqual(origin.bindingHandle, request?.bindingHandle) ||
+        (expectedOrigin !== undefined &&
+          (origin.expectedSessionId !== expectedOrigin.expectedSessionId ||
+            origin.createdAt !== expectedOrigin.createdAt ||
+            origin.expiresAt !== expectedOrigin.expiresAt ||
+            !constantTimeEqual(
+              origin.bindingHandle,
+              expectedOrigin.bindingHandle,
+            ) ||
+            !constantTimeEqual(
+              origin.capability,
+              expectedOrigin.capability,
+            )))
+      ) {
+        if (origin?.expiresAt <= at) {
+          entries.delete(request?.requestId);
+        }
+        throw responsePdfUnauthorized();
+      }
       return origin;
     },
 
@@ -765,6 +842,8 @@ export function createOriginBindingHandlers({
     typeof admissionRegistry.bind !== "function" ||
     typeof admissionRegistry.reconcile !== "function" ||
     typeof admissionRegistry.reserve !== "function" ||
+    typeof admissionRegistry.activate !== "function" ||
+    typeof admissionRegistry.authorize !== "function" ||
     typeof admissionRegistry.clear !== "function" ||
     !runContext ||
     typeof runContext.getRunContext !== "function" ||
@@ -970,6 +1049,7 @@ function buildRemarkableTurnGuidance(origin) {
 
 export function createRemarkableOriginHooks({
   runContext,
+  admissionRegistry,
   now = Date.now,
   activeTtlMs = DEFAULT_ORIGIN_ACTIVE_TTL_MS,
 }) {
@@ -977,6 +1057,8 @@ export function createRemarkableOriginHooks({
     !runContext ||
     typeof runContext.setRunContext !== "function" ||
     typeof runContext.getRunContext !== "function" ||
+    !admissionRegistry ||
+    typeof admissionRegistry.activate !== "function" ||
     typeof now !== "function" ||
     !Number.isSafeInteger(activeTtlMs) ||
     activeTtlMs <= 0
@@ -1014,20 +1096,29 @@ export function createRemarkableOriginHooks({
       return undefined;
     }
     if (stored.state === "active") {
-      return stored;
+      try {
+        return admissionRegistry.activate(stored);
+      } catch {
+        return undefined;
+      }
     }
     const origin = Object.freeze({
       ...stored,
       state: "active",
       expiresAt: at + activeTtlMs,
     });
-    if (
-      !Number.isSafeInteger(origin.expiresAt) ||
-      !storeOrigin(runContext, origin)
-    ) {
+    if (!Number.isSafeInteger(origin.expiresAt)) {
       return undefined;
     }
-    return origin;
+    try {
+      if (!storeOrigin(runContext, origin)) {
+        return undefined;
+      }
+      return admissionRegistry.activate(origin);
+    } catch {
+      clearStoredOrigin(runContext, origin.requestId);
+      return undefined;
+    }
   }
 
   return Object.freeze({
@@ -1856,6 +1947,7 @@ async function loadResponsePdfReplay(receiptStore, request) {
 async function executeResponsePdfUpload({
   request,
   runContext,
+  admissionRegistry,
   stateDir,
   receiptStore,
   renderResponsePdf,
@@ -1872,6 +1964,7 @@ async function executeResponsePdfUpload({
       readAuthorizedResponsePdfOrigin(
         request,
         runContext,
+        admissionRegistry,
         now,
         request.expectedOrigin,
       );
@@ -1891,6 +1984,7 @@ async function executeResponsePdfUpload({
     readAuthorizedResponsePdfOrigin(
       request,
       runContext,
+      admissionRegistry,
       now,
       request.expectedOrigin,
     );
@@ -1917,6 +2011,7 @@ async function executeResponsePdfUpload({
         readAuthorizedResponsePdfOrigin(
           request,
           runContext,
+          admissionRegistry,
           now,
           request.expectedOrigin,
         ),
@@ -1951,6 +2046,7 @@ export function createRemarkableResponsePdfHandler({
   runtime,
   logger,
   runContext,
+  admissionRegistry,
   renderResponsePdf,
   store,
   execFileFn = nodeExecFileAsync,
@@ -1965,6 +2061,8 @@ export function createRemarkableResponsePdfHandler({
     typeof runtime.state.resolveStateDir !== "function" ||
     !runContext ||
     typeof runContext.getRunContext !== "function" ||
+    !admissionRegistry ||
+    typeof admissionRegistry.authorize !== "function" ||
     typeof renderResponsePdf !== "function" ||
     typeof execFileFn !== "function" ||
     typeof now !== "function" ||
@@ -1995,6 +2093,7 @@ export function createRemarkableResponsePdfHandler({
       const origin = readAuthorizedResponsePdfOrigin(
         validated,
         runContext,
+        admissionRegistry,
         now,
       );
       request = buildAuthorizedResponsePdfRequest(validated, origin);
@@ -2018,6 +2117,7 @@ export function createRemarkableResponsePdfHandler({
       promise = executeResponsePdfUpload({
         request,
         runContext,
+        admissionRegistry,
         stateDir,
         receiptStore,
         renderResponsePdf,
