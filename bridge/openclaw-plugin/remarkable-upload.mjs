@@ -905,7 +905,7 @@ export function createOriginBindingHandlers({
           true,
           {
             protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
-            status: "bound",
+            status: origin.state === "active" ? "active" : "bound",
             runId: request.requestId,
             source: "remarkable",
             mode: request.mode,

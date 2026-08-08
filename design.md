@@ -1456,14 +1456,16 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   per-run authority plus selection kind, `selection-page-v1`, and captured
   transcript identity; add proactive capture/page/title/history/memory guidance
   only when the prompt hook reports that exact transcript; recheck the exact
-  active identity and final guidance in `before_agent_run`; retain that exact
-  activated, fixed-deadline admission in the same plugin process after
-  OpenClaw normally tears down its callback-scoped run context; and authorize the
+  active identity and final guidance in `before_agent_run`; expose an exact
+  `active` idempotent-bind receipt so the bridge can latch that hook-proven,
+  fixed-deadline admission into the Gateway-handler plugin instance immediately
+  after `chat.send` acceptance and before OpenClaw normally tears down its
+  callback-scoped run context; and authorize the
   upload tool only at the exact run/transcript/agent/session-key boundary.
 - `createRemarkableResponsePdfHandler` in
   `bridge/openclaw-plugin/remarkable-upload.mjs`: validates the exact bridge
   RPC, rechecks its opaque active-origin handle and canonical run identity
-  against the same in-process admission, requires any still-present host run
+  against the acceptance-latched in-process admission, requires any still-present host run
   context to match, tolerates only its normal post-run absence, and is revoked
   by the bridge's explicit clear or the fixed active expiry;
   renders one deterministic response PDF, and routes it through the durable
