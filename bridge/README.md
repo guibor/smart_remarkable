@@ -179,11 +179,11 @@ attempt cannot silently consume the next tap.
 9. After strict envelope recovery, the bridge calls the admin-scoped
    `smart_remarkable.deliver_response_pdf` method with only the request ID,
    opaque active-binding handle, transcription, and answer. The plugin rechecks
-   that exact authority, renders a deterministic one-column PDF from a
-   structured Pandoc JSON AST with literal text nodes, validates the private
-   bounded output, and uploads it through the existing no-shell `rm-sync`
+   that exact authority, renders a deterministic one-column PDF by passing the
+   two validated strings as plain text to a bounded Pango/Cairo helper,
+   validates the private bounded output, and uploads it through the existing no-shell `rm-sync`
    receipt path. Exact completed replay returns before rendering or uploading;
-   identical work coalesces, at most two distinct operations run concurrently,
+   identical work coalesces, at most one distinct operation runs at a time,
    and excess or ambiguous work fails before a new renderer. The target is the configured
    reMarkable Cloud library, not one physical tablet or the original notebook.
 10. The bridge waits for both the acknowledgement attempt and terminal PDF
@@ -352,15 +352,16 @@ OpenClaw session.
   `smart_remarkable.bind_origin`, `smart_remarkable.clear_origin`, and
   `smart_remarkable.deliver_response_pdf`, plus the
   `remarkable_deliver_document` agent tool.
-- Automatic response rendering requires exact `/usr/bin/pandoc` version 3.6.3
-  with Pandoc JSON API 1.23.1 and `/usr/bin/xelatex` reporting a supported
-  XeTeX/TeX Live family. Fixed `DejaVu Sans`, `Noto Sans Hebrew`, and
-  `Noto Sans Arabic` faces must be installed. The AST pins an English/LTR document base,
-  preloads Babel's Hebrew and Arabic languages, and marks each paragraph and
-  text run with an explicit structured language/direction attribute. The fixed
-  XeLaTeX font set does not promise glyphs for every emoji. Every
-  render rechecks the executable receipts inside its private no-shell
-  environment before processing the structured AST.
+- Automatic response rendering requires exact `/usr/bin/python3` 3.10.12,
+  Pycairo 1.20.1, Cairo 1.16.0, PyGObject 3.42.1, and Pango 1.50.6. The helper
+  runs behind `/usr/bin/prlimit`, uses Pango's full-paragraph Unicode bidi
+  algorithm, fixed `DejaVu Sans` plus `FreeSans` for Hebrew, disables
+  uncontrolled font fallback, and rejects any unknown glyph. The six small
+  Ubuntu runtime packages are `gir1.2-freedesktop`, `gir1.2-harfbuzz-0.0`,
+  `gir1.2-pango-1.0`, `libpangoxft-1.0-0`, `python3-cairo`, and
+  `python3-gi-cairo`. Every render rechecks one exact dependency receipt inside
+  a private no-shell environment. The separate rich-document tool retains its
+  existing Pandoc/LaTeX pipeline.
 - In live OpenClaw configuration, explicitly grant both reviewed hook
   permissions to this non-bundled plugin:
 

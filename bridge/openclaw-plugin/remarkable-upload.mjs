@@ -45,7 +45,7 @@ export const DEFAULT_RM_SYNC_CONFIG =
 export const DEFAULT_ORIGIN_PENDING_TTL_MS = 12 * 60 * 1000;
 export const DEFAULT_ORIGIN_ACTIVE_TTL_MS = 15 * 60 * 1000;
 export const DEFAULT_MAX_ORIGIN_BINDINGS = 128;
-export const DEFAULT_MAX_RESPONSE_PDF_IN_FLIGHT = 2;
+export const DEFAULT_MAX_RESPONSE_PDF_IN_FLIGHT = 1;
 
 const CANONICAL_AGENT_ID = "main";
 const CANONICAL_SESSION_KEY = "agent:main:main";

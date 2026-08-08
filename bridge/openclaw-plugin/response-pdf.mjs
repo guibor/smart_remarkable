@@ -3,12 +3,17 @@ import { execFile as nodeExecFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const PANDOC_PATH = "/usr/bin/pandoc";
-const XELATEX_PATH = "/usr/bin/xelatex";
-const PANDOC_VERSION_LINE = "pandoc 3.6.3";
-const PANDOC_API_VERSION = Object.freeze([1, 23, 1]);
+const PRLIMIT_PATH = "/usr/bin/prlimit";
+const PYTHON_PATH = "/usr/bin/python3";
+const RENDERER_PATH = fileURLToPath(
+  new URL("./response-pdf-renderer.py", import.meta.url),
+);
+const RENDERER_PROTOCOL = "response-pdf-pango-v1";
+const RENDERER_VERSION_LINE =
+  "smart-remarkable-pango-pdf-v1 python=3.10.12 pycairo=1.20.1 cairo=1.16.0 pygobject=3.42.1 pango=1.50.6";
 const ARTIFACT_KEY = "response-pdf-cloud-v1";
 const SOURCE_DATE_EPOCH = "946684800";
 const MAX_RECEIVED_TEXT_BYTES = 2_048;
@@ -17,9 +22,9 @@ const MAX_COMBINED_TEXT_BYTES =
   MAX_RECEIVED_TEXT_BYTES + MAX_RESPONSE_TEXT_BYTES;
 const MAX_COMBINED_LINE_BREAKS = 512;
 const MAX_PDF_BYTES = 32 * 1024 * 1024;
-const MAX_PROCESS_OUTPUT_BYTES = 256 * 1024;
+const MAX_PROCESS_OUTPUT_BYTES = 64 * 1024;
 const MAX_VERSION_OUTPUT_BYTES = 16 * 1024;
-const RENDER_TIMEOUT_MS = 90_000;
+const RENDER_TIMEOUT_MS = 20_000;
 const VERSION_TIMEOUT_MS = 5_000;
 const READ_CHUNK_BYTES = 64 * 1024;
 const PDF_TAIL_BYTES = 1024;
@@ -28,13 +33,21 @@ const REQUEST_ID_PATTERN =
 const C0_C1_EXCEPT_LF_PATTERN =
   /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/u;
 const BIDI_CONTROL_PATTERN = /\p{Bidi_Control}/u;
-const HEBREW_SCRIPT_PATTERN = /\p{Script_Extensions=Hebrew}/u;
-const ARABIC_SCRIPT_PATTERN = /\p{Script_Extensions=Arabic}/u;
-const LETTER_PATTERN = /\p{Letter}/u;
 const VERSION_CONTROL_PATTERN =
   /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
-const XETEX_VERSION_LINE_PATTERN =
-  /^XeTeX [0-9][0-9A-Za-z.+-]{0,63} \(TeX Live [0-9]{4}(?:\/[A-Za-z0-9._+-]{1,32})?\)$/u;
+const RENDER_RECEIPT_KEYS = Object.freeze([
+  "bytes",
+  "pages",
+  "renderer",
+  "unknown_glyphs",
+]);
+const PRLIMIT_ARGUMENTS = Object.freeze([
+  "--as=536870912",
+  "--cpu=15",
+  "--fsize=33554432",
+  "--nofile=64",
+  "--",
+]);
 const INPUT_KEYS = Object.freeze([
   "receivedText",
   "requestId",
@@ -143,7 +156,11 @@ function validateInput(input) {
 function countLineBreaks(value) {
   let count = 0;
   for (const character of value) {
-    if (character === "\n") {
+    if (
+      character === "\n" ||
+      character === "\u2028" ||
+      character === "\u2029"
+    ) {
       count += 1;
     }
   }
@@ -316,187 +333,6 @@ async function createPrivateDirectory(directory, expectedUid) {
   });
 }
 
-const ENGLISH_DIRECTION = Object.freeze({ lang: "en", dir: "ltr" });
-const HEBREW_DIRECTION = Object.freeze({ lang: "he", dir: "rtl" });
-const ARABIC_DIRECTION = Object.freeze({ lang: "ar", dir: "rtl" });
-
-function strongDirection(character) {
-  if (!LETTER_PATTERN.test(character)) {
-    return undefined;
-  }
-  if (HEBREW_SCRIPT_PATTERN.test(character)) {
-    return HEBREW_DIRECTION;
-  }
-  if (ARABIC_SCRIPT_PATTERN.test(character)) {
-    return ARABIC_DIRECTION;
-  }
-  return ENGLISH_DIRECTION;
-}
-
-function firstStrongDirection(text) {
-  for (const character of text) {
-    const direction = strongDirection(character);
-    if (direction) {
-      return direction;
-    }
-  }
-  return ENGLISH_DIRECTION;
-}
-
-function directionAttributes(direction) {
-  return [
-    "",
-    [],
-    [
-      ["lang", direction.lang],
-      ["dir", direction.dir],
-    ],
-  ];
-}
-
-function textToDirectionalSpans(text) {
-  const runs = [];
-  let run = "";
-  let runDirection;
-  for (const character of text) {
-    const characterDirection = strongDirection(character);
-    if (
-      characterDirection &&
-      runDirection &&
-      characterDirection !== runDirection
-    ) {
-      runs.push({ text: run, direction: runDirection });
-      run = "";
-      runDirection = characterDirection;
-    }
-    run += character;
-    runDirection ??= characterDirection;
-  }
-  if (run.length > 0) {
-    runs.push({
-      text: run,
-      direction: runDirection ?? ENGLISH_DIRECTION,
-    });
-  }
-  return runs.map(({ text: runText, direction }) => ({
-    t: "Span",
-    c: [directionAttributes(direction), [{ t: "Str", c: runText }]],
-  }));
-}
-
-function textToInlines(text) {
-  const inlines = [];
-  for (const part of text.split(/( +)/u)) {
-    if (part.length === 0) {
-      continue;
-    }
-    if (/^ +$/u.test(part)) {
-      for (let index = 0; index < part.length; index += 1) {
-        inlines.push({ t: "Space" });
-      }
-    } else {
-      inlines.push(...textToDirectionalSpans(part));
-    }
-  }
-  return inlines;
-}
-
-function textToBlocks(text) {
-  const blocks = [];
-  let paragraphLines = [];
-  const flush = () => {
-    if (paragraphLines.length > 0) {
-      const paragraph = [];
-      for (const line of paragraphLines) {
-        if (paragraph.length > 0) {
-          paragraph.push({ t: "LineBreak" });
-        }
-        paragraph.push(...textToInlines(line));
-      }
-      blocks.push({
-        t: "Div",
-        c: [
-          directionAttributes(firstStrongDirection(paragraphLines.join("\n"))),
-          [{ t: "Para", c: paragraph }],
-        ],
-      });
-      paragraphLines = [];
-    }
-  };
-  for (const line of text.split("\n")) {
-    if (line.length === 0) {
-      flush();
-      continue;
-    }
-    paragraphLines.push(line);
-  }
-  flush();
-  return blocks;
-}
-
-function metaString(value) {
-  return { t: "MetaString", c: value };
-}
-
-function buildPandocAst(receivedText, responseText) {
-  return {
-    "pandoc-api-version": [...PANDOC_API_VERSION],
-    meta: {
-      documentclass: metaString("article"),
-      classoption: {
-        t: "MetaList",
-        c: [metaString("onecolumn")],
-      },
-      papersize: metaString("a4"),
-      fontsize: metaString("11pt"),
-      mainfont: metaString("DejaVu Sans"),
-      lang: metaString("en"),
-      dir: metaString("ltr"),
-      "babel-otherlangs": {
-        t: "MetaList",
-        c: [metaString("hebrew"), metaString("arabic")],
-      },
-      babelfonts: {
-        t: "MetaMap",
-        c: {
-          hebrew: metaString("Noto Sans Hebrew"),
-          arabic: metaString("Noto Sans Arabic"),
-        },
-      },
-      geometry: {
-        t: "MetaList",
-        c: [
-          metaString("top=22mm"),
-          metaString("bottom=22mm"),
-          metaString("left=24mm"),
-          metaString("right=24mm"),
-        ],
-      },
-      colorlinks: { t: "MetaBool", c: false },
-    },
-    blocks: [
-      {
-        t: "Header",
-        c: [
-          1,
-          ["selection-received", [], []],
-          textToInlines("Selection received"),
-        ],
-      },
-      ...textToBlocks(receivedText),
-      {
-        t: "Header",
-        c: [
-          1,
-          ["openclaw-response", [], []],
-          textToInlines("OpenClaw response"),
-        ],
-      },
-      ...textToBlocks(responseText),
-    ],
-  };
-}
-
 async function writePrivateFile(filePath, data, expectedUid) {
   const handle = await fs.open(
     filePath,
@@ -656,14 +492,12 @@ function buildEnvironment(runtimeDirectories) {
     LC_ALL: "C.UTF-8",
     TZ: "UTC",
     SOURCE_DATE_EPOCH,
-    FORCE_SOURCE_DATE: "1",
+    PYTHONHASHSEED: "0",
+    PYTHONNOUSERSITE: "1",
+    PYTHONDONTWRITEBYTECODE: "1",
     XDG_CACHE_HOME: runtimeDirectories.cache,
     XDG_CONFIG_HOME: runtimeDirectories.config,
     XDG_DATA_HOME: runtimeDirectories.data,
-    TEXMFHOME: runtimeDirectories.texmfHome,
-    TEXMFVAR: runtimeDirectories.texmfVar,
-    TEXMFCONFIG: runtimeDirectories.texmfConfig,
-    TEXMFOUTPUT: runtimeDirectories.texmfOutput,
     TMPDIR: runtimeDirectories.tmp,
   });
 }
@@ -684,11 +518,18 @@ function versionFirstLine(stdout, label) {
   return firstLine;
 }
 
-async function verifyRendererDependencies({
-  execFileFn,
-  cwd,
-  env,
-}) {
+function boundedRendererArguments(rendererArguments) {
+  return [
+    ...PRLIMIT_ARGUMENTS,
+    PYTHON_PATH,
+    "-I",
+    "-B",
+    RENDERER_PATH,
+    ...rendererArguments,
+  ];
+}
+
+async function verifyRendererDependencies({ execFileFn, cwd, env }) {
   const options = {
     cwd,
     encoding: "utf8",
@@ -698,21 +539,47 @@ async function verifyRendererDependencies({
     timeout: VERSION_TIMEOUT_MS,
     windowsHide: true,
   };
-  const [pandocReceipt, xetexReceipt] = await Promise.all([
-    execFileFn(PANDOC_PATH, ["--version"], options),
-    execFileFn(XELATEX_PATH, ["--version"], options),
-  ]);
+  const receipt = await execFileFn(
+    PRLIMIT_PATH,
+    boundedRendererArguments(["--version"]),
+    options,
+  );
   if (
-    versionFirstLine(pandocReceipt?.stdout, "pandoc") !==
-    PANDOC_VERSION_LINE
+    versionFirstLine(receipt?.stdout, "Pango response renderer") !==
+      RENDERER_VERSION_LINE ||
+    receipt?.stderr !== ""
   ) {
-    throw new Error(
-      `Response PDF rendering requires ${PANDOC_VERSION_LINE} with Pandoc JSON API ${PANDOC_API_VERSION.join(".")}`,
-    );
+    throw new Error("Response PDF renderer dependency identity drifted");
   }
-  const xetexVersionLine = versionFirstLine(xetexReceipt?.stdout, "XeTeX");
-  if (!XETEX_VERSION_LINE_PATTERN.test(xetexVersionLine)) {
-    throw new Error("Response PDF rendering requires a supported XeTeX engine");
+}
+
+function validateRenderReceipt(result, expectedBytes) {
+  if (
+    result?.stderr !== "" ||
+    typeof result?.stdout !== "string" ||
+    Buffer.byteLength(result.stdout, "utf8") > MAX_PROCESS_OUTPUT_BYTES ||
+    VERSION_CONTROL_PATTERN.test(result.stdout)
+  ) {
+    throw new Error("Response PDF renderer returned an invalid receipt");
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error("Response PDF renderer returned malformed JSON", {
+      cause: error,
+    });
+  }
+  if (
+    !hasExactKeys(receipt, RENDER_RECEIPT_KEYS) ||
+    receipt.renderer !== RENDERER_PROTOCOL ||
+    receipt.unknown_glyphs !== 0 ||
+    !Number.isSafeInteger(receipt.pages) ||
+    receipt.pages < 1 ||
+    receipt.pages > 64 ||
+    receipt.bytes !== expectedBytes
+  ) {
+    throw new Error("Response PDF renderer receipt did not match the output");
   }
 }
 
@@ -725,8 +592,9 @@ async function removeTransaction(transactionDir) {
 
 /**
  * Render one deterministic, upload-ready PDF snapshot for an authenticated
- * Smart reMarkable response. User-controlled text is represented exclusively
- * as Pandoc `Str` nodes; it is never parsed as Markdown, HTML, or TeX.
+ * Smart reMarkable response. User-controlled text crosses the renderer boundary
+ * only as validated JSON strings and is passed to Pango as plain text, never as
+ * markup, HTML, Markdown, or TeX.
  */
 export async function renderResponsePdf(input, dependencies) {
   const validated = validateInput(input);
@@ -740,10 +608,6 @@ export async function renderResponsePdf(input, dependencies) {
       cache: path.join(transactionDir, "cache"),
       config: path.join(transactionDir, "config"),
       data: path.join(transactionDir, "data"),
-      texmfHome: path.join(transactionDir, "texmf-home"),
-      texmfVar: path.join(transactionDir, "texmf-var"),
-      texmfConfig: path.join(transactionDir, "texmf-config"),
-      texmfOutput: path.join(transactionDir, "texmf-output"),
       tmp: path.join(transactionDir, "tmp"),
     };
     for (const directory of Object.values(runtimeDirectories)) {
@@ -756,30 +620,23 @@ export async function renderResponsePdf(input, dependencies) {
       env: renderEnvironment,
     });
 
-    const astPath = path.join(transactionDir, "document.json");
+    const inputPath = path.join(transactionDir, "renderer-input.json");
     const snapshotPath = path.join(transactionDir, "response.pdf");
-    const ast = buildPandocAst(
-      validated.receivedText,
-      validated.responseText,
+    const inputBytes = Buffer.from(
+      JSON.stringify({
+        protocol: RENDERER_PROTOCOL,
+        received_text: validated.receivedText,
+        request_id: validated.requestId,
+        response_text: validated.responseText,
+      }),
+      "utf8",
     );
-    const astBytes = Buffer.from(JSON.stringify(ast), "utf8");
-    await writePrivateFile(astPath, astBytes, expectedUid);
+    await writePrivateFile(inputPath, inputBytes, expectedUid);
     await createPrivateOutput(snapshotPath, expectedUid);
 
-    await execFileFn(
-      PANDOC_PATH,
-      [
-        "--from=json",
-        "--standalone",
-        "--sandbox",
-        `--pdf-engine=${XELATEX_PATH}`,
-        "--pdf-engine-opt=-no-shell-escape",
-        "--pdf-engine-opt=-halt-on-error",
-        "--pdf-engine-opt=-interaction=nonstopmode",
-        "--pdf-engine-opt=-file-line-error",
-        `--output=${snapshotPath}`,
-        astPath,
-      ],
+    const renderResult = await execFileFn(
+      PRLIMIT_PATH,
+      boundedRendererArguments(["--render", inputPath, snapshotPath]),
       {
         cwd: transactionDir,
         encoding: "utf8",
@@ -792,6 +649,7 @@ export async function renderResponsePdf(input, dependencies) {
     );
 
     const validatedPdf = await validatePdf(snapshotPath, expectedUid);
+    validateRenderReceipt(renderResult, validatedPdf.sizeBytes);
     let cleaned = false;
     const cleanup = async () => {
       if (cleaned) {

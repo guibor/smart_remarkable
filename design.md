@@ -529,19 +529,21 @@ generation with only the request ID, active origin-binding handle, and the two
 validated strings. The plugin rechecks the exact active run, captured
 transcript, main agent, canonical session, binding handle, and fixed
 `response-pdf-cloud-v1` policy. It then creates a private transaction under
-OpenClaw state and renders a one-column PDF from a Pandoc JSON AST: untrusted
-text appears only as literal `Str` nodes and is never parsed as Markdown,
-HTML, or TeX. Pandoc and XeLaTeX are invoked at pinned absolute paths without
-a shell, inside bounded private HOME/XDG/TEXMF/TMP directories, with Pandoc
-sandboxing, XeLaTeX shell escape disabled, deterministic metadata, strict
-time/output/version/PDF validation, and cleanup on every result. A deterministic
+OpenClaw state and renders a one-column PDF through a pinned Pango/Cairo helper:
+untrusted text is passed only to `Pango.Layout.set_text` and is never parsed as
+markup, Markdown, HTML, or TeX. Fixed `/usr/bin/prlimit` and
+`/usr/bin/python3 -I -B` arguments enforce memory, CPU, output, descriptor, and
+time bounds inside private HOME/XDG/TMP directories. The helper
+uses full-paragraph Unicode bidi, fixed DejaVu/FreeSans fonts, disabled
+uncontrolled fallback, a zero-unknown-glyph gate, deterministic metadata,
+strict dependency/PDF validation, and cleanup on every result. A deterministic
 request-derived ASCII name avoids title, path, and filename injection.
 
 The generated snapshot reuses the existing no-shell `rm-sync` upload and
 durable artifact-receipt machinery. Identical in-flight calls coalesce; a
 completed receipt returns `cached: true`; conflicting reuse and ambiguous
-outcomes fail closed rather than creating a second document. At most two
-distinct PDF operations may run at once in the Gateway process; excess work is
+outcomes fail closed rather than creating a second document. At most one
+distinct PDF operation may run at once in the Gateway process; excess work is
 rejected before rendering to protect server capacity. The bridge waits
 for this terminal receipt before sending the WhatsApp final so that WhatsApp
 can say whether reMarkable Cloud accepted the PDF. Upload failure is additive:
@@ -869,7 +871,7 @@ those stock-process and filesystem invariants.
 The current two-button client passes its applicable native tests across the
 library, application, and integration targets, with one unrelated upstream
 font-render output-path test filtered. The current candidate bridge and
-no-mirror delivery plugin suite passes 221 Node tests; this is local behavior
+no-mirror delivery plugin suite passes 222 Node tests; this is local behavior
 evidence, while server transaction `20260801T213248Z-32250` and its direct live
 probes separately prove only the still-installed plugin `0.4.0` generation.
 All six
@@ -1207,9 +1209,12 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   success.
 - `bridge/openclaw-plugin/response-pdf.mjs`: creates a private deterministic
   response-summary PDF from only the strict selection transcription and answer.
-  It uses a structured Pandoc JSON AST with no raw nodes, pinned no-shell
-  Pandoc/XeLaTeX execution, private caches, fixed styling and naming, strict
-  text/dependency/time/output/PDF checks, and an idempotent cleanup handle.
+  It invokes the fixed sibling Pango/Cairo helper through no-shell `prlimit`
+  and isolated Python, with private state, fixed styling and naming, strict
+  text/dependency/resource/output/PDF checks, and an idempotent cleanup handle.
+- `bridge/openclaw-plugin/response-pdf-renderer.py`: renders validated strings
+  as plain Pango text into a deterministic A4 Cairo PDF, using full-paragraph
+  Unicode bidi, fixed fonts, disabled uncontrolled fallback, and bounded pages.
 - `scripts/run-selected-once.sh`: provides the constrained SSH-triggered Paper
   Pro launcher. It validates both tunnel ports, starts and health-checks a
   restricted SSH port forward to the loopback bridge rather than the
@@ -1459,11 +1464,11 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
   renders one deterministic response PDF, and routes it through the durable
   cloud-upload receipt path with in-flight coalescing and fail-closed replay.
 - `renderResponsePdf` in `bridge/openclaw-plugin/response-pdf.mjs`: validates
-  bounded, well-formed, nonblank Unicode input, builds the fixed Pandoc JSON AST, runs the
-  pinned renderer with installed fixed `DejaVu Sans`, `Noto Sans Hebrew`, and
-  `Noto Sans Arabic` faces in private bounded state, marks
-  English/Hebrew/Arabic paragraphs and runs with
-  native structured language/direction attributes, validates the resulting regular
+  bounded, well-formed, nonblank Unicode input, writes a private strict-JSON
+  transaction, and runs the pinned Pango/Cairo helper behind fixed `prlimit`
+  bounds and isolated Python. The helper uses `Pango.Layout.set_text`,
+  full-paragraph bidi, fixed `DejaVu Sans`/`FreeSans`, disabled uncontrolled
+  fallback, and a zero-unknown-glyph gate. The wrapper validates the resulting regular
   PDF and hash, and returns an upload snapshot plus idempotent cleanup.
 - `createRemarkableUploadTool` in
   `bridge/openclaw-plugin/remarkable-upload.mjs`: validates and privately

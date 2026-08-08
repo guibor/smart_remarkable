@@ -18,7 +18,6 @@ import {
 
 const REQUEST_ID = "smart-remarkable-response-pdf-test-0001";
 const OTHER_REQUEST_ID = "smart-remarkable-response-pdf-test-0002";
-const THIRD_REQUEST_ID = "smart-remarkable-response-pdf-test-0003";
 const SESSION_ID = "captured-response-pdf-session-0001";
 const DOCUMENT_ID = "123e4567-e89b-42d3-a456-426614174000";
 const CLOUD_HASH = "a".repeat(64);
@@ -267,7 +266,7 @@ test("registers the exact operator.admin response-PDF RPC", async (t) => {
   assert.equal(registrations[0].method, REMARKABLE_RESPONSE_PDF_METHOD);
   assert.equal(typeof registrations[0].handler, "function");
   assert.deepEqual(registrations[0].options, { scope: "operator.admin" });
-  for (const maxInFlight of [0, 3]) {
+  for (const maxInFlight of [0, 2]) {
     assert.throws(
       () =>
         fixture.createHandler({
@@ -572,7 +571,6 @@ test("caps distinct render jobs while still coalescing an admitted request", asy
   }
 
   const secondParams = await bindActive(OTHER_REQUEST_ID);
-  const thirdParams = await bindActive(THIRD_REQUEST_ID);
   const tracker = { inputs: [], cleanups: 0 };
   let releaseUploads;
   const uploadsHeld = new Promise((resolve) => {
@@ -584,13 +582,11 @@ test("caps distinct render jobs while still coalescing an admitted request", asy
   });
   let execCount = 0;
   const handler = fixture.createHandler({
-    maxInFlight: 2,
+    maxInFlight: 1,
     renderer: createRenderer(fixture.stateDir, tracker),
     execFileFn: async () => {
       execCount += 1;
-      if (execCount === 2) {
-        announceFull();
-      }
+      announceFull();
       await uploadsHeld;
       return {
         stdout: JSON.stringify({ id: DOCUMENT_ID, hash: CLOUD_HASH }),
@@ -600,27 +596,24 @@ test("caps distinct render jobs while still coalescing an admitted request", asy
   });
 
   const first = invokeGateway(handler, fixture.params);
-  const second = invokeGateway(handler, secondParams);
   await full;
-  const excess = await invokeGateway(handler, thirdParams);
+  const excess = await invokeGateway(handler, secondParams);
   assert.equal(excess.ok, false);
   assert.equal(excess.error.code, "UNAVAILABLE");
-  assert.equal(tracker.inputs.length, 2);
-  assert.equal(execCount, 2);
+  assert.equal(tracker.inputs.length, 1);
+  assert.equal(execCount, 1);
   const duplicate = invokeGateway(handler, { ...fixture.params });
   releaseUploads();
-  const [firstResult, secondResult, duplicateResult] = await Promise.all([
+  const [firstResult, duplicateResult] = await Promise.all([
     first,
-    second,
     duplicate,
   ]);
   assert.equal(firstResult.ok, true);
-  assert.equal(secondResult.ok, true);
   assert.equal(duplicateResult.ok, true);
   assert.equal(duplicateResult.payload.cached, true);
-  assert.equal(tracker.inputs.length, 2);
-  assert.equal(tracker.cleanups, 2);
-  assert.equal(execCount, 2);
+  assert.equal(tracker.inputs.length, 1);
+  assert.equal(tracker.cleanups, 1);
+  assert.equal(execCount, 1);
 });
 
 test("independent handlers never render or upload across a durable reservation race", async (t) => {

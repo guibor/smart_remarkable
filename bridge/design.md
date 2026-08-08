@@ -101,15 +101,16 @@
   reMarkable Cloud receipt parsing. The automatic response path rechecks the
   exact active binding before and after rendering and reuses a completed safe
   receipt without rendering or uploading again.
-- `openclaw-plugin/response-pdf.mjs` renders only validated transcription and
-  response strings through a fixed Pandoc JSON AST. It gives user text only
-  literal `Str` nodes, validates exact Pandoc and bounded XeTeX version
-  receipts, invokes fixed absolute binaries without a shell, isolates all
-  renderer state in private directories, uses fixed `DejaVu Sans`,
-  `Noto Sans Hebrew`, and `Noto Sans Arabic` faces, and expresses
-  mixed English/Hebrew/Arabic direction only
-  through native Pandoc metadata, `Div`, and `Span` attributes. It disables TeX shell escape, validates
-  the bounded PDF, and returns an idempotent cleanup handle.
+- `openclaw-plugin/response-pdf.mjs` validates and snapshots only the strict
+  transcription and response strings, invokes the sibling Python renderer
+  behind fixed `/usr/bin/prlimit` resource limits, verifies its exact
+  Pango/Cairo dependency receipt and structured result, validates the private
+  bounded PDF, and returns an idempotent cleanup handle.
+- `openclaw-plugin/response-pdf-renderer.py` creates the fixed one-column A4
+  PDF directly with Pango/Cairo. It gives user content only to
+  `Pango.Layout.set_text`, never to markup, Markdown, HTML, TeX, or a shell;
+  uses full-paragraph Unicode bidi with fixed DejaVu/FreeSans faces; disables
+  uncontrolled fallback; rejects unknown glyphs; and bounds pages and output.
 - `openclaw-plugin/run-context-control.mjs` is the late-call adapter for
   OpenClaw's host-owned run context. It registers one plugin-owned agent-event
   subscription while the plugin API is open, retains complete commands only
@@ -493,7 +494,7 @@ request ID, opaque binding handle, normalized literal transcription, and
 answer; enforces the response-envelope byte/control/line-complexity bounds;
 and requires a live active origin record. One fingerprint binds those values,
 the origin capability/session, and the fixed policy. Identical in-flight calls
-share one promise, at most two distinct operations may run concurrently,
+share one promise, at most one distinct operation may run at a time,
 conflicting or excess work fails before rendering, and an exact completed durable
 receipt returns before rendering. After a new render it rechecks the unchanged
 origin, uploads through the common no-shell receipt path, returns only the
@@ -501,12 +502,13 @@ strict cloud receipt, and always invokes the renderer cleanup handle.
 
 ### `renderResponsePdf(input, dependencies)`
 
-Snapshots validated scalar inputs before its first await, builds a fixed
-one-column Pandoc JSON AST with only literal `Str` nodes for user text, and
-creates a private render transaction below OpenClaw state. It verifies the
-exact Pandoc 3.6.3 and supported XeTeX receipts, then runs fixed absolute
-binaries with a minimal private environment, Pandoc sandboxing, disabled TeX
-shell escape, fixed metadata, bounded output, and timeouts. It accepts only a
+Snapshots validated scalar inputs before its first await and creates a private
+render transaction below OpenClaw state. It verifies the exact Pango/Cairo
+helper dependency receipt, then runs fixed `/usr/bin/prlimit` and
+`/usr/bin/python3 -I -B` arguments with a minimal private environment, fixed
+metadata, bounded memory/CPU/file/process resources, output, and timeout. The
+helper receives strict JSON and renders its strings only with Pango plain-text
+layouts. It accepts only a
 private single-link bounded `%PDF-`/`%%EOF` file whose identity remains stable,
 then returns its deterministic request-derived name, hash, path, and idempotent
 cleanup callback.
