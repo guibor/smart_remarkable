@@ -33,7 +33,7 @@ smart_load_openclaw_runtime_env "$HERE/.env"
 STATE_DIR=/run/smart-remarkable
 TRIGGER="$STATE_DIR/llm_button_trigger"
 SEND_TRIGGER="$STATE_DIR/send_button_trigger"
-OPENCLAW_HOST=35.223.143.111
+OPENCLAW_HOST=anki-mdf.duckdns.org
 OPENCLAW_USER=smart-remarkable-tunnel
 OPENCLAW_IDENTITY=$OPENCLAW_SSH_IDENTITY
 OPENCLAW_PORT=$OPENCLAW_LOCAL_PORT
@@ -42,7 +42,7 @@ TRIGGER_PID=
 SSH_HOME="$STATE_DIR/ssh-home"
 APP_HOME="$STATE_DIR/app-home"
 EXPECTED_OPENCLAW_IDENTITY=/home/root/.ssh/id_dropbear_smart_remarkable_bridge
-EXPECTED_OPENCLAW_HOST=35.223.143.111
+EXPECTED_OPENCLAW_HOST=anki-mdf.duckdns.org
 EXPECTED_OPENCLAW_USER=smart-remarkable-tunnel
 
 smart_process_running() {

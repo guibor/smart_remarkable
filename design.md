@@ -85,6 +85,9 @@ user rc. The per-key line independently uses `restrict`, an exact
 `permitopen`, and a forced false command. This server policy is necessary
 because OpenSSH 8.9 cannot express local-TCP-only forwarding in
 `authorized_keys` alone.
+The tunnel connects through the stable `anki-mdf.duckdns.org` hostname and
+still requires the pinned server host key. DNS chooses the current regional
+address, while strict host-key verification remains the trust boundary.
 The compatibility-named `scripts/run-armed-once.sh` is now the generic
 three-mode worker; `scripts/run-selected-once.sh` remains the constrained SSH
 recovery path.
@@ -779,10 +782,10 @@ physical v3 wand request remains a separate acceptance gate. The generation
 pins worker SHA-256
 `4c9605f7f9e6be898230c3c5d607fa36fc1ce815ad85cc8f6f04e625be314f1e`
 and build ID `16bc36a982fbb2465375641a2006e3936b511394`.
-Its launcher, unchanged reconnecting runner, and v3 selection-protocol helper
+Its launcher, hostname-routed reconnecting runner, and v3 selection-protocol helper
 are respectively
 `6660d1f01510d9e92910f9fbdcbd23a4fe4c40aac3d5a74a27213fe3faea14cd`,
-`72588acb490cb17b7a2b8ca3bce4dc938862cff95da922267074d5c14f5b232c`,
+`4d693ebd27fb670b00209c2ff65476ed0ea41d7c93d9f58a86c036e73efc9657`,
 and `a11af20d55fc668c59e367d49e834844ed1e9a041cd400de481690811afb750c`.
 The functional source/compiled QMD identities are
 `1b01d2a123ac5d16763b140c2342c14bbd99243455fc81debdad85165707644d` and
@@ -1234,7 +1237,8 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
 - `scripts/run-selected-once.sh`: provides the constrained SSH-triggered Paper
   Pro launcher. It validates both tunnel ports, starts and health-checks a
   restricted SSH port forward to the loopback bridge rather than the
-  privileged Gateway, triggers one native selection request, and cleans up
+  privileged Gateway through the stable server hostname, triggers one native
+  selection request, and cleans up
   both helper processes on every exit path. Both production runners reject
   caller-supplied binary arguments, require the exact regular root-owned
   mode-0600 bridge key, unset SSH agent/password-helper variables, and invoke

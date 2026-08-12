@@ -40,7 +40,7 @@ fi
 # shellcheck disable=SC1091
 . "$RUNTIME_ENV_PARSER"
 smart_load_openclaw_runtime_env "$HERE/.env"
-OPENCLAW_HOST=35.223.143.111
+OPENCLAW_HOST=anki-mdf.duckdns.org
 OPENCLAW_USER=smart-remarkable-tunnel
 OPENCLAW_IDENTITY=$OPENCLAW_SSH_IDENTITY
 OPENCLAW_PORT=$OPENCLAW_LOCAL_PORT
@@ -50,7 +50,7 @@ STATE_DIR=/run/smart-remarkable
 SSH_HOME="$STATE_DIR/ssh-home"
 APP_HOME="$STATE_DIR/app-home"
 EXPECTED_OPENCLAW_IDENTITY=/home/root/.ssh/id_dropbear_smart_remarkable_bridge
-EXPECTED_OPENCLAW_HOST=35.223.143.111
+EXPECTED_OPENCLAW_HOST=anki-mdf.duckdns.org
 EXPECTED_OPENCLAW_USER=smart-remarkable-tunnel
 
 cleanup() {

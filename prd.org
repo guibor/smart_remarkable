@@ -230,6 +230,11 @@
 73. [X] Implement and review =response-pdf-cloud-v1=: deterministic plain-text Pango/Cairo PDF rendering, exact active-origin/binding authorization, receipt-checked reMarkable Cloud upload, additive WhatsApp upload status, plugin/origin capability bump, request-journal schema-v4 replay barrier, and the complete authorization/render/upload/failure/replay test matrix. The final candidate passes =224/224= Node tests, Python syntax validation, and =git diff --check=. It enforces well-formed Unicode, a hard one-operation Gateway cap, fixed no-shell =prlimit= bounds, exact Pango/Cairo dependency receipts, full-paragraph mixed English/Hebrew/Arabic bidi, fixed DejaVu/FreeSans fonts, disabled uncontrolled fallback, and a zero-unknown-glyph gate. Final wrapper/helper/upload SHA-256 values are =8e04273140bb68178f92c4d88b41f79f43e865d85ad2f83f90c4f4dc470bfd10=, =2cb64b819be14ee529112fb59893b989c27275b22d081440e3ffb99d28373f1b=, and =f80ce2cf56f9656ca8b6b6f982a056c5a073312d6a10ab95ed5d16a1cd668005=. The exact server dependency receipt passed; two real isolated renders were byte-identical at SHA-256 =673f06291819c50021ef1d3842f58a65166b8a4442cd3082a57faec7d462fd1b=, had zero unknown glyphs, and passed local PDF metadata/font/text plus rendered-PNG inspection while Gateway and bridge PIDs remained unchanged with zero restarts. Preserve the explicit richer PDF/EPUB agent tool and its existing Pandoc/LaTeX renderer for separately requested documents. Cloud deployment and physical gates remain steps 74-75.
 74. [X] Commit, push, and guardedly promote the coordinated server generation. Product commit =8fd9b9adc74cdf4eb0d39356466db6b787501371= was pushed to =guibor/codex/page-context-openclaw=, and guarded transaction =20260808T1525Z-8fd9b9a= installed the final origin-v5/schema-v4 response-PDF generation without contacting or changing the tablet. Exact canary request =smart-remarkable-deployment-canary-20260808-1535= completed with =finish_reason=stop=, native WhatsApp acknowledgement and final receipts both =sent=, and one uploaded reMarkable Cloud PDF named =OpenClaw response 52529b2d9cab7eed.pdf= with document ID =6d767c13-c503-4bb7-89df-0ab5d98c8aee= and cloud hash =86d43f27df81ca1972a194ce2e7f16f3f8361b235d97f0d357a9a179094f57fc=. Final Gateway PID =1133793= and bridge PID =1133870= were active with =NRestarts=0=, bridge health was OK, and the watchdog returned active/waiting after a successful fresh invocation. This completes server deployment and a real WhatsApp/cloud-upload canary; physical arrival and per-icon behavior remain step 75.
 75. [ ] On one disposable selection per icon, physically verify one immediate WhatsApp acknowledgement, one final message quoting only the selection and reporting PDF upload status, exactly one response PDF in the configured reMarkable Cloud library, no duplicate on retry, local editable text only for answer-here, rollover completion without a reminder, and unchanged tablet/server safety invariants.
+76. [ ] When the Paper Pro is reachable, add the verified
+    =anki-mdf.duckdns.org= alias for the existing server host key to the
+    tablet's root-owned =known_hosts= file, transactionally promote the
+    hostname-routed runner and updated compatibility contract, and run a
+    request-free tunnel health check before any physical selection test.
 
 * Verification notes
 
@@ -317,6 +322,13 @@
 - Refresh-functional transaction =20260724T173524Z-61264= committed the after-Copy functional QMD at SHA-256 =0aaef0c1d75cdaf5634fc490cae3659f0d764ca4f4d0911eea4ceb0c7535b6c8=. Two delayed postchecks validated =xochitl= PID =5247= with zero restarts, mapped Xovi, QRR, and AppLoad, the exact worker and co-resident Pen Layer Memory hashes, inactive Smart/Riddle services and canary units, no deployment lock, and a read-only root. Interactive no-submit and live-tap acceptance of the revised feedback behavior remains step 30; no notebook was modified merely to manufacture that test.
 
 * Later
+
+** Requirements changed 2026-08-13
+
+- The restricted OpenClaw tunnel previously pinned the server's numeric US IP.
+  It now targets =anki-mdf.duckdns.org= so regional server moves are handled by
+  DNS while strict SSH host-key verification continues to authenticate the
+  server.
 
 - Consider upstreaming the trigger-source fix after device validation.
 - Consider a user-friendly Mac shortcut for the one-shot SSH command.
