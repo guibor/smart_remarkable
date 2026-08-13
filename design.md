@@ -1618,3 +1618,42 @@ An earlier deployment on a Paper Pro running firmware 3.28.0.162 separately prov
 - `Screenshot::calculate_frame_pointer_from` in `src/screenshot.rs`: follows the Paper Pro frame-length chain with hop and arithmetic bounds and rejects invalid or nonadvancing headers.
 - `Screenshot::probe_framebuffer_range` in `src/screenshot.rs`: requires the entire expected frame range to be readable before a candidate is accepted.
 - `setup_uinput` in `src/util.rs`: reuses `/dev/uinput` when present and therefore skips bundled module loading on firmware 3.28.
+
+## Paper Pro 3.28.0.166 exact-firmware port
+
+`xovi-qmd/compatibility-3.28.0.166.env` is the single deployment contract for
+the new firmware. It pins the Ferrari serial, firmware build, stock executable
+and build ID, reviewed raw hashtable, unchanged ReMagic extensions, seven new
+package QMDs, both new Smart QMD variants, and the unchanged application
+protocol artifacts. The exact surviving `.164` functional QMD is classified
+only as a temporary app-first migration state; its `VERSION` guard prevents it
+from applying on `.166`, and deployment moves it out of the QMLDiff directory
+before the new inert canary is loaded.
+
+The source button diffs keep the two existing stock-icon actions and behavior;
+only their exact firmware version and compiled resource hashes change. The
+functional and disabled QMDs remain separate artifacts. Host-side canary
+validation uses the exact extracted `.166` resource tree and stock binary,
+while the device controller requires all seven `.166` package filenames and
+hashes before it will arm its independent rollback watchdog.
+
+`install-smart-openclaw.sh` and `device-install-smart-openclaw.sh` install the
+same OpenClaw worker, launcher, and selection protocol under `/home`, but bind
+their staged manifest and recovery metadata to the new contract. The binary
+was rebuilt with the current compiler as a comparison candidate, but the
+deployment deliberately retains the previously reviewed exact worker
+`4c9605...14f1e` (build ID `16bc36...1394`, maximum GLIBC 2.28, no runtime
+search path) because the firmware update requires no application-code change.
+The QMD
+canary continues to require a disabled visual qualification before functional
+promotion; package activation, AppLoad mappings, application installation,
+and physical request acceptance remain distinct evidence gates.
+
+The live `.166` migration followed those boundaries exactly. The obsolete
+functional QMD was archived first, the application manifest was installed
+while no Smart QMD was active, and ReMagic qualified the seven package QMDs
+before transaction `20260813T211817Z-38056` introduced the disabled Smart QMD.
+That transaction passed with zero `xochitl` restarts and read-only root. Its
+identifier is now the capability required by the host controller for the next
+functional promotion, so a different or unconfirmed inert layout cannot be
+promoted accidentally.

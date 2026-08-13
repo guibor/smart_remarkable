@@ -13,7 +13,7 @@ BINARY="$REPO/target/aarch64-unknown-linux-gnu/release/smart_remarkable"
 LOCAL_INSTALLER="$REPO/ops/install-smart-openclaw.sh"
 DEVICE_INSTALLER="$REPO/ops/device-install-smart-openclaw.sh"
 MANIFEST_BUILDER="$REPO/ops/build-staged-sha256-manifest.sh"
-CONTRACT="$REPO/xovi-qmd/compatibility-3.28.0.164.env"
+CONTRACT="$REPO/xovi-qmd/compatibility-3.28.0.166.env"
 CONTRACT_HELPER="$REPO/ops/artifact-compatibility-contract.sh"
 ID=$(date -u +%Y%m%dT%H%M%SZ)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/smart-remarkable-install.XXXXXX")
@@ -73,7 +73,7 @@ BUNDLE_SOURCE_PATHS=(
     ops/device-install-smart-openclaw.sh
     ops/build-staged-sha256-manifest.sh
     ops/artifact-compatibility-contract.sh
-    xovi-qmd/compatibility-3.28.0.164.env
+    xovi-qmd/compatibility-3.28.0.166.env
 )
 for source_relative_path in "${BUNDLE_SOURCE_PATHS[@]}"; do
     source_path="$REPO/$source_relative_path"

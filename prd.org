@@ -152,6 +152,13 @@
 - The first asynchronous capture revision treated the restricted tunnel as terminal: Rust waited only 50 seconds, and the runner published =bridge-failed= and killed Rust on the first SSH setup failure or later disconnect. It also admitted a button into any active locally-ready unit without reserving enough of the one-hour =RuntimeMaxSec=. Two physical requests later proved the image and ink path, but a subsequent fast local close created no server reservation after the session/tunnel had ended. The first recovery draft then incorrectly assumed OpenSSH =-G=, =ConnectTimeout=, =ConnectionAttempts=, and =ServerAliveCountMax= semantics on the exact Dropbear client; those options were removed before deployment in favor of non-networking Dropbear capability proof, parent-owned setup health bounds, and native =-K 30=. The changed requirement keeps the private crop only in RAM while the runner reconnects, gives each explicit request a serialized fresh lifetime, tolerates the =RuntimeMaxSec= stop race only after a fail-closed state recheck, waits until the stopped fixed-name transient is actually unloaded, and retries an interrupted or temporarily unavailable OpenClaw transport with the same idempotency identity while refusing redirects. A durable tablet outbox remains prohibited by the no-retained-crop requirement. This revision is now guarded-deployed as =0.7.3-openclaw=, and two physical ink taps prove its ordinary one-tap/one-turn path; deliberate tunnel-loss recovery remains a separate acceptance case.
 - The first live server proof used OpenClaw's runtime plugin-inspection CLI. That command creates a second plugin registry and left resource-intensive =openclaw-hooks= workers rather than observing only the production Gateway. The supported deployment must never run that inspector. It proves the active plugin through a hard-timeboxed direct =GatewayClient= query to the already-running loopback Gateway, current-PID journal evidence, exact live manifest/source hashes, static hook/tool registration checks, and absence of registration failure; the evidence must state that live hook-count enumeration is unavailable instead of launching another runtime.
 - The first guarded origin-v4 promotion required the persistent watchdog timer to report =SubState=waiting= immediately after start. An overdue =Persistent=true= timer may correctly fire its one-shot before reaching that state, so the check rolled back a healthy candidate. The revised requirement first proves the timer enabled and active, then requires both a fresh =LastTriggerUSecMonotonic= and fresh service =InvocationID=, clean one-shot completion, and only afterward the final active/waiting timer state. Missing triggers, failed one-shots, or a timer that does not return to waiting still fail closed.
+- Paper Pro firmware =3.28.0.166= replaces the exact =.164= stock/resource and
+  co-resident-QMD boundary. The application behavior and OpenClaw protocol are
+  unchanged, but the button QMDs, compatibility contract, filenames, stock
+  executable/build ID, hashtable, and seven co-resident QMD hashes must all be
+  rebased together. The surviving exact =.164= functional QMD may exist only
+  during stock-mode migration; it must never be loaded on =.166= and must be
+  moved into the complete recovery boundary before the new inert canary.
 
 * Immediate next steps
 
@@ -235,11 +242,42 @@
     tablet's root-owned =known_hosts= file, transactionally promote the
     hostname-routed runner and updated compatibility contract, and run a
     request-free tunnel health check before any physical selection test.
+77. [X] Capture the exact Paper Pro =3.28.0.166= stock binary, build ID,
+    reviewed entry-equivalent hashtable, extracted resources, and the seven
+    signed co-resident QMD hashes; build the inert and functional =.166= QMDs
+    and pass the strict artifact-contract plus two-button protocol tests.
+78. [X] Cross-build and review the exact aarch64 worker, then install the
+    =.166= application bundle while stock mode keeps the surviving =.164= QMD
+    inactive and rollback preimages remain complete. The installed worker is
+    the unchanged reviewed build =4c9605f7...14f1e= and the live staged
+    manifest is =040d6547...114b6=.
+79. [ ] Move only the exact surviving =.164= Smart QMD into the firmware
+    recovery boundary, guarded-activate the seven =.166= package QMDs and
+    AppLoad, promote the disabled =.166= Smart canary, and require visual
+    confirmation before functional promotion. Archive transaction
+    =20260813T211424Z-35366=, AppLoad activation, and disabled transaction
+    =20260813T211817Z-38056= are complete with zero restarts; only the physical
+    visual confirmation remains.
+80. [ ] Verify the functional =.166= QMD, AppLoad mappings, exact application
+    contract, inactive helper units, zero xochitl restarts, read-only root, and
+    one disposable OpenClaw selection through each stock icon.
 
 * Verification notes
 
 ** Current two-button implementation and deployment history
 
+- Paper Pro =3.28.0.166= application installation retained the exact reviewed
+  worker SHA-256
+  =4c9605f7f9e6be898230c3c5d607fa36fc1ce815ad85cc8f6f04e625be314f1e=
+  and committed staged-manifest SHA-256
+  =040d654702728cdd67334d228eaf37d2a0307d68dc79dc47037573bcab3114b6=.
+  ReMagic/AppLoad then passed its bounded activation with =xochitl= PID 8800,
+  =NRestarts=0=, and read-only root. Disabled `.166` transaction
+  =20260813T211817Z-38056= committed exact QMD
+  =57842109eccc264672264857e75b4d47dd1fe193822b4e29e51300e2b820df82=
+  on PID 9899 after offline composition, QML parsing, and the live watchdog.
+  This is machine qualification only; physical visibility is still the gate
+  for functional promotion.
 - Read-only server tracing found exactly two post-=0.7.2= schema-v2 requests: =ink= reserved at =09:43:39.975Z= and completed at =09:44:04.643Z=, and =image= reserved at =09:45:05.219Z= and completed at =09:45:21.293Z=. Both reached native Gateway =chat.send= and committed acknowledgement and final WhatsApp receipts with status =sent=. The later reported tap created no reservation, admission, Gateway call, receipt, completion, or server error; at that time there was no =smart-remarkable-tunnel= SSH process, while bridge PID 634000 and Gateway PID 633674 were active with =NRestarts=0= and bridge health 200. This proves a pre-server tablet tunnel/lifetime failure; it does not substitute for the unavailable tablet-side =xochitl=/root postcheck.
 - Deployed =0.7.3-openclaw= hashes are worker =d9e045c8eee9a442def7bf6218cfbf81797a3133cdd49673746931a1b0e222bb=, launcher =e8d8729997f4975de54a9a3e6c20d219c4aeb069bc9268a758b3b81bd53582f3=, reconnecting runner =72588acb490cb17b7a2b8ca3bce4dc938862cff95da922267074d5c14f5b232c=, unchanged protocol =4317dafd6fcc3a1cd5fd21b427be7465621f570443112a390840004a0d23203a=, and contract =fab7ddfb35b0b005f382d2a2e8450b44b1e1a38adb1189546b3e7da860cf331d=. The binary build ID is =3acb24c18156394f0352ad24572bdfe813e07507=, its interpreter is =/lib/ld-linux-aarch64.so.1=, maximum GLIBC is 2.28, and it has no RPATH/RUNPATH. Seventeen OpenClaw transport tests pass, including exact serialized-request retry before headers, after accepted-header/body loss, and across a temporary 503; redirect, status-classification, sensitive-header, and cancellation coverage also pass. Twenty touch-targeted tests and all six shell suites pass. The expanded 88-test library run passed 87 product-relevant tests and hit only the pre-existing hard-coded =render_chinese_font_test_png= output-path failure; no product path failed. Guarded deployment in step 65 used staged manifest =afa3ee5e5e7edd24c3c059fc1015ba42294083e185e661d7ed2775d0908773aa= and preserved the exact functional QMD.
 - Post-deployment physical acceptance added exactly two schema-v2 records to the production journal, increasing it from 15 to 17. Both were =whatsapp_only=, =ink=, and =completed=: =smart-remarkable-fa26-18c7b415578ef44d-0= ran from =14:16:23Z= to =14:16:39Z= and =smart-remarkable-102b9-18c7b68a6b9a9b5c-0= ran from =15:01:23Z= to =15:01:39Z=. The bridge remained PID 634000 and Gateway PID 633674 with zero restarts; tablet =xochitl= remained PID 57254 with zero restarts and read-only root. No response or selected content was inspected to establish this evidence.
