@@ -261,6 +261,25 @@
 80. [ ] Verify the functional =.166= QMD, AppLoad mappings, exact application
     contract, inactive helper units, zero xochitl restarts, read-only root, and
     one disposable OpenClaw selection through each stock icon.
+81. [X] Port the exact artifact contract, functional and inert QMD sources,
+    deployment controllers, and device-free tests to Paper Pro =3.28.0.169=.
+    Both QMD variants apply with the seven package QMDs to 22 parseable stock
+    resources; the application worker and OpenClaw protocol remain unchanged.
+82. [ ] Install the exact =.169= application contract while stock mode remains
+    active, then promote the inert QMD only through the guarded controller.
+83. [ ] After physical inert-layout acceptance, promote the functional QMD and
+    verify one disposable request through each icon with zero restarts and
+    read-only root.
+
+* Requirements changed for Paper Pro 3.28.0.169
+- Firmware =3.28.0.169= supersedes =3.28.0.166=. The unchanged OS build stamp
+  does not imply QMD compatibility: stock xochitl and Qt resource addresses
+  changed, so every active artifact is bound to a new exact contract.
+- The reviewed application, launcher, runner, and selection protocol are
+  unchanged. Only the firmware/resource contract and compiled QMD identities
+  advance; server or behavior changes are out of scope for this rebase.
+- Deployment must preserve the separate application, inert-layout, functional,
+  and physical-request gates. No =.166= QMD may be mapped on =.169=.
 
 * Verification notes
 

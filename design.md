@@ -1657,3 +1657,28 @@ That transaction passed with zero `xochitl` restarts and read-only root. Its
 identifier is now the capability required by the host controller for the next
 functional promotion, so a different or unconfirmed inert layout cannot be
 promoted accidentally.
+
+## Paper Pro 3.28.0.169 exact-firmware port
+
+`xovi-qmd/compatibility-3.28.0.169.env` is the new single deployment contract.
+It pins stock xochitl
+`43a9d5d0acc5b998264c16586e11b848f3b83d2d63b5fd322b09c0977d94d3d4`,
+build ID `9fe97b813b8f11bde2a6bb529b80c43371f613bf`, and reviewed raw hashtable
+`ecb0cfbd6828c374e48139064436a12f2c04778a90192b9dd85887edbdbe256a`.
+The package-QMD identities are the seven independently rebuilt `.169`
+candidates; the worker, AppLoad launcher, reconnecting runner, and v3
+selection protocol remain byte-identical to the reviewed `.166` generation.
+
+The functional and inert sources are compiled independently against the new
+hashtable. Their source/compiled SHA-256 pairs are
+`fc3ce46c...b16dd`/`afcde784...0c05a` and
+`a158979f...05d6`/`1952fa9d...6fea25`. Both variants compose in device
+filename order with all seven package QMDs into the same 22 resources, and
+all generated QML parses with `qmlformat`. Host and device controllers now
+name only `.169` active artifacts while retaining older contracts as
+historical rollback classifiers.
+
+The deployment path remains deliberately split: install the application
+contract under stock xochitl, qualify AppLoad and seven package hooks under
+the independent watchdog, promote only the inert Smart QMD, require physical
+layout acceptance, and only then admit the functional QMD.

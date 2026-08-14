@@ -1,0 +1,79 @@
+; Inert visual canary for the Smart Remarkable answer-here and agent buttons.
+; Exact target: Ferrari firmware 3.28.0.169.
+; This artifact contains no action and cannot start or signal a worker.
+
+VERSION 3.28.0.169
+
+AFFECT [[3197972396468700595]]
+    TRAVERSE [[6502786168]]#[[10742505294233322867]]
+        LOCATE BEFORE [[12395602925408354507]]#[[214642769434]]
+        INSERT {
+            /* Exercise the same harmless exact-resource bindings as the*/
+            /* functional v3 QMD before its buttons can launch anything.*/
+            property ~&7083178290016&~ smartRemarkableDocumentId: ""
+            property ~&7083178290016&~ smartRemarkablePageId: ""
+            property ~&197088788&~ smartRemarkablePageIndex: -1
+        }
+
+        TRAVERSE [[12395602925408354507]]#[[214642769434]]
+            LOCATE AFTER [[425121728314878811.16765000136167945189.7081261925573]]#[[3922282194937966250]]
+            INSERT {
+                ~&425121728314878811&~.~&16765000136167945189&~.~&7081261925573&~ {
+                    ~&5972374&~: smartRemarkableLlmButton
+                    ~&481641799955318521&~: ~&5971598&~.~&233696851602406&~
+                    ~&6504337259&~: ~&214642769434&~.~&6504337259&~
+                    ~&8399601734642709923&~: ~&"10806537930630303861&~
+                    ~&233726547792244&~: ~&214625660372&~
+                }
+
+                ~&425121728314878811&~.~&16765000136167945189&~.~&7081261925573&~ {
+                    ~&5972374&~: smartRemarkableSendButton
+                    ~&481641799955318521&~: ~&5971598&~.~&233696851602406&~
+                    ~&6504337259&~: ~&214642769434&~.~&6504337259&~
+                    ~&8399601734642709923&~: ~&"6787780988446224774&~
+                    ~&233726547792244&~: ~&214625660372&~
+                }
+            }
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT
+
+AFFECT [[11806562588218124596]]
+    TRAVERSE [[8397993708429497603]]
+        TRAVERSE [[254480451320573660]]#[[2632216410667939968]]
+            TRAVERSE [[7792976629833250715]]#[[18399528329672988301]]
+                LOCATE AFTER ALL
+                INSERT {
+                    function smartRemarkableBoundDocumentId() {
+                        ~&5972376&~ (!~&6504254477&~.~&7712934851008712&~ ||
+                                ~&6504254477&~.~&7712934851008712&~.~&5972374&~ === ~&254550717068498203&~ ||
+                                ~&6504254477&~.~&7712934851008712&~.~&5972374&~ === ~&6504117156&~) {
+                            ~&7083121450889&~ ""
+                        }
+                        ~&7083121450889&~ String(~&6504254477&~.~&7712934851008712&~.~&5972374&~)
+                    }
+
+                    function smartRemarkableBoundPageId() {
+                        ~&5972376&~ (~&6504254477&~.~&7083037950451&~ === ~&254550717068498203&~ ||
+                                ~&6504254477&~.~&7083037950451&~ === ~&6504117156&~) {
+                            ~&7083121450889&~ ""
+                        }
+                        ~&7083121450889&~ String(~&6504254477&~.~&7083037950451&~)
+                    }
+
+                    function smartRemarkableBoundPageIndex() {
+                        ~&7083121450889&~ ~&7083223278816&~ ~&6504254477&~.~&6504167078&~ === ~&"7082983611378&~ ?
+                            ~&6504254477&~.~&6504167078&~ : -1
+                    }
+
+                    ~&8399923448980225585&~: ~&6504254477&~.~&16435109231603765906&~
+                    smartRemarkableDocumentId:
+                        smartRemarkableBoundDocumentId()
+                    smartRemarkablePageId: smartRemarkableBoundPageId()
+                    smartRemarkablePageIndex:
+                        smartRemarkableBoundPageIndex()
+                }
+            END TRAVERSE
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT

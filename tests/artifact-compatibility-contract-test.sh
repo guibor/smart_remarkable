@@ -3,7 +3,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-CONTRACT="$REPO/xovi-qmd/compatibility-3.28.0.166.env"
+CONTRACT="$REPO/xovi-qmd/compatibility-3.28.0.169.env"
 HELPER="$REPO/ops/artifact-compatibility-contract.sh"
 APP_CONTROLLER="$REPO/ops/install-smart-openclaw.sh"
 APP_INSTALLER="$REPO/ops/device-install-smart-openclaw.sh"
@@ -33,8 +33,8 @@ test "$(smart_contract_classify_qmd_sha "$V2_MIGRATION_BUTTON_QMD_SHA256")" = \
 test "$(smart_contract_classify_qmd_sha "$INERT_BUTTON_QMD_SHA256")" = new-inert
 if smart_contract_require_complete; then
     for artifact_spec in \
-        "$SOURCE_QMD_SHA256:$REPO/xovi-qmd/llm-button-3.28.0.166.source.qmd" \
-        "$BUTTON_QMD_SHA256:$REPO/xovi-qmd/llm-button-3.28.0.166.qmd" \
+        "$SOURCE_QMD_SHA256:$REPO/xovi-qmd/llm-button-3.28.0.169.source.qmd" \
+        "$BUTTON_QMD_SHA256:$REPO/xovi-qmd/llm-button-3.28.0.169.qmd" \
         "$SMART_REMARKABLE_SHA256:$REPO/target/aarch64-unknown-linux-gnu/release/smart_remarkable" \
         "$APPLOAD_LAUNCHER_SHA256:$REPO/remagic/appload-launch.sh" \
         "$RUN_ARMED_ONCE_SHA256:$REPO/scripts/run-armed-once.sh" \
@@ -244,7 +244,7 @@ test "$complete_line" -lt "$network_line"
 for expected in \
     'scripts/selection-protocol.sh' \
     'ops/artifact-compatibility-contract.sh' \
-    'xovi-qmd/compatibility-3.28.0.166.env' \
+    'xovi-qmd/compatibility-3.28.0.169.env' \
     '$STAGE/scripts/selection-protocol.sh'
 do
     grep -F "$expected" "$APP_CONTROLLER" >/dev/null
@@ -294,7 +294,7 @@ grep -F 'DeviceSceneView.qml = $DEVICE_SCENE_VIEW_RESOURCE_HASH' \
 # and apply a compiled QMD. Keep the real-application gate ahead of both the
 # first device connection (for local reference validation) and every remote
 # write, without requiring the firmware fixture in this device-free suite.
-grep -F 'QML_REFERENCE_ROOT=${QML_REFERENCE_ROOT:-/Users/mdf/code/remarkable-beta-os/.cache/firmware/3.28.0.166/resources}' \
+grep -F 'QML_REFERENCE_ROOT=${QML_REFERENCE_ROOT:-/Users/mdf/code/remarkable-beta-os/.cache/firmware/3.28.0.169/resources}' \
     "$QMD_CONTROLLER" >/dev/null
 for expected in \
     'QML_APPLY_OUTPUT="$WORK/qml-apply-output"' \

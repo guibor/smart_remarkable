@@ -131,13 +131,13 @@ case "$HOST" in
 esac
 
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-ALLOWLIST="$REPO/xovi-qmd/compatibility-3.28.0.166.env"
+ALLOWLIST="$REPO/xovi-qmd/compatibility-3.28.0.169.env"
 CONTRACT_HELPER="$REPO/ops/artifact-compatibility-contract.sh"
 DEVICE_SCRIPT="$REPO/ops/device-install-llm-button-canary.sh"
 QMLDIFF_BIN=${QMLDIFF_BIN:-}
 QMLFORMAT_BIN=${QMLFORMAT_BIN:-$(command -v qmlformat 2>/dev/null || true)}
-QML_REFERENCE_ROOT=${QML_REFERENCE_ROOT:-/Users/mdf/code/remarkable-beta-os/.cache/firmware/3.28.0.166/resources}
-XOCHITL_REFERENCE=${XOCHITL_REFERENCE:-/Users/mdf/code/remarkable-beta-os/.cache/firmware/3.28.0.166/xochitl}
+QML_REFERENCE_ROOT=${QML_REFERENCE_ROOT:-/Users/mdf/code/remarkable-beta-os/.cache/firmware/3.28.0.169/resources}
+XOCHITL_REFERENCE=${XOCHITL_REFERENCE:-/Users/mdf/code/remarkable-beta-os/.cache/firmware/3.28.0.169/xochitl}
 READELF=${READELF:-/opt/homebrew/bin/aarch64-linux-gnu-readelf}
 ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/smart-remarkable-llm-canary.XXXXXX")
@@ -201,8 +201,8 @@ smart_contract_load "$ALLOWLIST"
 [[ "$DEVICE_SCENE_VIEW_RESOURCE_HASH" =~ ^[0-9]+$ ]]
 [[ "$SELECTION_CONTEXTUAL_MENU_RESOURCE_HASH" =~ ^[0-9]+$ ]]
 if [ "$PHASE" = inert ]; then
-    SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.166.source.qmd"
-    BUTTON_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.166.qmd"
+    SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.169.source.qmd"
+    BUTTON_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.169.qmd"
     EXPECTED_SOURCE_SHA=$INERT_SOURCE_QMD_SHA256
     EXPECTED_BUTTON_SHA=$INERT_BUTTON_QMD_SHA256
 else
@@ -211,13 +211,13 @@ else
         exit 1
     }
     if [ "$PHASE" = refresh-inert ]; then
-        SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.166.source.qmd"
-        BUTTON_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.166.qmd"
+        SOURCE_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.169.source.qmd"
+        BUTTON_QMD="$REPO/xovi-qmd/llm-button-inert-3.28.0.169.qmd"
         EXPECTED_SOURCE_SHA=$INERT_SOURCE_QMD_SHA256
         EXPECTED_BUTTON_SHA=$INERT_BUTTON_QMD_SHA256
     else
-        SOURCE_QMD="$REPO/xovi-qmd/llm-button-3.28.0.166.source.qmd"
-        BUTTON_QMD="$REPO/xovi-qmd/llm-button-3.28.0.166.qmd"
+        SOURCE_QMD="$REPO/xovi-qmd/llm-button-3.28.0.169.source.qmd"
+        BUTTON_QMD="$REPO/xovi-qmd/llm-button-3.28.0.169.qmd"
         EXPECTED_SOURCE_SHA=$SOURCE_QMD_SHA256
         EXPECTED_BUTTON_SHA=$BUTTON_QMD_SHA256
     fi

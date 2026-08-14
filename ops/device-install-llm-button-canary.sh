@@ -356,13 +356,13 @@ extensions_are_exact() {
 
 mod_files_are_exact() {
     phase=$1
-    better_toc="$QRR_HOME/betterToc-beta-3.28.0.166.qmd"
-    better_toc_collapse="$QRR_HOME/bettertoc-collapse-beta-3.28.0.166.qmd"
-    gestik="$QRR_HOME/gestik-beta-3.28.0.166.qmd"
-    ghostbuster="$QRR_HOME/ghostbuster-beta-3.28.0.166.qmd"
-    pen_memory="$QRR_HOME/penLayerMemory-beta-3.28.0.166.qmd"
-    quick_settings="$QRR_HOME/quickSettingsTimer-beta-3.28.0.166.qmd"
-    toc_from_selection="$QRR_HOME/tocFromSelection-beta-3.28.0.166.qmd"
+    better_toc="$QRR_HOME/betterToc-beta-3.28.0.169.qmd"
+    better_toc_collapse="$QRR_HOME/bettertoc-collapse-beta-3.28.0.169.qmd"
+    gestik="$QRR_HOME/gestik-beta-3.28.0.169.qmd"
+    ghostbuster="$QRR_HOME/ghostbuster-beta-3.28.0.169.qmd"
+    pen_memory="$QRR_HOME/penLayerMemory-beta-3.28.0.169.qmd"
+    quick_settings="$QRR_HOME/quickSettingsTimer-beta-3.28.0.169.qmd"
+    toc_from_selection="$QRR_HOME/tocFromSelection-beta-3.28.0.169.qmd"
     [ -d "$QRR_HOME" ] || return 1
     [ ! -L "$QRR_HOME" ] || return 1
     [ "$(stat -c %u:%g "$QRR_HOME")" = 0:0 ] || return 1
@@ -381,13 +381,13 @@ mod_files_are_exact() {
         [ "$(stat -c %a "$path")" = 644 ] || return 1
     done
     expected_names="$(printf '%s\n' \
-        betterToc-beta-3.28.0.166.qmd \
-        bettertoc-collapse-beta-3.28.0.166.qmd \
-        gestik-beta-3.28.0.166.qmd \
-        ghostbuster-beta-3.28.0.166.qmd \
-        penLayerMemory-beta-3.28.0.166.qmd \
-        quickSettingsTimer-beta-3.28.0.166.qmd \
-        tocFromSelection-beta-3.28.0.166.qmd)"
+        betterToc-beta-3.28.0.169.qmd \
+        bettertoc-collapse-beta-3.28.0.169.qmd \
+        gestik-beta-3.28.0.169.qmd \
+        ghostbuster-beta-3.28.0.169.qmd \
+        penLayerMemory-beta-3.28.0.169.qmd \
+        quickSettingsTimer-beta-3.28.0.169.qmd \
+        tocFromSelection-beta-3.28.0.169.qmd)"
     names=
     # Include visible and hidden direct entries. Ordinary metadata is ignored,
     # but every .qmd/.qrr/.rcc—dotfile or otherwise—must appear in the exact

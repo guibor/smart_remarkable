@@ -1,0 +1,79 @@
+; Inert visual canary for the Smart Remarkable answer-here and agent buttons.
+; Exact target: Ferrari firmware 3.28.0.169.
+; This artifact contains no action and cannot start or signal a worker.
+
+VERSION 3.28.0.169
+
+AFFECT /qml/common/SceneSelectionHandler.qml
+    TRAVERSE Item#selectionRoot
+        LOCATE BEFORE SelectionContextualMenu#tools
+        INSERT {
+            // Exercise the same harmless exact-resource bindings as the
+            // functional v3 QMD before its buttons can launch anything.
+            property string smartRemarkableDocumentId: ""
+            property string smartRemarkablePageId: ""
+            property int smartRemarkablePageIndex: -1
+        }
+
+        TRAVERSE SelectionContextualMenu#tools
+            LOCATE AFTER ArkControls.ContextualMenu.Button#selectionDuplicate
+            INSERT {
+                ArkControls.ContextualMenu.Button {
+                    id: smartRemarkableLlmButton
+                    focusPolicy: Qt.NoFocus
+                    type: tools.type
+                    iconSource: "qrc:/ark/icons/notebook_sparkles"
+                    enabled: false
+                }
+
+                ArkControls.ContextualMenu.Button {
+                    id: smartRemarkableSendButton
+                    focusPolicy: Qt.NoFocus
+                    type: tools.type
+                    iconSource: "qrc:/icons/sparkles.svg"
+                    enabled: false
+                }
+            }
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+    TRAVERSE FocusScope
+        TRAVERSE Component#selectionHandlerComponent
+            TRAVERSE SceneSelectionHandler#selectionHandler
+                LOCATE AFTER ALL
+                INSERT {
+                    function smartRemarkableBoundDocumentId() {
+                        if (!root.document ||
+                                root.document.id === undefined ||
+                                root.document.id === null) {
+                            return ""
+                        }
+                        return String(root.document.id)
+                    }
+
+                    function smartRemarkableBoundPageId() {
+                        if (root.pageId === undefined ||
+                                root.pageId === null) {
+                            return ""
+                        }
+                        return String(root.pageId)
+                    }
+
+                    function smartRemarkableBoundPageIndex() {
+                        return typeof root.page === "number" ?
+                            root.page : -1
+                    }
+
+                    pageBounds: root.pageBorderRect
+                    smartRemarkableDocumentId:
+                        smartRemarkableBoundDocumentId()
+                    smartRemarkablePageId: smartRemarkableBoundPageId()
+                    smartRemarkablePageIndex:
+                        smartRemarkableBoundPageIndex()
+                }
+            END TRAVERSE
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT

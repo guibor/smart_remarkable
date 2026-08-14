@@ -2,9 +2,9 @@
 set -eu
 
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-QML="$REPO/xovi-qmd/llm-button-3.28.0.166.source.qmd"
+QML="$REPO/xovi-qmd/llm-button-3.28.0.169.source.qmd"
 LEGACY_INVOCATION="$REPO/tests/fixtures/legacy-installed-button-invocation.txt"
-INERT="$REPO/xovi-qmd/llm-button-inert-3.28.0.166.source.qmd"
+INERT="$REPO/xovi-qmd/llm-button-inert-3.28.0.169.source.qmd"
 LAUNCHER="$REPO/remagic/appload-launch.sh"
 RUNNER="$REPO/scripts/run-armed-once.sh"
 PROTOCOL="$REPO/scripts/selection-protocol.sh"
