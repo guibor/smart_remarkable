@@ -319,7 +319,7 @@
     AppLoad =9a6d55d2...7b9a=, current ten QMDs, manifest
     =4c0b0adb...1a32c=, PID =306456=, zero restarts, and read-only root all
     matched. This is eligibility evidence, not candidate activation.
-86. [ ] Review the final stage manifest and guarded controller, take and verify
+86. [X] Review the final stage manifest and guarded controller, take and verify
     the off-device backup, then activate the exact repaint QMD only through its
     180-second stock watchdog plus the pinned ReMagic wrapper. Require exactly
     eleven QMD load markers, the candidate filename once, the patched AppLoad
@@ -328,9 +328,17 @@
     window-processing, stable-PID, and zero-restart gates, but then failed
     closed before commit because a Bash helper dynamically overwrote the
     candidate verifier's expected filename list with the candidate SHA-256.
-    Stock rollback completed and the candidate was removed. A second guarded
-    attempt requires the local-scope regression and a newly reviewed stage;
-    the first attempt is runtime evidence, not installation completion.
+    Stock rollback completed and the candidate was removed. The retry therefore
+    required the local-scope regression and a newly reviewed stage; the first
+    attempt remains runtime evidence, not installation completion.
+    Corrected transaction =20260919T113653Z-36865= then committed unchanged
+    candidate =1eb2037f...9a60e= on stable PID =316882= through reviewed stage
+    manifest =0d2e3557...c9ea5= and verified off-device backup
+    =8e1f35cd...c05bf=. The retained runtime had exactly eleven QMD load
+    markers, the candidate and AppLoad window marker once each, all pinned
+    mappings present, =NRestarts=0=, read-only root, inactive transaction and
+    safety units, and no deployment lock. This completes machine acceptance;
+    it does not complete the physical checks in step 87.
 87. [ ] On a disposable Dispatch canvas, record the same 5-10 second
     handwriting sample before and after the host candidate; verify visibly
     lower pen latency, native coordinate alignment, clean strokes and exit,

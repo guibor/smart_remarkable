@@ -1,13 +1,13 @@
 # Dispatch/AppLoad partial repaint candidate — Paper Pro 3.28.0.169
 
-Status: **runtime-loaded once, then verifier-rejected and safely rolled back;
-not installed**.
+Status: **installed and machine-accepted; physical handwriting acceptance is
+pending**.
 
 This record covers the full-size Paper Pro (`reMarkable Ferrari`, serial
 `0A247209DABC7917`) only. The local build and qualification made no device
-call. The separate deployment owner supplied the read-only live preflight and
-later attempted the guarded `prepare` described below; its stricter preimage
-gate stopped before candidate activation or an `xochitl` restart.
+call. The separate deployment owner supplied the read-only live preflight,
+handled the failed-closed attempts described below, and completed the corrected
+machine canary. No statement here substitutes for physical pen acceptance.
 
 ## Why this candidate exists
 
@@ -142,10 +142,40 @@ The corrected installer makes helper scratch variables function-local. Its
 regression extracts and executes the real `hash_file`, `exact_root_file`,
 `exact_owned_file`, `qmd_names`, and `verify_qmd_set` functions against the
 exact reconstructed candidate inventory, and also proves that a caller's
-`expected` sentinel survives. Do not reuse the failed stage: the installer
-bytes and manifest change. A second activation is justified only through a
-newly reviewed, fully qualified guarded transaction; physical latency remains
-unproven until that succeeds and the user performs the A/B sample.
+`expected` sentinel survives. The failed stage was not reused: the installer
+bytes and manifest changed, and the next activation used a newly reviewed,
+fully qualified guarded transaction. Its successful machine receipt follows;
+physical latency remains unproven until the user performs the A/B sample.
+
+## Corrected guarded activation and machine acceptance
+
+Fresh guarded transaction `20260919T113653Z-36865` used the corrected installer
+and a newly reviewed stage rather than reusing the failed transaction. Its
+stage manifest was
+`0d2e3557a60a05285c34d90b23d2901d87c05a38eec5d9eb8fb4214ace8c9ea5`;
+the independently downloaded off-device safety archive was
+`8e1f35cd301e4752919d5386c96bfda633eb91cea4f3b4008a19c2f1cebc05bf`.
+The candidate remained byte-identical at
+`1eb2037f28c9891fbdc4a97d1e2916b8e923fe04004ae1ced03b5de73f59a60e`.
+
+The transaction committed on `xochitl` PID `316882`. The retained runtime and
+captured evidence established:
+
+- exactly eleven QMD load markers, with every baseline QMD and the candidate
+  present once;
+- exactly one `/appload/qml/window.qml` processing marker and the AppLoad
+  success marker;
+- all pinned Xovi, QRR, broker, AppLoad, and framebuffer-spy mappings present;
+- `NRestarts=0` and `/` mounted read-only; and
+- inactive transaction, outer rollback, and nested ReMagic safety units, with
+  no deployment lock remaining.
+
+This is machine acceptance of installation and process health. It is not
+evidence that the user-visible objective is met. The user must still perform
+the repeatable pen sample and accept latency, stroke thickness/clarity,
+coordinate alignment, clean Dispatch exit, and unchanged behavior in at least
+one non-Dispatch AppLoad application. If any of those physical checks fails,
+the candidate must not be considered fully promoted.
 
 ## Guarded promotion and rollback
 

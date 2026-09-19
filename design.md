@@ -106,13 +106,21 @@ The compiled candidate is
 Offline composition in both tested load orders yields identical patched
 `window.qml` bytes
 `af8d378b319e6ad3633ae729425f5c4dbd3d385100835a7e23f90e8f7f9eafa7`.
-This is exact-firmware/offline qualification plus one failed-closed guarded
-activation. That activation loaded all eleven QMDs exactly once, processed the
-AppLoad window, held one stable Xovi-enabled `xochitl` PID with zero restarts,
-and passed the pinned ReMagic live wrapper. A device-side verifier scoping bug
-then rejected its own correct candidate inventory and the independent rollback
-restored stock mode. The candidate was not retained; a newly staged guarded
-restart and physical handwriting A/B remain promotion gates.
+This is exact-firmware/offline qualification plus completed machine
+acceptance. The first guarded activation loaded all eleven QMDs exactly once,
+processed the AppLoad window, held one stable Xovi-enabled `xochitl` PID with
+zero restarts, and passed the pinned ReMagic live wrapper, but a device-side
+verifier scoping bug rejected its own correct inventory and safely restored
+stock mode. After the local-scope fix and regression, fresh transaction
+`20260919T113653Z-36865` committed the unchanged candidate
+`1eb2037f...9a60e` on PID `316882` using reviewed stage manifest
+`0d2e3557...c9ea5` and off-device backup `8e1f35cd...c05bf`. Its journal again
+contained exactly eleven unique QMD load markers and one AppLoad window marker;
+the exact runtime mappings remained present, `NRestarts=0`, `/` remained
+read-only, and the transaction, nested safety units, and deployment lock were
+absent after commit. This passes machine acceptance only. Physical pen latency,
+stroke quality/alignment, clean Dispatch exit, and unchanged non-Dispatch
+AppLoad behavior remain the promotion gates.
 
 ## Runtime flow
 
