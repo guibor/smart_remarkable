@@ -84,7 +84,8 @@ EXPECTED_STOCK_UNIT_SHA256=23f537cf59d527bfbf4823f372385d613e1ade0961c98831c935a
 EXPECTED_STOCK_OVERRIDE_SHA256=a9432caffacb29d6fcb35136dcc3cb43d8737eb6c2efcb35ea335725f42082d1
 EXPECTED_DISPATCH_MANIFEST_SHA256=4c0b0adba890becb4aa85678c3dc345a9d8909f65a5b9734b809b4746341a32c
 EXPECTED_DISPATCH_BINARY_SHA256=d700b7c8c3df4d5750d0844169a0d50324f9d7fd2a8ac4f8667a40efa26ceab4
-EXPECTED_BASELINE_SHA256=d09c244e58bf4097e273c4175aa29fbe4bfacae5e42d58a9f73f25f737d4fd04
+EXPECTED_DATES_QMD_SHA256=2d4681414ac00b534b2f21d179365601ce9e876c7cfbf6c6c8d25a2f8738e580
+EXPECTED_BASELINE_SHA256=1e89ad1fcde7920760ed2a7d44d892e9a0be46acc5d5e05ffaac7d087fbce138
 EXPECTED_CANDIDATE_SHA256=1eb2037f28c9891fbdc4a97d1e2916b8e923fe04004ae1ced03b5de73f59a60e
 
 hash_file() {
@@ -183,6 +184,10 @@ verify_qmd_set() {
     [ -d "$QDIR" ] && [ ! -L "$QDIR" ] || return 1
     [ "$(stat -c %u:%g "$QDIR")" = 0:0 ] || return 1
     (cd "$QDIR" && sha256sum -c "$STAGE/baseline.sha256") >&2 || return 1
+    # Dates was independently promoted at 11:16 UTC. Pin its observed live
+    # ownership/mode as well as its content while the other baseline entries
+    # remain hash- and inventory-gated by the reviewed manifest.
+    exact_owned_file "$QDIR/notebook-date-index.qmd" "$EXPECTED_DATES_QMD_SHA256" 0:0:600 || return 1
     expected=$(awk '{ print $2 }' "$STAGE/baseline.sha256")
     if [ "$mode" = candidate ]; then
         exact_root_file "$TARGET" "$EXPECTED_CANDIDATE_SHA256" || return 1
@@ -208,7 +213,12 @@ verify_extensions() {
 "
     done
     [ "$(printf '%s' "$names" | sort)" = \
-        "$(printf '%s\n' appload.so framebuffer-spy.so qt-resource-rebuilder.so xovi-message-broker.so | sort)" ] || return 1
+        "$(printf '%s\n' ._appload.so ._qt-resource-rebuilder.so ._xovi-message-broker.so appload.so framebuffer-spy.so qt-resource-rebuilder.so xovi-message-broker.so | sort)" ] || return 1
+    # Preserve only the three AppleDouble files observed in the live preimage.
+    # In particular, the absence of ._framebuffer-spy.so remains contractual.
+    exact_owned_file "$EXTENSIONS/._appload.so" "$EXPECTED_APPLEDOUBLE_SHA256" 0:0:755 || return 1
+    exact_owned_file "$EXTENSIONS/._qt-resource-rebuilder.so" "$EXPECTED_APPLEDOUBLE_SHA256" 0:0:755 || return 1
+    exact_owned_file "$EXTENSIONS/._xovi-message-broker.so" "$EXPECTED_APPLEDOUBLE_SHA256" 0:0:755 || return 1
 }
 
 direct_entry_names() {
@@ -347,6 +357,7 @@ snapshot() {
     printf 'model=%s\n' "$EXPECTED_MODEL"
     printf 'serial=%s\nfirmware=%s\nbuild=%s\n' "$EXPECTED_SERIAL" "$EXPECTED_FIRMWARE" "$EXPECTED_BUILD"
     sha256sum "$XOCHITL" "$XOVI" "$QRR" "$BROKER" "$APPLOAD" "$FRAMEBUFFER_SPY" "$HASHTAB" "$REMAGIC" "$START" "$STOCK" "$STOCK_UNIT" "$STOCK_OVERRIDE" "$DISPATCH_BINARY" "$DISPATCH_MANIFEST"
+    sha256sum "$EXTENSIONS/._appload.so" "$EXTENSIONS/._qt-resource-rebuilder.so" "$EXTENSIONS/._xovi-message-broker.so"
     sha256sum "$SERVICE_ROOT/._xochitl.service" "$SERVICE_DIR/._extensions.d" "$SERVICE_DIR/._exthome" "$SERVICE_DIR/._qt-resource-rebuilder.conf" "$SERVICE_CONF"
     printf 'extensions_link=%s\n' "$(readlink "$SERVICE_DIR/extensions.d")"
     printf 'exthome_link=%s\n' "$(readlink "$SERVICE_DIR/exthome")"

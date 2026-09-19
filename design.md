@@ -62,11 +62,18 @@ The candidate modules are:
   the complete preimage gate. They require the exact Ferrari serial,
   firmware/build, stock executable, Xovi/QRR/broker/AppLoad/framebuffer-spy,
   hashtable, ten QMDs, ReMagic/stock scripts, Dispatch executable and manifest.
-  Because the exact `start` and `stock` scripts execute mutable service and
-  hook trees, the gate also pins `start`, the sole `xochitl.service` source
-  directory, its QRR config, both absolute symlink targets, all four observed
-  AppleDouble metadata files, and requires the four pre/post start/stock hook
-  directories to be exact empty root-owned directories. The vendor xochitl
+  The ten-QMD manifest is rebased to the independently promoted Dates artifact
+  `2d468141...8e580`; its observed live `root:root:0600` metadata is also an
+  explicit gate, so a content-equivalent but operationally different Dates
+  preimage is not silently accepted.
+  Because the exact `start` and `stock` scripts execute mutable extension,
+  service, and hook trees, the gate also pins `start`, the four runtime
+  extension libraries, the three observed root-owned AppleDouble files beside
+  AppLoad/QRR/message-broker (while rejecting `._framebuffer-spy.so` and every
+  other entry), the sole `xochitl.service` source directory, its QRR config,
+  both absolute symlink targets, all four service-tree AppleDouble metadata
+  files, and requires the four pre/post start/stock hook directories to be
+  exact empty root-owned directories. The vendor xochitl
   unit and its stock override are also hashed because rollback unmounts the
   Xovi drop-in and restarts through those files.
   The unusual live manifest ownership `501:20:644` is pinned only by its

@@ -23,7 +23,13 @@
   state must retain =allowScaling: true=. Do not replace =appload.so= or alter
   the Dispatch manifest to obtain this result. Promotion requires the exact
   installed AppLoad, stock xochitl, hashtable, ten-QMD inventory, Dispatch
-  manifest, and Dispatch executable; an off-device backup; an independent
+  manifest, Dispatch executable, and exact extension directory. The ten-QMD
+  baseline must contain the currently promoted Dates artifact
+  =2d468141...8e580= at its observed =root:root:0600= metadata. The extension directory may
+  contain only the four pinned runtime libraries plus the three observed
+  root-owned =._appload.so=, =._qt-resource-rebuilder.so=, and
+  =._xovi-message-broker.so= AppleDouble files; =._framebuffer-spy.so= and all
+  other entries remain disallowed. Promotion also requires an off-device backup; an independent
   180-second stock rollback; the nested ReMagic watchdog; one exact eleven-QMD
   load-marker proof; and physical handwriting A/B acceptance.
 - Refuse kernel-module loading by default and require the firmware-provided =/dev/uinput= device for this deployment.
@@ -179,6 +185,19 @@
   it still forbids a custom AppLoad binary, preserves scaled behavior outside
   the exact native full-screen Dispatch predicate, and remains uninstalled
   until its independent rollback and physical A/B gates pass.
+- The first guarded prepare attempt failed closed before activation because
+  the initial extension-directory contract modeled the four runtime libraries
+  but not three longstanding AppleDouble files observed beside AppLoad, QRR,
+  and the message broker. The revised requirement admits only those exact
+  regular =0:0:0755= files at SHA-256 =a502dbe0...c5d3=, includes them in both
+  preflight snapshots, and continues to reject =._framebuffer-spy.so= or any
+  additional extension entry.
+- Between the earlier read-only preflight and guarded prepare, the independent
+  Dates deployment legitimately replaced =notebook-date-index.qmd=. The old
+  =f6cba319...731e0= baseline is superseded by the exact current
+  =2d468141...8e580= artifact installed at =root:root:0600=. The candidate's
+  complete ten-QMD compatibility/composition evidence must be regenerated
+  against that artifact; no other QMD inventory or hash drift is allowed.
 
 * Immediate next steps
 

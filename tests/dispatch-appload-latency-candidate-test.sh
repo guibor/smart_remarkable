@@ -14,8 +14,9 @@ BASELINE=$REPO/xovi-qmd/dispatch-appload-partial-repaint-3.28.0.169.baseline.sha
 bash -n "$BUILD" "$DRY_RUN" "$INSTALLER" "$ROLLBACK" "$CONTROLLER"
 [ "$(shasum -a 256 "$SOURCE" | awk '{ print $1 }')" = 424b1ca4859e38de5dc07e5e33a7c18a532a61fb821edbe9a3cbce3985e12e6e ]
 [ "$(shasum -a 256 "$CANDIDATE" | awk '{ print $1 }')" = 1eb2037f28c9891fbdc4a97d1e2916b8e923fe04004ae1ced03b5de73f59a60e ]
-[ "$(shasum -a 256 "$BASELINE" | awk '{ print $1 }')" = d09c244e58bf4097e273c4175aa29fbe4bfacae5e42d58a9f73f25f737d4fd04 ]
+[ "$(shasum -a 256 "$BASELINE" | awk '{ print $1 }')" = 1e89ad1fcde7920760ed2a7d44d892e9a0be46acc5d5e05ffaac7d087fbce138 ]
 [ "$(wc -l <"$BASELINE" | tr -d ' ')" = 10 ]
+grep -Fqx '2d4681414ac00b534b2f21d179365601ce9e876c7cfbf6c6c8d25a2f8738e580  notebook-date-index.qmd' "$BASELINE"
 
 for term in \
     'root.fullscreen' \
@@ -35,11 +36,23 @@ grep -Fq "trap 'exit 143' TERM" "$INSTALLER"
 grep -Fq 'unexpected target preserved; stock mode requested' "$ROLLBACK"
 grep -Fq 'systemctl kill --kill-whom=all --signal=KILL "$TRANSACTION_UNIT"' "$ROLLBACK"
 grep -Fq 'EXPECTED_DISPATCH_BINARY_SHA256=d700b7c8c3df4d5750d0844169a0d50324f9d7fd2a8ac4f8667a40efa26ceab4' "$INSTALLER"
+grep -Fq 'EXPECTED_DATES_QMD_SHA256=2d4681414ac00b534b2f21d179365601ce9e876c7cfbf6c6c8d25a2f8738e580' "$INSTALLER"
+grep -Fq 'exact_owned_file "$QDIR/notebook-date-index.qmd" "$EXPECTED_DATES_QMD_SHA256" 0:0:600' "$INSTALLER"
 grep -Fq 'EXPECTED_START_SHA256=bf15dfd641deea3e4487b9182957938a3dc824c340383c9243b7f118bfe829dc' "$INSTALLER"
 grep -Fq 'EXPECTED_SERVICE_CONF_SHA256=6036f7776f8775529f94056fafe066ff373f5aa6bca39633bfd4dabfc1552ffd' "$INSTALLER"
+grep -Fq 'EXPECTED_APPLEDOUBLE_SHA256=a502dbe0e569c3718c449b86480d0cd4cdc23e3a450814de360e5b0a5e08c5d3' "$INSTALLER"
 grep -Fq 'EXPECTED_STOCK_UNIT_SHA256=23f537cf59d527bfbf4823f372385d613e1ade0961c98831c935a372018f9566' "$INSTALLER"
 grep -Fq 'EXPECTED_STOCK_OVERRIDE_SHA256=a9432caffacb29d6fcb35136dcc3cb43d8737eb6c2efcb35ea335725f42082d1' "$INSTALLER"
 grep -Fq 'verify_service_tree' "$INSTALLER"
+grep -Fq "printf '%s\\n' ._appload.so ._qt-resource-rebuilder.so ._xovi-message-broker.so appload.so framebuffer-spy.so qt-resource-rebuilder.so xovi-message-broker.so" "$INSTALLER"
+grep -Fq 'exact_owned_file "$EXTENSIONS/._appload.so" "$EXPECTED_APPLEDOUBLE_SHA256" 0:0:755' "$INSTALLER"
+grep -Fq 'exact_owned_file "$EXTENSIONS/._qt-resource-rebuilder.so" "$EXPECTED_APPLEDOUBLE_SHA256" 0:0:755' "$INSTALLER"
+grep -Fq 'exact_owned_file "$EXTENSIONS/._xovi-message-broker.so" "$EXPECTED_APPLEDOUBLE_SHA256" 0:0:755' "$INSTALLER"
+if grep -Fq 'exact_owned_file "$EXTENSIONS/._framebuffer-spy.so"' "$INSTALLER"; then
+    echo "installer unexpectedly admits an unobserved ._framebuffer-spy.so" >&2
+    exit 1
+fi
+grep -Fq 'sha256sum "$EXTENSIONS/._appload.so" "$EXTENSIONS/._qt-resource-rebuilder.so" "$EXTENSIONS/._xovi-message-broker.so"' "$INSTALLER"
 grep -Fq 'no_other_mutation_active' "$INSTALLER"
 grep -Fq -- '--kill-whom=WHOM' "$INSTALLER"
 grep -Fq -- '--signal=SIGNAL' "$INSTALLER"

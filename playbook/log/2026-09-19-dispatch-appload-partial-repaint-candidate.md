@@ -3,9 +3,10 @@
 Status: **locally qualified and live-preflight eligible; not installed**.
 
 This record covers the full-size Paper Pro (`reMarkable Ferrari`, serial
-`0A247209DABC7917`) only. No command from this candidate work contacted or
-modified the tablet. The separate deployment owner supplied the read-only live
-preflight quoted below.
+`0A247209DABC7917`) only. The local build and qualification made no device
+call. The separate deployment owner supplied the read-only live preflight and
+later attempted the guarded `prepare` described below; its stricter preimage
+gate stopped before candidate activation or an `xochitl` restart.
 
 ## Why this candidate exists
 
@@ -35,7 +36,8 @@ performance switch and the coordinate-safety guard.
 | installed Dispatch executable | `d700b7c8c3df4d5750d0844169a0d50324f9d7fd2a8ac4f8667a40efa26ceab4` |
 | source QMD | `424b1ca4859e38de5dc07e5e33a7c18a532a61fb821edbe9a3cbce3985e12e6e` |
 | compiled QMD | `1eb2037f28c9891fbdc4a97d1e2916b8e923fe04004ae1ced03b5de73f59a60e` |
-| ten-QMD baseline manifest | `d09c244e58bf4097e273c4175aa29fbe4bfacae5e42d58a9f73f25f737d4fd04` |
+| current Dates QMD | `2d4681414ac00b534b2f21d179365601ce9e876c7cfbf6c6c8d25a2f8738e580` |
+| ten-QMD baseline manifest | `1e89ad1fcde7920760ed2a7d44d892e9a0be46acc5d5e05ffaac7d087fbce138` |
 | composed patched `window.qml` | `af8d378b319e6ad3633ae729425f5c4dbd3d385100835a7e23f90e8f7f9eafa7` |
 
 The exact baseline is
@@ -89,6 +91,24 @@ were empty. The vendor unit `23f537cf...9566` and stock override
 `a9432caf...82d1` are separately pinned because rollback restarts through
 them. `xochitl` remained PID `306456`, `NRestarts=0`, and `/` remained
 read-only.
+
+The first guarded `prepare` subsequently stopped safely before activation:
+the exact live extension directory also contained three longstanding
+AppleDouble regular files, `._appload.so`, `._qt-resource-rebuilder.so`, and
+`._xovi-message-broker.so`, each `0:0:755`, 163 bytes, and SHA-256
+`a502dbe0e569c3718c449b86480d0cd4cdc23e3a450814de360e5b0a5e08c5d3`.
+The contract now admits and snapshots exactly those three names alongside the
+four hashed runtime libraries. It still rejects `._framebuffer-spy.so` and any
+other directory entry. That failed prepare did not install the candidate or
+restart `xochitl`; a new full preflight is required before another prepare.
+
+A second exact mismatch was also diagnosed without activation: the separate
+Dates update at 11:16 UTC had legitimately replaced
+`notebook-date-index.qmd`. Live and local artifact bytes both hash to
+`2d4681414ac00b534b2f21d179365601ce9e876c7cfbf6c6c8d25a2f8738e580`;
+the live file is `root:root:0600`. The ten-QMD baseline and offline composition
+now use that artifact, and the device gate pins both its hash and observed
+metadata. Every other QMD name/hash remains unchanged and exact.
 
 This proves eligibility at that instant. It does not prove the candidate is
 installed or that handwriting is faster.
