@@ -1,0 +1,59 @@
+VERSION 3.28.0.169
+AFFECT /qml/common/Values.qml
+ TRAVERSE Item
+ LOCATE BEFORE ALL
+ INSERT { signal dispatchOpenRequested() }
+ END TRAVERSE
+END AFFECT
+AFFECT /qml/device/view/main/MainView.qml
+ TRAVERSE Background#root
+ LOCATE BEFORE ALL
+ INSERT {
+   Loader {
+     id: dispatchDocumentMenuLoader
+     anchors.fill: parent
+     z: 30000
+     onLoaded: {
+       if (item) item.openDispatch();
+     }
+     onStatusChanged: {
+       if (status === Loader.Error)
+         console.warn("Dispatch shortcut loader:", sourceComponent ? "component error" : source);
+     }
+   }
+   Connections {
+     target: Values
+     function onDispatchOpenRequested() {
+       if (!root.visible || !root.documentViewActive || root.passcodeHandler.userLocked) return;
+       if (dispatchDocumentMenuLoader.item) {
+         dispatchDocumentMenuLoader.item.openDispatch();
+       } else if (dispatchDocumentMenuLoader.status !== Loader.Loading) {
+         dispatchDocumentMenuLoader.setSource(
+           "file:///home/root/.local/lib/remarkable-dispatch-shortcut/DispatchLauncher.qml",
+           {appRoot: root, appWindowsRoot: navigator});
+       }
+     }
+   }
+ }
+ END TRAVERSE
+END AFFECT
+AFFECT /qt/qml/xofm/libs/toolbar/qml/SettingsMenu.qml
+ IMPORT common 1.0
+ TRAVERSE ToolbarTool#root
+ TRAVERSE Component#settingsComponent > ColumnLayout#content
+ LOCATE BEFORE ALL
+ INSERT {
+   ToolbarTool {
+     toolbar: root.toolbar
+     type: ToolbarTool.Type.FoldoutButton
+     Layout.fillWidth: true
+     label: "Dispatch"
+     visible: root.documentType === "note" || root.documentType === "pdf"
+     shouldShow: root.documentType === "note" || root.documentType === "pdf"
+     iconSource: "qrc:/ark/icons/send"
+     onPressed: { root.toolbar.closeFoldout(); Values.dispatchOpenRequested(); }
+   }
+ }
+ END TRAVERSE
+ END TRAVERSE
+END AFFECT

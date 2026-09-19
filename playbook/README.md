@@ -6,6 +6,7 @@ render or a successful `xochitl` restart is not evidence that handwriting is
 usable.
 
 - [Dispatch/AppLoad partial repaint candidate](log/2026-09-19-dispatch-appload-partial-repaint-candidate.md)
+- [Dispatch document-menu candidate](log/2026-09-19-dispatch-document-menu-candidate.md)
 
 For firmware updates and whole-device recovery, continue to use
 `../remarkable-beta-os/KNOWLEDGE-BASE.md` and its matching exact-firmware

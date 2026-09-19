@@ -32,6 +32,23 @@
   other entries remain disallowed. Promotion also requires an off-device backup; an independent
   180-second stock rollback; the nested ReMagic watchdog; one exact eleven-QMD
   load-marker proof; and physical handwriting A/B acceptance.
+- Provide one optional native =Dispatch= row in the document three-dot menu on
+  the exact Ferrari =3.28.0.169= contract. It must appear only when the stock
+  document type is =note= or =pdf=, remain absent from EPUB/ebook views, and
+  use the stock =qrc:/ark/icons/send= resource rather than a custom icon. A tap
+  must reuse one healthy existing Dispatch window or launch exactly
+  =external::remarkable-dispatch= through AppLoad's exact four-argument
+  =launchExternal(id, qtfbKey, args, env)= API. The controller must supply the
+  real AppLoad virtual-keyboard reference, require a positive child PID, use
+  native 1620-by-2160 full-screen geometry, and fail closed on stale,
+  ambiguous, or malformed Dispatch windows. This integration is a separate
+  additive QMLDiff artifact; it must not replace or modify the accepted
+  Dispatch partial-repaint QMD =1eb2037f...9a60e=. Promotion is an exact
+  eleven-to-twelve-QMD transaction against the final eraser-capable Dispatch
+  executable =f9896596...75cc= and unchanged manifest =4c0b0adb...1a32c=,
+  with an inert disabled-row canary, off-device backup, independent
+  180-second stock rollback, nested ReMagic watchdog, exact twelve-load-marker
+  proof, and physical notebook/PDF/EPUB acceptance before the functional row.
 - Refuse kernel-module loading by default and require the firmware-provided =/dev/uinput= device for this deployment.
 - Keep Smart Remarkable and T.M.R. mutually exclusive, give Smart its own tunnel port, and stop Smart whenever stock =xochitl= stops.
 - Keep Smart Remarkable's unauthenticated web server and debug/request logging disabled.
@@ -198,6 +215,17 @@
   =2d468141...8e580= artifact installed at =root:root:0600=. The candidate's
   complete ten-QMD compatibility/composition evidence must be regenerated
   against that artifact; no other QMD inventory or hash drift is allowed.
+- A normal AppLoad/ReMagic application manifest can create a launcher tile but
+  cannot add an action to stock xochitl's document menu. The new Dispatch
+  shortcut therefore uses an exact-firmware QMLDiff hook in =SettingsMenu.qml=
+  plus a lazy external controller under =MainView.qml=. It remains separate
+  from the already accepted latency QMD so either feature can be rolled back
+  without replacing the other's bytes.
+- The earlier Dispatch binary =d700b7c8...eab4= is superseded for future host
+  transactions by the clean eraser-capable build =f9896596...75cc=. The AppLoad
+  manifest is unchanged. Every shortcut prepare and activation must reject the
+  earlier executable even though the document-menu QML itself does not
+  implement erasing.
 
 * Immediate next steps
 
@@ -344,6 +372,26 @@
     lower pen latency, native coordinate alignment, clean strokes and exit,
     then retain the candidate only if stock =xochitl= and every non-Dispatch
     AppLoad application remain healthy.
+88. [X] Build exact =3.28.0.169= inert and functional Dispatch document-menu
+    QMDs, compose both with AppLoad's embedded QMD and the current eleven-QMD
+    set, exercise all Dates/RMStream/Dispatch relative orders, parse every
+    emitted QML file, reject =3.28.0.168=, and pass the AppLoad lifecycle
+    runtime harness without contacting the tablet.
+89. [X] Build and locally simulate the guarded eleven-to-twelve transaction:
+    pin final Dispatch =f9896596...75cc=, preserve latency QMD
+    =1eb2037f...9a60e= byte-for-byte, cover baseline→inert→functional and both
+    rollback paths, require a reviewed six-file stage receipt, off-device
+    backup, independent 180-second rollback and stock fallback. This is local
+    qualification only; neither candidate is installed.
+90. [ ] Guardedly install the inert disabled =Dispatch= row, then physically
+    verify it appears with the stock send icon in a notebook and PDF, is absent
+    from an EPUB, and leaves stock xochitl/AppLoad stable before approving the
+    exact inert transaction ID.
+91. [ ] Promote only that physically approved inert transaction to the
+    functional QMD. Verify one tap opens or reuses a native-size Dispatch
+    window, a second tap does not create a duplicate, erasing and low-latency
+    writing still work, exit is clean, all twelve QMDs load exactly once,
+    =NRestarts=0=, and =/= remains read-only.
 
 * Requirements changed for Paper Pro 3.28.0.169
 - Firmware =3.28.0.169= supersedes =3.28.0.166=. The unchanged OS build stamp

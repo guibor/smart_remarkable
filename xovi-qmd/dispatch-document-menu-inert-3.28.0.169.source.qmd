@@ -1,0 +1,20 @@
+VERSION 3.28.0.169
+AFFECT /qt/qml/xofm/libs/toolbar/qml/SettingsMenu.qml
+ TRAVERSE ToolbarTool#root
+ TRAVERSE Component#settingsComponent > ColumnLayout#content
+ LOCATE BEFORE ALL
+ INSERT {
+   ToolbarTool {
+     toolbar: root.toolbar
+     type: ToolbarTool.Type.FoldoutButton
+     Layout.fillWidth: true
+     label: "Dispatch"
+     visible: root.documentType === "note" || root.documentType === "pdf"
+     shouldShow: root.documentType === "note" || root.documentType === "pdf"
+     enabled: false
+     iconSource: "qrc:/ark/icons/send"
+   }
+ }
+ END TRAVERSE
+ END TRAVERSE
+END AFFECT

@@ -2,6 +2,109 @@
 
 Smart Remarkable is a user-space assistant that leaves reMarkable's stock `xochitl` process running. It reads the current framebuffer from `xochitl`, sends a normalized screenshot to the user's OpenClaw agent, and returns the result through virtual pen, touch, or keyboard devices backed by the kernel's existing `/dev/uinput` support. The production listener supports `pen-release` for one-shot/automatic sessions and `pen-hold` for explicit sessions; hold timing, normalized jitter radius, and minimum lasso extent are validated configuration values. A hold is classified only on lift, contacts begun while busy stay ineligible, and xochitl's detected marquee remains the final proof of a real lasso.
 
+## Dispatch document-menu shortcut
+
+The Dispatch shortcut is an exact-firmware host integration for the full-size
+Paper Pro (`reMarkable Ferrari`) on `3.28.0.169`. A normal ReMagic/AppLoad
+manifest can expose an application tile but cannot add an entry to xochitl's
+document three-dot menu. The shortcut therefore uses a separate additive
+QMLDiff artifact. It does not change Dispatch, AppLoad, the stock executable,
+or the accepted latency QMD.
+
+The QMLDiff touches three exact stock resources:
+
+- `/qt/qml/xofm/libs/toolbar/qml/SettingsMenu.qml` adds a `ToolbarTool` row
+  with label `Dispatch` and stock icon `qrc:/ark/icons/send`. Both `visible`
+  and `shouldShow` require `documentType === "note" || documentType ===
+  "pdf"`; an EPUB stays excluded even when its current page contains notes.
+- `/qml/common/Values.qml` adds the content-free
+  `dispatchOpenRequested()` signal. The menu closes its foldout and emits only
+  that signal; it does not perform process or filesystem work.
+- `/qml/device/view/main/MainView.qml` installs a lazy `Loader` at z=30000.
+  It ignores requests while the view is hidden, no document is active, or the
+  user is locked, and loads the external controller only after a real tap.
+
+`qml/DispatchLauncher.qml` is the external controller. Its main functions are:
+
+- `exactApplication()` requires one exact enabled AppLoad model entry with
+  ID `external::remarkable-dispatch`, name `Dispatch`, QTFB enabled,
+  `aspectRatio: original`, and `disablesWindowedMode: true`.
+- `collectDispatchWindows()` recursively walks the shaped AppLoad window tree.
+  It reuses exactly one healthy matching window and rejects stale or multiple
+  candidates instead of guessing.
+- `virtualKeyboardReference()` requires the real `navigator.apploadVKB`
+  object, while `bringForward()` binds the 1620-by-2160 native global
+  dimensions, raises the window, and maximizes only a non-full-screen window.
+  It never calls the toggle-like maximize method on an already-full-screen
+  window.
+- `openDispatch()` is the single tap entry point. It validates the model and
+  window state, creates the AppLoad window, then invokes the exact AppLoad
+  v0.5.0 API `launchExternal(id, qtfbKey, [], ({}))` and accepts only a
+  positive PID. It closes a failed new window and exposes only a bounded local
+  error strip. No credentials, handwriting, document bytes, or network calls
+  enter QML.
+
+The native-size/full-screen values intentionally satisfy the existing
+partial-repaint QMD's exact Dispatch predicate. The old QMD remains a separate
+file at SHA-256
+`1eb2037f28c9891fbdc4a97d1e2916b8e923fe04004ae1ced03b5de73f59a60e`;
+the shortcut build/test/deployment paths rehash it and never regenerate or
+replace it. Loader z=30000 sits above the AppLoad window z=20000 so a launch
+failure remains visible without coupling either patch.
+
+The candidate and operations modules are:
+
+- `xovi-qmd/dispatch-document-menu-inert-3.28.0.169.source.qmd` adds the same
+  row disabled, with no signal or controller. It is the mandatory visual
+  canary.
+- `xovi-qmd/dispatch-document-menu-3.28.0.169.source.qmd` contains the
+  functional three-resource diff. `ops/build-dispatch-document-menu-candidate.sh`
+  pins source, tool, firmware hashtable, panel, and eleven-QMD baseline hashes,
+  compiles both outputs, applies them offline, parses the generated QML, and
+  publishes only the expected bytes.
+- `tests/dispatch-document-menu-harness.mjs` builds narrow AppLoad/QML mocks.
+  It tests missing/wrong/ambiguous model entries; exact launch arguments;
+  native dimensions; healthy reuse; stale/multiple windows; virtual-keyboard
+  cleanup; non-positive PID; and component-load/create exceptions.
+- `tests/dispatch-document-menu-test.sh` extracts exact stock xochitl and
+  AppLoad resources, includes AppLoad's embedded QMD, reconstructs the current
+  eleven-input stack, exercises twelve cross-QMD orderings plus the actual
+  filename order, requires the accepted patched `window.qml` hash, parses all
+  outputs, and proves the candidate is inert on the wrong firmware.
+- `ops/device-install-dispatch-document-menu-candidate.sh` is the target-side
+  exact preimage gate. `verify_stage`, `verify_qmd_set`,
+  `verify_service_tree`, `verify_dispatch`, and `verify_live` pin Ferrari
+  identity, firmware/build, all mutable Xovi/ReMagic/AppLoad inputs, all
+  `.qmd`/`.qrr`/`.rcc` composition inputs, the final eraser-capable Dispatch
+  binary `f9896596...75cc`, and a stable Xovi-enabled xochitl. `prepare` writes
+  only root-private recovery evidence. `activate` can run only in its named
+  transient unit, arms an independent 180-second rollback, performs one
+  atomic QMD transition, invokes the pinned ReMagic watchdog, and requires
+  exactly twelve load markers plus the affected resource markers.
+- `ops/rollback-dispatch-document-menu-candidate.sh` freezes the transaction,
+  removes only exact reviewed bytes, returns a functional promotion to its
+  exact inert predecessor, and returns an inert install to the exact
+  eleven-input baseline. Unknown bytes are preserved for forensics while the
+  independently pinned stock script is requested. The accepted latency QMD is
+  rehashed on both rollback paths.
+- `ops/dry-run-dispatch-document-menu-transaction.sh` runs every local build,
+  composition and runtime gate, constructs the exact six-file stage receipt,
+  proves a changed byte is rejected, and simulates baseline→inert→functional
+  plus both rollback paths without a network client.
+- `ops/deploy-dispatch-document-menu-candidate.sh` is inert without an exact
+  mode and `--activate`. It runs the full dry-run before network access, pins
+  the Ferrari SSH fingerprint, requires key-only authentication and a
+  verified off-device safety archive, and requires the physically approved
+  inert transaction ID before functional promotion.
+
+The menu uses reMarkable's own monochrome send glyph; no icon file is installed
+for this route. If the separate AppLoad tile is refreshed later, its existing
+`/home/root/xovi/exthome/appload/remarkable-dispatch/icon.png` should remain a
+512-by-512 RGB/RGBA, high-contrast black/white icon with roughly 40–48 px clear
+margin and 24–32 px minimum strokes, combining a note/handwriting motif with a
+send arrow. That tile asset is independent of the stock menu icon and is not
+changed by this candidate.
+
 ## Dispatch-only AppLoad partial repaint candidate
 
 The optional Dispatch latency candidate is a host integration artifact, not a
