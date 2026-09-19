@@ -66,6 +66,20 @@ grep -Fq '[qmldiff]: Failed to load file' "$INSTALLER"
 grep -Fq 'if [ "$MODE" != --activate ]' "$CONTROLLER"
 grep -Fq 'dry-run-dispatch-appload-latency-transaction.sh' "$CONTROLLER"
 
+# The first guarded candidate activation exposed a Bash dynamic-scope bug:
+# exact_root_file() assigned the generic name `expected` globally, replacing
+# verify_qmd_set()'s eleven-name candidate inventory with the candidate hash.
+# Exercise the real installer helpers together so a future helper refactor
+# cannot silently reintroduce that post-start false negative.
+extract_function() {
+    function_name=$1
+    awk -v function_name="$function_name" '
+        $0 ~ ("^" function_name "\\(\\) \\{") { copying=1 }
+        copying { print }
+        copying && /^}/ { exit }
+    ' "$INSTALLER"
+}
+
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/dispatch-appload-test.XXXXXX")
 cleanup() {
     status=$?
@@ -74,6 +88,45 @@ cleanup() {
     exit "$status"
 }
 trap cleanup EXIT HUP INT TERM
+
+QMD_BACKUP=/Users/mdf/code/appload-rmstream-beta/.cache/notebook-ui-repair-20260918T205836Z/safety-backup.tgz
+DATES_QMD=/Users/mdf/code/notebook-date-index/.cache/dates-navigation-20260919T111620Z/notebook-date-index.qmd
+RMSTREAM_QMD=/Users/mdf/code/appload-rmstream-beta/.cache/notebook-ui-repair-20260918T205836Z/rmstream-shortcut.qmd
+mkdir -p "$WORK/qmd-state" "$WORK/qmd-stage"
+tar -xzf "$QMD_BACKUP" -C "$WORK/qmd-state" xovi/exthome/qt-resource-rebuilder
+QMD_TEST_DIR=$WORK/qmd-state/xovi/exthome/qt-resource-rebuilder
+cp "$DATES_QMD" "$QMD_TEST_DIR/notebook-date-index.qmd"
+cp "$RMSTREAM_QMD" "$QMD_TEST_DIR/rmstream-shortcut.qmd"
+cp "$CANDIDATE" "$QMD_TEST_DIR/dispatch-appload-partial-repaint-3.28.0.169.qmd"
+cp "$BASELINE" "$WORK/qmd-stage/baseline.sha256"
+{
+    extract_function hash_file
+    extract_function exact_root_file
+    extract_function exact_owned_file
+    extract_function qmd_names
+    extract_function verify_qmd_set
+} >"$WORK/installer-qmd-functions.sh"
+(
+    # The device uses GNU stat; supply only the exact metadata forms these
+    # helpers request while retaining their real file/hash/inventory logic.
+    stat() {
+        case "$2" in
+            %u:%g) printf '0:0\n' ;;
+            %u:%g:%a) printf '0:0:600\n' ;;
+            %a) printf '644\n' ;;
+            *) return 2 ;;
+        esac
+    }
+    . "$WORK/installer-qmd-functions.sh"
+    QDIR=$QMD_TEST_DIR
+    STAGE=$WORK/qmd-stage
+    TARGET=$QDIR/dispatch-appload-partial-repaint-3.28.0.169.qmd
+    EXPECTED_DATES_QMD_SHA256=2d4681414ac00b534b2f21d179365601ce9e876c7cfbf6c6c8d25a2f8738e580
+    EXPECTED_CANDIDATE_SHA256=1eb2037f28c9891fbdc4a97d1e2916b8e923fe04004ae1ced03b5de73f59a60e
+    expected=caller-sentinel
+    verify_qmd_set candidate
+    [ "$expected" = caller-sentinel ]
+)
 
 APPLOAD=/Users/mdf/code/remarkable-device-backups/0A247209DABC7917/20260730T170508Z-3.28.0.164-pre-xovi/core/appload.so
 cp "$APPLOAD" "$WORK/wrong-appload.so"

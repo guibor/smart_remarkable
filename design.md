@@ -86,6 +86,14 @@ The candidate modules are:
   and the AppLoad window processing marker, with no QRR failed-load marker.
   HUP, INT, and TERM exit
   immediately; the EXIT handler arms rollback rather than resuming mutation.
+  All helper scratch variables are function-local. This is operationally
+  significant in Bash: the first guarded activation loaded the candidate and
+  passed the ReMagic health gate, but `exact_root_file` dynamically overwrote
+  `verify_qmd_set`'s caller-owned `expected` filename list with a SHA-256.
+  The resulting inventory comparison failed closed and correctly armed stock
+  rollback. The candidate-inventory regression now executes those real helper
+  functions together and requires both the eleven-name comparison and caller
+  variable preservation.
 - `ops/rollback-dispatch-appload-latency-candidate.sh`: stops the named
   transaction before inspecting bytes, removes only the exact candidate, and
   never deletes an unknown target. Once activation has begun it uses the
@@ -98,10 +106,13 @@ The compiled candidate is
 Offline composition in both tested load orders yields identical patched
 `window.qml` bytes
 `af8d378b319e6ad3633ae729425f5c4dbd3d385100835a7e23f90e8f7f9eafa7`.
-This is exact-firmware/offline qualification only. A separate read-only live
-preflight has matched the contract and current live preimage,
-but the candidate has not been installed by this work; guarded restart and
-physical handwriting A/B remain promotion gates.
+This is exact-firmware/offline qualification plus one failed-closed guarded
+activation. That activation loaded all eleven QMDs exactly once, processed the
+AppLoad window, held one stable Xovi-enabled `xochitl` PID with zero restarts,
+and passed the pinned ReMagic live wrapper. A device-side verifier scoping bug
+then rejected its own correct candidate inventory and the independent rollback
+restored stock mode. The candidate was not retained; a newly staged guarded
+restart and physical handwriting A/B remain promotion gates.
 
 ## Runtime flow
 

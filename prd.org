@@ -324,6 +324,13 @@
     180-second stock watchdog plus the pinned ReMagic wrapper. Require exactly
     eleven QMD load markers, the candidate filename once, the patched AppLoad
     window processing marker, zero restarts, and read-only root.
+    Transaction =20260919T112530Z-28327= reached and passed those runtime load,
+    window-processing, stable-PID, and zero-restart gates, but then failed
+    closed before commit because a Bash helper dynamically overwrote the
+    candidate verifier's expected filename list with the candidate SHA-256.
+    Stock rollback completed and the candidate was removed. A second guarded
+    attempt requires the local-scope regression and a newly reviewed stage;
+    the first attempt is runtime evidence, not installation completion.
 87. [ ] On a disposable Dispatch canvas, record the same 5-10 second
     handwriting sample before and after the host candidate; verify visibly
     lower pen latency, native coordinate alignment, clean strokes and exit,
@@ -337,6 +344,11 @@
 - The reviewed application, launcher, runner, and selection protocol are
   unchanged. Only the firmware/resource contract and compiled QMD identities
   advance; server or behavior changes are out of scope for this rebase.
+- The first Dispatch repaint activation proved the candidate's eleven-QMD
+  runtime load but exposed a shell verifier defect after the live gate. Device
+  transaction helpers must therefore keep scratch variables function-local,
+  and local qualification must execute the candidate inventory helper chain,
+  not merely grep its source or simulate the file move.
 - Deployment must preserve the separate application, inert-layout, functional,
   and physical-request gates. No =.166= QMD may be mapped on =.169=.
 

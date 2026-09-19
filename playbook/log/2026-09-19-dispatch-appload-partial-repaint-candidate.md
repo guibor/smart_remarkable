@@ -1,6 +1,7 @@
 # Dispatch/AppLoad partial repaint candidate — Paper Pro 3.28.0.169
 
-Status: **locally qualified and live-preflight eligible; not installed**.
+Status: **runtime-loaded once, then verifier-rejected and safely rolled back;
+not installed**.
 
 This record covers the full-size Paper Pro (`reMarkable Ferrari`, serial
 `0A247209DABC7917`) only. The local build and qualification made no device
@@ -112,6 +113,39 @@ metadata. Every other QMD name/hash remains unchanged and exact.
 
 This proves eligibility at that instant. It does not prove the candidate is
 installed or that handwriting is faster.
+
+## First guarded activation and exact false-negative
+
+Guarded transaction `20260919T112530Z-28327` prepared recovery at
+`/home/root/.smart-remarkable-recovery/dispatch-appload-latency/` and copied an
+off-device safety archive with SHA-256
+`adc1c016032f6fcca0109d7bc0e31f645e3597f93b3c11bb5fb47fd56c0a81de`.
+The live wrapper then reported `xovi_live_test=passed`, one stable `xochitl`
+PID `313901`, and `NRestarts=0`. Its captured journal contained exactly eleven
+QMD load markers, every ten-QMD baseline name once, the candidate once, and
+`Processing file /appload/qml/window.qml...`; no failed-load or candidate QML
+error appeared.
+
+The transaction nevertheless exited 1 immediately after the next ten baseline
+checksum lines and before writing `after.snapshot` or `committed`. The failing
+assertion was the final inventory comparison in `verify_qmd_set candidate`.
+Bash variables are dynamically scoped unless declared `local`:
+`verify_qmd_set` first assigned its eleven expected filenames to `expected`,
+then called `exact_root_file`, which assigned the candidate SHA-256 to the same
+caller-visible variable. The comparison therefore received the candidate hash
+plus filename instead of eleven filenames. The EXIT handler armed the outer
+rollback; it removed only the exact candidate and restored stock mode
+successfully. This was a verifier false-negative, not evidence of a candidate
+load or UI crash.
+
+The corrected installer makes helper scratch variables function-local. Its
+regression extracts and executes the real `hash_file`, `exact_root_file`,
+`exact_owned_file`, `qmd_names`, and `verify_qmd_set` functions against the
+exact reconstructed candidate inventory, and also proves that a caller's
+`expected` sentinel survives. Do not reuse the failed stage: the installer
+bytes and manifest change. A second activation is justified only through a
+newly reviewed, fully qualified guarded transaction; physical latency remains
+unproven until that succeeds and the user performs the A/B sample.
 
 ## Guarded promotion and rollback
 

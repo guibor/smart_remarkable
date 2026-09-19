@@ -89,21 +89,22 @@ EXPECTED_BASELINE_SHA256=1e89ad1fcde7920760ed2a7d44d892e9a0be46acc5d5e05ffaac7d0
 EXPECTED_CANDIDATE_SHA256=1eb2037f28c9891fbdc4a97d1e2916b8e923fe04004ae1ced03b5de73f59a60e
 
 hash_file() {
-    sha256sum "$1" | cut -d' ' -f1
+    local path=$1
+    sha256sum "$path" | cut -d' ' -f1
 }
 
 exact_root_file() {
-    path=$1
-    expected=$2
+    local path=$1
+    local expected=$2
     [ -f "$path" ] && [ ! -L "$path" ] || return 1
     [ "$(stat -c %u:%g "$path")" = 0:0 ] || return 1
     [ "$(hash_file "$path")" = "$expected" ] || return 1
 }
 
 exact_owned_file() {
-    path=$1
-    expected=$2
-    owner_mode=$3
+    local path=$1
+    local expected=$2
+    local owner_mode=$3
     [ -f "$path" ] && [ ! -L "$path" ] || return 1
     [ "$(stat -c %u:%g:%a "$path")" = "$owner_mode" ] || return 1
     [ "$(hash_file "$path")" = "$expected" ] || return 1
@@ -114,6 +115,7 @@ root_is_read_only() {
 }
 
 read_serial() {
+    local path
     for path in /sys/devices/soc0/serial_number /proc/device-tree/serial-number; do
         if [ -f "$path" ]; then
             tr -d '\000[:space:]' <"$path"
@@ -128,6 +130,8 @@ read_firmware() {
 }
 
 dispatch_running() {
+    local executable
+    local resolved
     for executable in /proc/[0-9]*/exe; do
         [ -L "$executable" ] || continue
         resolved=$(readlink -f "$executable" 2>/dev/null || true)
@@ -137,6 +141,10 @@ dispatch_running() {
 }
 
 verify_stage() {
+    local expected_names
+    local actual_names
+    local path
+    local listed_names
     expected_names=$(printf '%s\n' \
         SHA256SUMS \
         baseline.sha256 \
@@ -164,7 +172,9 @@ verify_stage() {
 }
 
 qmd_names() {
-    names=
+    local names=
+    local path
+    local name
     for path in "$QDIR"/* "$QDIR"/.[!.]* "$QDIR"/..?*; do
         [ -e "$path" ] || [ -L "$path" ] || continue
         name=${path##*/}
@@ -180,7 +190,8 @@ qmd_names() {
 }
 
 verify_qmd_set() {
-    mode=$1
+    local mode=$1
+    local expected
     [ -d "$QDIR" ] && [ ! -L "$QDIR" ] || return 1
     [ "$(stat -c %u:%g "$QDIR")" = 0:0 ] || return 1
     (cd "$QDIR" && sha256sum -c "$STAGE/baseline.sha256") >&2 || return 1
@@ -202,9 +213,11 @@ ${TARGET##*/}"
 }
 
 verify_extensions() {
+    local names=
+    local path
+    local name
     [ -d "$EXTENSIONS" ] && [ ! -L "$EXTENSIONS" ] || return 1
     [ "$(stat -c %u:%g "$EXTENSIONS")" = 0:0 ] || return 1
-    names=
     for path in "$EXTENSIONS"/* "$EXTENSIONS"/.[!.]* "$EXTENSIONS"/..?*; do
         [ -e "$path" ] || [ -L "$path" ] || continue
         name=${path##*/}
@@ -222,8 +235,9 @@ verify_extensions() {
 }
 
 direct_entry_names() {
-    directory=$1
-    names=
+    local directory=$1
+    local names=
+    local path
     for path in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
         [ -e "$path" ] || [ -L "$path" ] || continue
         names="${names}${path##*/}
@@ -233,7 +247,7 @@ direct_entry_names() {
 }
 
 verify_empty_hook_dir() {
-    directory=$1
+    local directory=$1
     [ -d "$directory" ] && [ ! -L "$directory" ] || return 1
     [ "$(stat -c %u:%g:%a "$directory")" = 0:0:755 ] || return 1
     [ -z "$(direct_entry_names "$directory")" ] || return 1
@@ -265,12 +279,14 @@ verify_service_tree() {
 }
 
 verify_systemd_capabilities() {
+    local help
     help=$(systemctl --help)
     printf '%s\n' "$help" | grep -F -- '--kill-whom=WHOM' >/dev/null || return 1
     printf '%s\n' "$help" | grep -F -- '--signal=SIGNAL' >/dev/null || return 1
 }
 
 no_other_mutation_active() {
+    local active
     active=$(systemctl list-units \
         --type=service --type=timer \
         --state=activating,active,deactivating \
@@ -308,7 +324,8 @@ verify_dispatch_manifest() {
 }
 
 verify_xovi_process() {
-    pid=$1
+    local pid=$1
+    local path
     [ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" = "$XOCHITL" ] || return 1
     tr '\0' '\n' <"/proc/$pid/environ" | grep -Fx "LD_PRELOAD=$XOVI" >/dev/null || return 1
     for path in "$XOVI" "$QRR" "$BROKER" "$APPLOAD" "$FRAMEBUFFER_SPY"; do
@@ -317,7 +334,8 @@ verify_xovi_process() {
 }
 
 verify_live() {
-    mode=$1
+    local mode=$1
+    local pid
     [ "$(tr -d '\000' </proc/device-tree/model)" = "$EXPECTED_MODEL" ]
     [ "$(read_serial)" = "$EXPECTED_SERIAL" ]
     [ "$(read_firmware)" = "$EXPECTED_FIRMWARE" ]
@@ -352,7 +370,7 @@ verify_live() {
 }
 
 snapshot() {
-    mode=$1
+    local mode=$1
     verify_live "$mode"
     printf 'model=%s\n' "$EXPECTED_MODEL"
     printf 'serial=%s\nfirmware=%s\nbuild=%s\n' "$EXPECTED_SERIAL" "$EXPECTED_FIRMWARE" "$EXPECTED_BUILD"
@@ -369,9 +387,9 @@ snapshot() {
 }
 
 write_marker() {
-    destination=$1
-    content=$2
-    temporary="$RECOVERY/.marker.$$.tmp"
+    local destination=$1
+    local content=$2
+    local temporary="$RECOVERY/.marker.$$.tmp"
     printf '%s\n' "$content" >"$temporary"
     chown root:root "$temporary"
     chmod 0600 "$temporary"
@@ -379,7 +397,7 @@ write_marker() {
 }
 
 ensure_private_dir() {
-    directory=$1
+    local directory=$1
     if [ -e "$directory" ] || [ -L "$directory" ]; then
         [ -d "$directory" ] && [ ! -L "$directory" ] || return 1
         [ "$(readlink -f "$directory")" = "$directory" ] || return 1
