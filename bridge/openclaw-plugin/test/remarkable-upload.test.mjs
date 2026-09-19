@@ -10,6 +10,9 @@ import {
   REMARKABLE_CLEAR_ORIGIN_METHOD,
   REMARKABLE_PLUGIN_ID,
   REMARKABLE_PLUGIN_VERSION,
+  REMARKABLE_DISPATCH_POLICY_VERSION,
+  REMARKABLE_MODEL_POLICY,
+  REMARKABLE_SUPPLEMENTAL_ATTACHMENT_ROLES,
   REMARKABLE_RESPONSE_PDF_DESTINATION,
   REMARKABLE_RESPONSE_PDF_METHOD,
   REMARKABLE_RESPONSE_PDF_POLICY,
@@ -19,7 +22,7 @@ import {
   REMARKABLE_UPLOAD_TOOL,
   createOriginAdmissionRegistry,
   createOriginBindingHandlers,
-  createRemarkableOriginHooks,
+  createRemarkableOriginHooks as createOriginHooksWithPolicy,
   createRemarkableUploadTool,
   registerRemarkableOriginHooks,
   registerRemarkableOriginMethods,
@@ -28,6 +31,11 @@ import {
   RUN_CONTEXT_CONTROL_STREAM,
   createRunContextControl,
 } from "../run-context-control.mjs";
+import { dispatchPolicyFixture } from "./dispatch-policy-fixture.mjs";
+
+function createRemarkableOriginHooks(options) {
+  return createOriginHooksWithPolicy({ dispatchPolicy: dispatchPolicyFixture, ...options });
+}
 
 const REQUEST_ID = "smart-remarkable-upload-test-0001";
 const OTHER_REQUEST_ID = "smart-remarkable-upload-test-0002";
@@ -391,6 +399,9 @@ test("registers exact side-effect-free capability, bind, and clear methods", asy
     originProtocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
     inputContextVersions: [...REMARKABLE_INPUT_CONTEXT_VERSIONS],
     attachmentRoles: [...REMARKABLE_ATTACHMENT_ROLES],
+    supplementalAttachmentRoles: [...REMARKABLE_SUPPLEMENTAL_ATTACHMENT_ROLES],
+    dispatchPolicyVersion: REMARKABLE_DISPATCH_POLICY_VERSION,
+    modelPolicy: REMARKABLE_MODEL_POLICY,
     selectionKinds: [...REMARKABLE_SELECTION_KINDS],
     responsePdfMethod: REMARKABLE_RESPONSE_PDF_METHOD,
     responsePdfPolicy: REMARKABLE_RESPONSE_PDF_POLICY,
@@ -764,6 +775,8 @@ test("prompt guidance trusts only an exact admitted run and transcript", async (
     `[${REMARKABLE_RUN_CONTEXT_NAMESPACE} request_id=${REQUEST_ID}]\n` +
     "Please export a document.";
   const exactContext = {
+    modelProviderId: "openai",
+    modelId: "gpt-6-astra",
     runId: REQUEST_ID,
     agentId: "main",
     sessionKey: "agent:main:main",
@@ -797,7 +810,7 @@ test("prompt guidance trusts only an exact admitted run and transcript", async (
     exactContext,
   );
   assert.match(result.appendSystemContext, /came from.*reMarkable/i);
-  assert.match(result.appendSystemContext, /WhatsApp only/i);
+  assert.match(result.appendSystemContext, /WhatsApp and an automatic response PDF, without typing into the notebook/i);
   assert.match(
     result.appendSystemContext,
     /authenticated selection kind is image/i,
@@ -920,6 +933,8 @@ test("before-agent gate blocks every unauthenticated Smart reMarkable run", asyn
   const runContext = new FakeHostRunContext();
   const hooks = createRemarkableOriginHooks({ admissionRegistry, runContext });
   const exactContext = {
+    modelProviderId: "openai",
+    modelId: "gpt-6-astra",
     runId: REQUEST_ID,
     agentId: "main",
     sessionKey: "agent:main:main",
@@ -976,6 +991,99 @@ test("before-agent gate blocks every unauthenticated Smart reMarkable run", asyn
     { outcome: "pass" },
   );
   assert.equal(readStoredTestOrigin(runContext).state, "active");
+});
+
+test("model override is per authenticated run and rejects absent, expired, or rotated authority", async () => {
+  let at = 10_000;
+  const admissionRegistry = createTestAdmissionRegistry({ now: () => at });
+  const runContext = new FakeHostRunContext();
+  const handlers = createOriginBindingHandlers({ admissionRegistry, runContext, now: () => at });
+  const hooks = createRemarkableOriginHooks({ admissionRegistry, runContext, now: () => at });
+  const context = {
+    runId: REQUEST_ID, agentId: "main", sessionKey: "agent:main:main", sessionId: SESSION_ID,
+  };
+  assert.equal(hooks.beforeModelResolve({}, context), undefined);
+  const bound = await invokeGateway(handlers.bind, {
+    protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE,
+    requestId: REQUEST_ID, mode: "write_back", selectionKind: "ink", expectedSessionId: SESSION_ID,
+  });
+  assert.equal(bound.ok, true);
+  const before = readStoredTestOrigin(runContext);
+  const expected = { modelOverride: "gpt-6-astra", providerOverride: "openai" };
+  assert.deepEqual(hooks.beforeModelResolve({}, context), expected);
+  assert.deepEqual(readStoredTestOrigin(runContext), before, "model selection must not activate or mutate origin state");
+  for (const changes of [
+    { runId: "ordinary-whatsapp-run" }, { runId: OTHER_REQUEST_ID },
+    { agentId: "other" }, { sessionKey: "agent:main:other" },
+    { sessionId: OTHER_SESSION_ID }, { sessionId: undefined },
+  ]) {
+    assert.equal(hooks.beforeModelResolve({}, { ...context, ...changes }), undefined);
+  }
+  hooks.beforePromptBuild({}, context);
+  assert.deepEqual(hooks.beforeModelResolve({}, context), expected);
+  at = readStoredTestOrigin(runContext).expiresAt;
+  assert.equal(hooks.beforeModelResolve({}, context), undefined);
+});
+
+test("agent gate requires proof of the selected shared model and never silently falls back", async () => {
+  const admissionRegistry = createTestAdmissionRegistry();
+  const runContext = new FakeHostRunContext();
+  await bindOrigin(admissionRegistry, runContext);
+  const hooks = createRemarkableOriginHooks({ admissionRegistry, runContext });
+  const context = {
+    runId: REQUEST_ID, agentId: "main", sessionKey: "agent:main:main", sessionId: SESSION_ID,
+    modelProviderId: "openai", modelId: "gpt-6-astra",
+  };
+  const prompt = hooks.beforePromptBuild({}, context);
+  const event = { systemPrompt: prompt.appendSystemContext };
+  assert.deepEqual(hooks.beforeAgentRun(event, context), { outcome: "pass" });
+  for (const changes of [
+    { modelProviderId: undefined }, { modelId: undefined },
+    { modelProviderId: "other" }, { modelId: "gpt-5" },
+  ]) {
+    assert.equal(hooks.beforeAgentRun(event, { ...context, ...changes }).outcome, "block");
+  }
+  assert.deepEqual(hooks.beforeAgentRun({}, { runId: "ordinary-whatsapp-run" }), { outcome: "pass" });
+});
+
+test("shared guidance uses stable origin receipt time and preserves destination differences", async () => {
+  for (const [mode, destination] of [["write_back", "response"], ["whatsapp_only", "whatsapp"]]) {
+    let at = 1_000;
+    const admissionRegistry = createTestAdmissionRegistry({ now: () => at });
+    const runContext = new FakeHostRunContext();
+    const handlers = createOriginBindingHandlers({ admissionRegistry, runContext, now: () => at });
+    const bound = await invokeGateway(handlers.bind, {
+      protocol: REMARKABLE_RUN_CONTEXT_NAMESPACE, requestId: REQUEST_ID,
+      mode, selectionKind: "ink", expectedSessionId: SESSION_ID,
+    });
+    assert.equal(bound.ok, true);
+    const calls = [];
+    const policy = {
+      ...dispatchPolicyFixture,
+      buildRemarkableAgentGuidance: (input) => {
+        calls.push(input);
+        return dispatchPolicyFixture.buildRemarkableAgentGuidance(input);
+      },
+    };
+    const hooks = createRemarkableOriginHooks({ admissionRegistry, runContext, dispatchPolicy: policy, now: () => at });
+    const context = {
+      runId: REQUEST_ID, agentId: "main", sessionKey: "agent:main:main", sessionId: SESSION_ID,
+      modelProviderId: "openai", modelId: "gpt-6-astra",
+    };
+    at = 2_000;
+    const first = hooks.beforePromptBuild({}, context).appendSystemContext;
+    at = 3_000;
+    assert.deepEqual(hooks.beforeAgentRun({ systemPrompt: first }, context), { outcome: "pass" });
+    const second = hooks.beforePromptBuild({}, context).appendSystemContext;
+    assert.equal(first, second);
+    assert.ok(calls.length >= 3);
+    assert.ok(calls.every(input => input.receivedAt.getTime() === 1_000 && input.destination === destination));
+    assert.ok(calls.every(input => input.originalLabel === "remarkable-selection.png"));
+    assert.ok(calls.every(input => input.enhancedLabels[0] === "remarkable-selection-enhanced.png (when present)"));
+    if (mode === "write_back") assert.match(first, /editable plain text/u);
+    else assert.doesNotMatch(first, /editable plain text/u);
+    assert.match(first, /automatically renders/u);
+  }
 });
 
 test("before-agent gate blocks when prompt-hook activation storage fails", async () => {
@@ -1409,13 +1517,14 @@ test("event-backed run context crosses dead plugin registries end to end", async
     hooks.set(name, { handler, options });
   };
   registerRemarkableOriginHooks(hookApi, {
+    dispatchPolicy: dispatchPolicyFixture,
     admissionRegistry,
     runContext: hookRunContext,
     now: () => at,
   });
   assert.deepEqual(
     [...hooks.values()].map(({ options }) => options),
-    [{ priority: 100 }, { priority: 100 }, { priority: 100 }],
+    [{ priority: 100 }, { priority: 100 }, { priority: 100 }, { priority: 100 }],
   );
 
   const bind = await invokeGateway(
@@ -1430,6 +1539,8 @@ test("event-backed run context crosses dead plugin registries end to end", async
   );
   assert.equal(bind.ok, true);
   const hookContext = {
+    modelProviderId: "openai",
+    modelId: "gpt-6-astra",
     runId: REQUEST_ID,
     agentId: "main",
     sessionKey: "agent:main:main",
@@ -1846,7 +1957,7 @@ test("manifest declares the document tool contract", async () => {
       "utf8",
     ),
   );
-  assert.equal(manifest.version, "0.5.0");
+  assert.equal(manifest.version, "0.6.0");
   const packageMetadata = JSON.parse(
     await fs.readFile(new URL("../package.json", import.meta.url), "utf8"),
   );

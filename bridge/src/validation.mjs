@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { DISPATCH_POLICY_VERSION } from "./dispatch-input.mjs";
 import { HttpError } from "./errors.mjs";
 import { RESPONSE_ENVELOPE_PROTOCOL_VERSION } from "./response-envelope.mjs";
 import {
@@ -349,6 +350,8 @@ export function validateOpenAiBody(
     .update(RESPONSE_ENVELOPE_PROTOCOL_VERSION)
     .update("\0")
     .update(SOURCE_PROVENANCE_PROTOCOL_VERSION)
+    .update("\0")
+    .update(DISPATCH_POLICY_VERSION)
     .digest("hex");
   return Object.freeze(selection);
 }

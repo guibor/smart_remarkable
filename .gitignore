@@ -1,5 +1,7 @@
 /target
 /tmp
+/.cache
+/bridge/node_modules
 /.env
 .aider*
 

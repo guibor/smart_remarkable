@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
   CANONICAL_AGENT_ID,
@@ -188,7 +189,13 @@ test("registers one operator.write Gateway method", () => {
   assert.deepEqual(registrations[0].options, { scope: "operator.write" });
 });
 
-test("the real plugin entry registers without requesting restricted keyed state", () => {
+test("the real plugin entry registers without requesting restricted keyed state", (t) => {
+  const oldModule = process.env.SMART_REMARKABLE_DISPATCH_POLICY_MODULE;
+  process.env.SMART_REMARKABLE_DISPATCH_POLICY_MODULE = fileURLToPath(new URL("./dispatch-policy-fixture.mjs", import.meta.url));
+  t.after(() => {
+    if (oldModule === undefined) delete process.env.SMART_REMARKABLE_DISPATCH_POLICY_MODULE;
+    else process.env.SMART_REMARKABLE_DISPATCH_POLICY_MODULE = oldModule;
+  });
   const store = new FakeStore();
   const runtime = fakeRuntime(store);
   let restrictedStateCalls = 0;
@@ -288,11 +295,11 @@ test("the real plugin entry registers without requesting restricted keyed state"
   });
   assert.deepEqual(
     hooks.map((entry) => entry.name),
-    ["before_agent_run", "before_prompt_build", "before_tool_call"],
+    ["before_model_resolve", "before_agent_run", "before_prompt_build", "before_tool_call"],
   );
   assert.deepEqual(
     hooks.map((entry) => entry.options),
-    [{ priority: 100 }, { priority: 100 }, { priority: 100 }],
+    [{ priority: 100 }, { priority: 100 }, { priority: 100 }, { priority: 100 }],
   );
 });
 
@@ -469,7 +476,7 @@ test("independent file-journal handlers cannot enqueue the same delivery twice",
   assert.equal(firstInvocation.responses[0].ok, true);
 });
 
-test("derives the fixed direct WhatsApp route and omits all mirror/session fields", async () => {
+test("derives the fixed direct WhatsApp route with explicit owner but no transcript mirror", async () => {
   const { calls, handler } = handlerFixture();
   const response = await call(handler);
 
@@ -488,7 +495,7 @@ test("derives the fixed direct WhatsApp route and omits all mirror/session field
   assert.equal(calls[0].durability, "required");
   assert.deepEqual(calls[0].gatewayClientScopes, ["operator.write"]);
   assert.equal(Object.hasOwn(calls[0], "mirror"), false);
-  assert.equal(Object.hasOwn(calls[0], "session"), false);
+  assert.deepEqual(calls[0].session, { agentId: CANONICAL_AGENT_ID });
   assert.equal(Object.hasOwn(calls[0], "idempotencyKey"), false);
   assert.equal(JSON.stringify(response).includes("+15551234567"), false);
   assert.equal(JSON.stringify(response).includes("personal"), false);
@@ -501,6 +508,38 @@ test("rejects route overrides and all other unknown params before delivery", asy
   assert.equal(response.error.code, "INVALID_REQUEST");
   assert.equal(calls.length, 0);
 });
+
+test("reads the OpenClaw 2026.9.5 external delivery union without a legacy origin", async () => {
+  const { calls, handler, runtime } = handlerFixture();
+  const readLegacy = runtime.agent.session.getSessionEntry;
+  runtime.agent.session.getSessionEntry = (params) => {
+    const entry = readLegacy(params);
+    return { chatType: entry.chatType, delivery: { kind: "external", origin: entry.origin } };
+  };
+  assert.equal((await call(handler)).ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].to, "+15551234567");
+  assert.equal(calls[0].accountId, "personal");
+  assert.deepEqual(calls[0].session, { agentId: CANONICAL_AGENT_ID });
+});
+
+for (const [label, delivery] of [
+  ["internal", { kind: "internal" }],
+  ["null", null],
+  ["missing-origin", { kind: "external" }],
+  ["group", { kind: "external", origin: { provider: "whatsapp", chatType: "group", to: "123@g.us", accountId: "personal" } }],
+  ["threaded", { kind: "external", origin: { provider: "whatsapp", chatType: "direct", to: "+15551234567", accountId: "personal", threadId: "thread" } }],
+  ["other-channel", { kind: "external", origin: { provider: "telegram", chatType: "direct", to: "123", accountId: "personal" } }],
+]) {
+  test(`modern ${label} delivery never falls back to a stale legacy route`, async () => {
+    const { calls, handler, runtime, store } = handlerFixture();
+    const readLegacy = runtime.agent.session.getSessionEntry;
+    runtime.agent.session.getSessionEntry = (params) => ({ ...readLegacy(params), delivery });
+    assert.equal((await call(handler)).ok, false);
+    assert.equal(calls.length, 0);
+    assert.equal(store.values.size, 0);
+  });
+}
 
 for (const [label, origin] of [
   [

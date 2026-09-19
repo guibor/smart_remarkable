@@ -2,6 +2,15 @@
 
 ## Modules
 
+- `openclaw-plugin/dispatch-policy.mjs` is the strict server-side loader for the
+  same compiled `remarkable-agent-policy` module Dispatch uses. Its configurable
+  module path contains no credential and never comes from a tablet request.
+- `src/dispatch-input.mjs` adapts shared in-memory handwriting enhancement to
+  fixed-name Gateway attachments; `prepareDispatchAttachments` preserves both
+  input images, adds at most one ink-only derivative, and falls back to originals
+  on enhancement failure. `buildDispatchAttachmentContext` identifies the
+  derivative as non-authoritative context. Policy v1 enters the fingerprint and
+  plugin 0.6.0 capability gate, preventing silent mixed-policy operation.
 - `src/main.mjs` is the process entry point. It loads validated configuration,
   imports the official Gateway client, connects, prepares the persistent
   request journal, then opens the HTTP listener and performs orderly shutdown.

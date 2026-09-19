@@ -3,13 +3,15 @@ import { loadConfig } from "./config.mjs";
 import { createGatewayConnection } from "./gateway-connection.mjs";
 import { createHttpServer } from "./http-server.mjs";
 import { createBridgeSelectionService } from "./service-runtime.mjs";
+import { loadDispatchPolicy } from "../openclaw-plugin/dispatch-policy.mjs";
 
 const config = loadConfig();
 const gateway = await createGatewayConnection({
   GatewayClient,
   config,
 });
-const service = await createBridgeSelectionService({ gateway, config });
+const dispatchPolicy = loadDispatchPolicy();
+const service = await createBridgeSelectionService({ gateway, config, dispatchPolicy });
 const server = createHttpServer({
   service,
   bridgeToken: config.bridgeToken,

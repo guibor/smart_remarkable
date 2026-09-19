@@ -7,6 +7,9 @@ export const RUN_CONTEXT_CONTROL_SUBSCRIPTION_ID =
 export const DEFAULT_MAX_RUN_CONTEXT_CONTROL_COMMANDS = 128;
 
 const PLUGIN_ID = "smart-remarkable-delivery";
+// Control events belong only to the same fixed main session as the origin gate.
+// The host needs explicit ownership when more than one agent is configured.
+const CANONICAL_SESSION_KEY = "agent:main:main";
 const RUN_ID_PATTERN =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const NAMESPACE_PATTERN =
@@ -137,6 +140,11 @@ export function createRunContextControl({
     const opId = event?.data?.opId;
     if (
       event?.stream !== RUN_CONTEXT_CONTROL_STREAM ||
+      // OpenClaw hides this public field for non-UI-visible active runs.
+      // The same-instance private opId + exact runId remain the authority;
+      // reject a conflicting visible owner, but allow host redaction.
+      (event?.sessionKey !== undefined &&
+        event.sessionKey !== CANONICAL_SESSION_KEY) ||
       event?.data?.pluginId !== PLUGIN_ID ||
       typeof opId !== "string" ||
       !OPERATION_ID_PATTERN.test(opId) ||
@@ -233,6 +241,7 @@ export function createRunContextControl({
     try {
       const emitted = api.agent.events.emitAgentEvent({
         runId: command.runId,
+        sessionKey: CANONICAL_SESSION_KEY,
         stream: RUN_CONTEXT_CONTROL_STREAM,
         data: { opId },
       });

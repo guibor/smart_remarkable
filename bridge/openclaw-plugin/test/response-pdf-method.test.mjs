@@ -11,10 +11,15 @@ import {
   REMARKABLE_RUN_CONTEXT_NAMESPACE,
   createOriginAdmissionRegistry,
   createOriginBindingHandlers,
-  createRemarkableOriginHooks,
+  createRemarkableOriginHooks as createOriginHooksWithPolicy,
   createRemarkableResponsePdfHandler,
   registerRemarkableResponsePdfMethod,
 } from "../remarkable-upload.mjs";
+import { dispatchPolicyFixture } from "./dispatch-policy-fixture.mjs";
+
+function createRemarkableOriginHooks(options) {
+  return createOriginHooksWithPolicy({ dispatchPolicy: dispatchPolicyFixture, ...options });
+}
 
 const REQUEST_ID = "smart-remarkable-response-pdf-test-0001";
 const OTHER_REQUEST_ID = "smart-remarkable-response-pdf-test-0002";

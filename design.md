@@ -1,5 +1,90 @@
 # Design
 
+## Shared Dispatch interpretation (2026-09-19)
+
+**Deployment status:** prepared and tested locally, not active. The installed
+Codex 2026.9.5 harness never calls `before_agent_run`; its prompt hooks catch
+errors and continue. The plugin's final model/session/guidance gate therefore
+cannot protect this harness today. All candidate deployments were rolled back,
+and the Pro remains unmodified. A separately reviewed runtime fix and negative
+pre-inference acceptance test are required before release; this is not waived
+because normal positive replies can succeed.
+
+Both lasso destinations use the server's `remarkable-agent-policy` module,
+owned by the anki-server repository and also called by Dispatch. This shares
+literal-first reading, English/French/Hebrew handling, bounded image enhancement,
+and Astra/low defaults. The two network adapters remain separate: Smart retains
+its authenticated origin binding, canonical-session attribution, durable receipts
+and guarded notebook insertion. It never impersonates Dispatch's HTTP source.
+
+`bridge/openclaw-plugin/dispatch-policy.mjs` loads and validates the configured
+server module. `beforeModelResolve` applies its model only to the exact admitted
+Smart run; normal WhatsApp runs and main-session defaults are unchanged.
+`beforeAgentRun` verifies that the selected model and authenticated prompt match.
+`bridge/src/dispatch-input.mjs` calls the shared buffer-only image processor for
+ink, retaining the original and same-frame page context and optionally attaching
+one clearly labelled derived readability view. Decoder failure retains originals.
+No additional image is captured or saved on the tablet.
+
+OpenClaw 2026.9.5 compatibility is explicit: private run-context control events
+carry the fixed `agent:main:main` session owner, and the synchronous receipt
+handler rejects any explicit conflicting owner. The host deliberately redacts
+that field on private, non-UI run events, so an absent owner is permitted only
+with the same-instance private operation ID, exact run ID, plugin attribution
+and synchronous receipt/read-back checks intact. WhatsApp routing accepts the current
+`SessionEntry.delivery.kind === external` union's origin; legacy origin is
+usable only when the new delivery field is absent, never as a fallback from a
+malformed or internal current route. The bounded recipient, direct-chat and
+no-thread checks remain unchanged. Native outbound sends carry an explicit
+main-agent owner rather than relying on a multi-agent default; no session key
+or transcript mirror is supplied to that delivery call.
+
+`bridge/src/config.mjs` also retains the deployed session-store migration
+compatibility: an existing legacy canonical WhatsApp origin remains authoritative.
+Only when the legacy sessions file is absent may configuration derive the route
+from enabled WhatsApp self-chat with allowlist policy and exactly one valid owner.
+Recipient/session overrides remain forbidden. This release ports the existing
+live configuration logic into this branch without changing that live file.
+
+Plugin 0.6.0 advertises the shared policy and supplemental-image contract. The
+bridge's readiness check and request fingerprint require that generation. The
+client binary and exact-firmware QMD do not change for this server-side feature.
+Pro activation is a guarded twelve-to-twelve QMD swap. Move remains a separate
+capture/input/launcher port; its display is not compatible with the Pro worker.
+
+The release controllers keep server and tablet activation independent:
+
+- `ops/stage-dispatch-parity.mjs` packages individually hashed server files
+  against freshly read preimages and the protected Dispatch filename release.
+- `ops/deploy-dispatch-parity-server.mjs` seals candidates and preimages,
+  requires a verified off-host backup, and arms a separate rollback timer.
+  `restartServicesInOrder()` waits up to 180 seconds for the Gateway's
+  loopback `/startupz` endpoint to report `ok: true, status: started` before
+  starting the bridge, then gives authenticated capability health its own
+  90-second window. An open TCP port is insufficient because the Gateway may
+  still be initializing its WebSocket handling. Actual delivery acceptance
+  remains a separate check.
+  `confirmRollback()` may close an interrupted recovery only after every
+  original hash and service health agree, without another restart.
+  Gateway stop/restart clients wait up to 90 seconds, exceeding the installed
+  unit's normal 60-second graceful shutdown budget; readiness is checked
+  separately after the service command completes.
+- `ops/dispatch-parity-canary.mjs` sends a generated, non-personal test card
+  through each output mode and checks WhatsApp and cloud-PDF receipts. It
+  cannot demonstrate handwriting capture or physical notebook insertion.
+- `ops/check-dispatch-whatsapp-ready.mjs` uses the existing authenticated
+  Gateway client for read-only `channels.status` snapshots with probing disabled.
+  `parseWhatsappReadiness()` checks only the exact configured account and optional
+  event-loop health. `waitForWhatsappReady()` requires three healthy snapshots
+  five seconds apart within a bounded 90-second window; reconnects reset the
+  streak. Output contains only booleans, never recipient or account details.
+- `ops/deploy-smart-functional.sh` promotes only the Pro's existing inert
+  Smart QMD after server acceptance. Its device controller preserves the
+  other eleven QMDs, settings and installed worker. Independent rollback
+  proves installer descendants have stopped before restoring the inert QMD,
+  then verifies the same stock process incarnation across five further
+  one-second samples with no XOVI mappings or automatic restarts.
+
 Smart Remarkable is a user-space assistant that leaves reMarkable's stock `xochitl` process running. It reads the current framebuffer from `xochitl`, sends a normalized screenshot to the user's OpenClaw agent, and returns the result through virtual pen, touch, or keyboard devices backed by the kernel's existing `/dev/uinput` support. The production listener supports `pen-release` for one-shot/automatic sessions and `pen-hold` for explicit sessions; hold timing, normalized jitter radius, and minimum lasso extent are validated configuration values. A hold is classified only on lift, contacts begun while busy stay ineligible, and xochitl's detected marquee remains the final proof of a real lasso.
 
 ## Dispatch document-menu shortcut
@@ -1915,3 +2000,22 @@ The deployment path remains deliberately split: install the application
 contract under stock xochitl, qualify AppLoad and seven package hooks under
 the independent watchdog, promote only the inert Smart QMD, require physical
 layout acceptance, and only then admit the functional QMD.
+
+## Shared-policy captured-loader preflight
+
+`ops/check-dispatch-policy-loader.mjs` checks staged policy and adapter bytes
+against the installed OpenClaw module loader before any Gateway activation.
+It creates a private temporary adapter package and service mirror, preserving
+the service's real package manifest and dependency lookup. A minimal isolated
+instance exercises `bindPluginInstanceModuleLoader` and its native source-capture
+hooks without creating a plugin registry, reading credentials, starting services,
+or making model calls. Both response destinations receive a fixed synthetic
+guidance smoke check. Resolver hooks and temporary sources are always disposed.
+
+This is necessary because OpenClaw 2026.9.5 relocates plugin dependencies into
+a captured source tree. Eager Sharp loading can then lose the native libvips
+shared-library relationship even when ordinary Node and JITI imports succeed.
+The Gateway's policy-only path must not load native image processing; the
+plain-Node bridge owns enhancement. This preflight validates policy loading,
+not full plugin registration, hook permissions, Gateway startup, or end-to-end
+device delivery; those remain separate deployment gates.

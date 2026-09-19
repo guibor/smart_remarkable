@@ -111,6 +111,7 @@ export function createCapabilityReadiness({ gateway, timeoutMs }) {
 export async function createBridgeSelectionService({
   gateway,
   config,
+  dispatchPolicy,
   logger = console,
 }) {
   const requestJournal = createRequestJournal({
@@ -131,6 +132,7 @@ export async function createBridgeSelectionService({
   return new SelectionService({
     gateway,
     config,
+    dispatchPolicy,
     requestJournal,
     capabilityReadiness,
     logger,

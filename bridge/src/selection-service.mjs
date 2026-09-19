@@ -1,4 +1,5 @@
 import { HttpError } from "./errors.mjs";
+import { prepareDispatchAttachments, buildDispatchAttachmentContext } from "./dispatch-input.mjs";
 import {
   buildPostAcceptanceErrorResponse,
   buildSuccessResponse,
@@ -272,11 +273,13 @@ function promptWithResponseProtocol(
   promptText,
   selectionKind,
   captureContext,
+  attachments,
 ) {
   return [
     promptText,
     buildCaptureManifest(captureContext),
     SMART_REMARKABLE_TRANSPORT_CONTEXT_INSTRUCTION,
+    buildDispatchAttachmentContext(attachments),
     buildResponseEnvelopeProtocolInstruction(selectionKind),
   ].join("\n\n");
 }
@@ -298,6 +301,7 @@ export class SelectionService {
   constructor({
     gateway,
     config,
+    dispatchPolicy,
     requestJournal,
     capabilityReadiness,
     logger = console,
@@ -319,6 +323,7 @@ export class SelectionService {
     }
     this.gateway = gateway;
     this.config = config;
+    this.dispatchPolicy = dispatchPolicy;
     this.requestJournal = requestJournal;
     this.capabilityReadiness = capabilityReadiness;
     this.logger = logger;
@@ -906,6 +911,11 @@ export class SelectionService {
       );
       job.originBound = true;
 
+      if (!this.dispatchPolicy) {
+        throw new Error("Shared Dispatch policy is unavailable");
+      }
+      const attachments = await prepareDispatchAttachments(selection, this.dispatchPolicy);
+
       const requestPromise = this.#requestForJob(
         job,
         "chat.send",
@@ -914,10 +924,12 @@ export class SelectionService {
           agentId: this.config.agentId,
           expectedSessionRoutingContract:
             this.config.expectedSessionRoutingContract,
+          thinking: this.dispatchPolicy.REMARKABLE_AGENT_DEFAULT_THINKING,
           message: promptWithResponseProtocol(
             selection.promptText,
             job.selectionKind,
             selection.captureContext,
+            attachments,
           ),
           deliver: false,
           suppressCommandInterpretation: true,
@@ -926,20 +938,7 @@ export class SelectionService {
           originatingAccountId: this.config.whatsappAccountId,
           systemInputProvenance:
             SMART_REMARKABLE_SYSTEM_INPUT_PROVENANCE,
-          attachments: [
-            {
-              type: "image",
-              mimeType: "image/png",
-              fileName: "remarkable-selection.png",
-              content: selection.selectionImageBase64,
-            },
-            {
-              type: "image",
-              mimeType: "image/png",
-              fileName: "remarkable-current-page.png",
-              content: selection.currentPageImageBase64,
-            },
-          ],
+          attachments,
           timeoutMs: this.config.runTimeoutMs,
           idempotencyKey: job.requestId,
         },

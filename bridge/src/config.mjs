@@ -45,6 +45,23 @@ function readJson(filePath, description) {
   }
 }
 
+function readOptionalJson(filePath, description) {
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw new Error(`${description} is not readable: ${filePath}`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`${description} is not valid JSON: ${filePath}`);
+  }
+}
+
 function resolveBridgeToken(env, defaultTokenPath) {
   const inline = env.SMART_REMARKABLE_BRIDGE_TOKEN?.trim();
   if (inline) {
@@ -114,7 +131,7 @@ function resolveIntendedSessionRoutingContract(openclawConfig) {
   return contract;
 }
 
-function resolveWhatsappRoute(env, sessionsPath) {
+function resolveWhatsappRoute(env, sessionsPath, openclawConfig) {
   if (
     env.OPENCLAW_WHATSAPP_TO?.trim() ||
     env.OPENCLAW_WHATSAPP_ACCOUNT_ID?.trim()
@@ -124,7 +141,32 @@ function resolveWhatsappRoute(env, sessionsPath) {
     );
   }
 
-  const sessions = readJson(sessionsPath, "OpenClaw main-agent sessions");
+  const sessions = readOptionalJson(
+    sessionsPath,
+    "OpenClaw main-agent sessions",
+  );
+  if (!sessions) {
+    const whatsapp = openclawConfig?.channels?.whatsapp;
+    const allowFrom = whatsapp?.allowFrom;
+    if (
+      whatsapp?.enabled !== true ||
+      whatsapp?.dmPolicy !== "allowlist" ||
+      whatsapp?.selfChatMode !== true ||
+      !Array.isArray(allowFrom) ||
+      allowFrom.length !== 1 ||
+      typeof allowFrom[0] !== "string" ||
+      !/^\+[1-9]\d{6,14}$/.test(allowFrom[0].trim())
+    ) {
+      throw new Error(
+        "OpenClaw must configure exactly one E.164 self-chat WhatsApp owner when the legacy session map is absent",
+      );
+    }
+    return {
+      whatsappTo: allowFrom[0].trim(),
+      whatsappAccountId: "default",
+      routeSource: "single-owner-whatsapp-config",
+    };
+  }
   const mainSession = sessions?.["agent:main:main"];
   const origin = mainSession?.origin;
   if (!origin || typeof origin !== "object") {
@@ -239,7 +281,7 @@ export function loadConfig(env = process.env) {
     openclawConfigPath,
   );
   const { whatsappTo, whatsappAccountId, routeSource } =
-    resolveWhatsappRoute(env, openclawSessionsPath);
+    resolveWhatsappRoute(env, openclawSessionsPath, openclawConfig);
   const host = (env.SMART_REMARKABLE_BRIDGE_HOST ?? "127.0.0.1").trim();
   if (!LOOPBACK_HOSTS.has(host)) {
     throw new Error(

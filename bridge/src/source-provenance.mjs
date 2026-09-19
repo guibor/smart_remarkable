@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { DISPATCH_POLICY_VERSION } from "./dispatch-input.mjs";
 
 export const SOURCE_PROVENANCE_PROTOCOL_VERSION =
   "smart-remarkable-origin-v5";
@@ -11,7 +12,7 @@ export const ORIGIN_CLEAR_METHOD = "smart_remarkable.clear_origin";
 export const RESPONSE_PDF_METHOD =
   "smart_remarkable.deliver_response_pdf";
 export const OPENCLAW_PLUGIN_ID = "smart-remarkable-delivery";
-export const OPENCLAW_PLUGIN_VERSION = "0.5.0";
+export const OPENCLAW_PLUGIN_VERSION = "0.6.0";
 export const RESPONSE_PDF_POLICY = "response-pdf-cloud-v1";
 export const RESPONSE_PDF_DESTINATION = "remarkable_cloud";
 export const SMART_REMARKABLE_ATTACHMENT_ROLES = Object.freeze([
@@ -66,6 +67,11 @@ export function verifyPluginCapabilities(result) {
     result?.status !== "ready" ||
     result?.pluginId !== OPENCLAW_PLUGIN_ID ||
     result?.pluginVersion !== OPENCLAW_PLUGIN_VERSION ||
+    result?.dispatchPolicyVersion !== DISPATCH_POLICY_VERSION ||
+    result?.modelPolicy !== "authenticated-run-override-v1" ||
+    !Array.isArray(result?.supplementalAttachmentRoles) ||
+    result.supplementalAttachmentRoles.length !== 1 ||
+    result.supplementalAttachmentRoles[0] !== "selection_enhanced" ||
     result?.originProtocol !== SOURCE_PROVENANCE_PROTOCOL_VERSION ||
     result?.responsePdfMethod !== RESPONSE_PDF_METHOD ||
     result?.responsePdfPolicy !== RESPONSE_PDF_POLICY ||

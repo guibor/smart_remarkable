@@ -215,6 +215,59 @@ test("loads Gateway auth and direct WhatsApp route from canonical OpenClaw files
   }
 });
 
+test("loads the sole self-chat WhatsApp owner after SQLite migration removes the legacy session map", () => {
+  const temporaryHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), "smart-remarkable-bridge-sqlite-route-"),
+  );
+  const configPath = path.join(temporaryHome, "openclaw.json");
+  const sessionsPath = path.join(temporaryHome, "missing-sessions.json");
+  const baseConfig = {
+    gateway: { auth: { token: "canonical-gateway-token" } },
+    channels: {
+      whatsapp: {
+        enabled: true,
+        dmPolicy: "allowlist",
+        selfChatMode: true,
+        allowFrom: ["+15551234567"],
+      },
+    },
+  };
+  const baseEnv = {
+    SMART_REMARKABLE_BRIDGE_TOKEN:
+      "separate-narrow-bridge-token-with-32-characters",
+    OPENCLAW_CONFIG_PATH: configPath,
+    OPENCLAW_SESSIONS_PATH: sessionsPath,
+  };
+
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(baseConfig));
+    const loaded = loadConfig(baseEnv);
+    assert.equal(loaded.whatsappTo, "+15551234567");
+    assert.equal(loaded.whatsappAccountId, "default");
+    assert.equal(loaded.routeSource, "single-owner-whatsapp-config");
+
+    for (const whatsapp of [
+      { ...baseConfig.channels.whatsapp, selfChatMode: false },
+      {
+        ...baseConfig.channels.whatsapp,
+        allowFrom: ["+15551234567", "+15557654321"],
+      },
+      { ...baseConfig.channels.whatsapp, allowFrom: ["not-e164"] },
+    ]) {
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ ...baseConfig, channels: { whatsapp } }),
+      );
+      assert.throws(
+        () => loadConfig(baseEnv),
+        /exactly one E\.164 self-chat WhatsApp owner/,
+      );
+    }
+  } finally {
+    fs.rmSync(temporaryHome, { recursive: true, force: true });
+  }
+});
+
 test("fails startup when OpenClaw no longer uses the intended main-session routing", () => {
   const temporaryHome = fs.mkdtempSync(
     path.join(os.tmpdir(), "smart-remarkable-bridge-routing-contract-"),
@@ -368,6 +421,9 @@ test("startup capability receipt must match the exact plugin contract", () => {
     status: "ready",
     pluginId: OPENCLAW_PLUGIN_ID,
     pluginVersion: OPENCLAW_PLUGIN_VERSION,
+    dispatchPolicyVersion: "remarkable-agent-policy-v1",
+    modelPolicy: "authenticated-run-override-v1",
+    supplementalAttachmentRoles: ["selection_enhanced"],
     originProtocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
     responsePdfMethod: RESPONSE_PDF_METHOD,
     responsePdfPolicy: RESPONSE_PDF_POLICY,

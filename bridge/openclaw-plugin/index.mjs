@@ -135,7 +135,11 @@ function validateCanonicalRoute(runtime) {
     sessionKey: CANONICAL_SESSION_KEY,
     readConsistency: "latest",
   });
-  const origin = entry?.origin;
+  // OpenClaw 2026.9.5 stores the route in a discriminated delivery union.
+  // A present non-external union must never fall back to a stale legacy route.
+  const origin = Object.hasOwn(entry ?? {}, "delivery")
+    ? entry.delivery?.kind === "external" ? entry.delivery.origin : undefined
+    : entry?.origin;
   const chatType = origin?.chatType ?? entry?.chatType;
   if (
     !isRecord(origin) ||
@@ -319,6 +323,10 @@ async function executeDelivery({
       channel: "whatsapp",
       to: route.to,
       accountId: route.accountId,
+      // Explicit queue/channel ownership is required with multiple agents.
+      // No session key or mirror: this transport must not duplicate the reply
+      // into the canonical conversation transcript.
+      session: { agentId: CANONICAL_AGENT_ID },
       payloads: [{ text: request.text }],
       durability: "required",
       gatewayClientScopes: [DELIVERY_SCOPE],

@@ -6,6 +6,53 @@ response back onto the screen.
 
 This project is a fork of [awwaiid/ghostwriter](https://github.com/awwaiid/ghostwriter), extended with Select Mode.
 
+## Current branch: Paper Pro 3.28.0.169
+
+**Functional Pro activation is blocked on server compatibility.** The two-button
+patch is locally qualified, but the installed OpenClaw Codex 2026.9.5 runtime
+does not invoke the required final authorization hook. Server candidates were
+rolled back and the tablet still has its prior disabled Smart icons. Do not
+run the promotion command until the missing gate is fixed and both live modes
+pass. This section describes the prepared workflow, not a completed installation.
+**Paper Pro Move is not supported by this build** and needs its own
+capture/input/launcher port; do not install the Pro worker there.
+
+Both lasso actions now share Dispatch's maintained server-side policy: literal
+reading before interpretation, clarification instead of consequential guesses,
+English/French/Hebrew handling, handwriting enhancement, and the shared
+`openai/gpt-6-astra` / `low` defaults. Dispatch and Smart import the same
+`remarkable-agent-policy` module rather than maintaining separate copies of
+these rules. Their delivery adapters remain separate: Smart retains its own
+authenticated request binding, replay protection and safe notebook insertion.
+This does not change ordinary WhatsApp model/session defaults.
+
+Once activated, lasso normally, lift the pen, and choose an icon after **Copy**:
+
+| Icon | Action | Result |
+| --- | --- | --- |
+| Sparkling notebook | **Answer here** | Requests a concise plain-text answer, delivers the remote response, and inserts only the answer into the original notebook when safe. |
+| Sparkles | **Send to agent** | Uses the same reading and agent policy, delivers the remote response, and never types or draws into the notebook. |
+
+Both use the canonical OpenClaw conversation and server-side history/memory.
+The selected region is the primary input; the same-instant page image and
+notebook title are supporting context. Both retain the WhatsApp acknowledgement
+and final-answer flow plus a response PDF sent to the configured reMarkable
+Cloud library; the final status reports a failed PDF upload rather than claiming
+delivery. Cloud acceptance is not proof of arrival on a particular tablet.
+
+**Answer here is deliberately conditional:** the original page/view must remain
+unchanged, the text tool and caret must be verified, and there must be no physical
+interaction during insertion. The current keyboard path accepts only supported
+ASCII text within its 2,048-byte / 600-key budget. An unsupported or oversized
+answer skips local insertion; it is not truncated or transliterated to force it
+onto the page. Unicode answers remain intact in the remote WhatsApp/PDF path.
+
+See the [server policy release record](playbook/log/2026-09-19-dispatch-policy-release.md)
+for current deployment evidence and the
+[Pro functional promotion plan](playbook/log/2026-09-19-smart-functional-plan.md)
+for the exact installation and rollback procedure. Older deployment histories
+below describe prior firmware and must not be replayed as the current recipe.
+
 ## Paper Pro 3.28 / OpenClaw workflow
 
 This branch keeps the stock notebook UI running and prints each response as

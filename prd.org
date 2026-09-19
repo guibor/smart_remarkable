@@ -2,6 +2,15 @@
 
 * Requirements
 
+- Both lasso actions must share Dispatch's maintained server-side reading,
+  multilingual, model/reasoning and handwriting-enhancement policy, not merely
+  reach the same OpenClaw host. Keep canonical history and tools server-side.
+  =write_back= requests a concise plain-text answer suitable for guarded local
+  insertion; =whatsapp_only= returns the normal remote answer without notebook
+  input. Receipt-checked WhatsApp/PDF delivery remains transport-specific.
+- Install the functional Pro buttons after current-stack and server validation,
+  rather than leave a disabled visual canary as the delivered feature. The Move
+  is a separate hardware port, not an authorized destination for a Pro binary.
 - Run Smart Remarkable on a Developer Mode reMarkable Paper Pro with firmware 3.28.
 - Keep the stock =xochitl= notebook application running; do not take over the display.
 - Install runtime files only under encrypted =/home= and do not add a boot service.
@@ -105,6 +114,13 @@
 
 * Requirements that changed
 
+- 2026-09-19: Dispatch and Smart previously had independent interpretation and
+  model defaults. A shared server-owned policy module now supplies these rules
+  to both adapters. The tablet still submits exactly two original-role images;
+  the bridge may add one bounded, deterministic handwriting-readability view
+  derived only from the ink selection. It is not new user input and never
+  replaces the original. Policy identity is included in request fingerprints
+  and the plugin capability contract. No broader client authority is added.
 - The response-PDF renderer originally accepted a bounded XeTeX/TeX Live
   family receipt, then temporarily pinned the exact Debian engine identity.
   Live rendering exposed missing Babel components and incorrect mixed-direction
@@ -229,6 +245,18 @@
 
 * Immediate next steps
 
+- [ ] Resolve the installed Codex 2026.9.5 harness's missing =before_agent_run=
+  invocation through a separately reviewed, authorized runtime fix. Prove a
+  negative Smart request is blocked before every native inference attempt and
+  ordinary WhatsApp runs remain unaffected. Best-effort prompt hooks or a
+  successful positive canary cannot substitute for this gate. All Sep 19
+  server candidates were rolled back; no tablet activation occurred.
+- [ ] Deploy and verify the shared Dispatch policy and matching Smart bridge/plugin
+  against the currently installed OpenClaw; preserve the concurrent filename release.
+- [ ] Promote Pro inert to functional within its exact current twelve-QMD stack;
+  preserve the other eleven patches and all device-local settings.
+- [ ] Verify both button outcomes physically; do not claim notebook insertion
+  from server-only evidence. Port Chiappa capture/input/launcher separately.
 1. [X] Verify the trigger-routing and trigger-file regression tests.
 2. [X] Cross-build the aarch64 binary with the pinned Rust toolchain.
 3. [X] Deploy the binary and one-shot launcher under =/home/root/smart_remarkable=.

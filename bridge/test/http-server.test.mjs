@@ -108,6 +108,9 @@ function exactCapabilities() {
     status: "ready",
     pluginId: OPENCLAW_PLUGIN_ID,
     pluginVersion: OPENCLAW_PLUGIN_VERSION,
+    dispatchPolicyVersion: "remarkable-agent-policy-v1",
+    modelPolicy: "authenticated-run-override-v1",
+    supplementalAttachmentRoles: ["selection_enhanced"],
     originProtocol: SOURCE_PROVENANCE_PROTOCOL_VERSION,
     responsePdfMethod: RESPONSE_PDF_METHOD,
     responsePdfPolicy: RESPONSE_PDF_POLICY,
@@ -409,6 +412,10 @@ async function fixture({
   await capabilityReadiness.ensureReady();
   const service = new SelectionService({
     gateway,
+    dispatchPolicy: {
+      REMARKABLE_AGENT_DEFAULT_THINKING: "low",
+      async prepareRemarkableHandwritingPng() { throw new Error("fixture retains originals"); },
+    },
     config: { ...config, ...configOverrides },
     requestJournal,
     capabilityReadiness,

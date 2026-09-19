@@ -24,6 +24,8 @@ function createFixture({
   maxCommands,
   deliver = "sync",
   mutateContext,
+  mutateEvent,
+  requireExplicitOwner = false,
   enrichPluginId = "smart-remarkable-delivery",
 } = {}) {
   let subscription;
@@ -51,6 +53,9 @@ function createFixture({
           subscription = candidate;
         },
         emitAgentEvent(event) {
+          if (requireExplicitOwner && event.sessionKey !== "agent:main:main") {
+            throw new Error("Multiple agents are configured, but this operation has no explicit owner");
+          }
           events.push(structuredClone(event));
           onEmit?.(event);
           const delivered = {
@@ -60,6 +65,7 @@ function createFixture({
               pluginId: enrichPluginId,
             },
           };
+          mutateEvent?.(delivered);
           if (deliver === "sync") {
             subscription.handle(delivered, context);
           } else if (deliver === "microtask") {
@@ -145,10 +151,83 @@ test("sets, gets, and clears through callback run context", () => {
   );
   for (const event of fixture.events) {
     assert.equal(event.runId, RUN_ID);
+    assert.equal(event.sessionKey, "agent:main:main");
     assert.equal(event.stream, RUN_CONTEXT_CONTROL_STREAM);
     assert.deepEqual(Object.keys(event.data), ["opId"]);
     assert.doesNotMatch(JSON.stringify(event), /never-emit-this/);
     assert.doesNotMatch(JSON.stringify(event), /also-private/);
+  }
+});
+
+test("supplies fixed canonical ownership to a multi-agent host", () => {
+  const fixture = createFixture({ requireExplicitOwner: true });
+  assert.equal(fixture.control.setRunContext({
+    runId: RUN_ID,
+    namespace: NAMESPACE,
+    value: SECRET_VALUE,
+    // Caller-provided routing cannot change this control channel's owner.
+    sessionKey: "agent:other:main",
+  }), true);
+  assert.equal(fixture.control.getRunContext({ runId: RUN_ID, namespace: NAMESPACE }), SECRET_VALUE);
+  assert.equal(fixture.control.clearRunContext({ runId: RUN_ID, namespace: NAMESPACE }), true);
+  assert.equal(fixture.events.length, 3);
+  for (const event of fixture.events) {
+    assert.equal(event.sessionKey, "agent:main:main");
+    assert.deepEqual(Object.keys(event.data), ["opId"]);
+  }
+});
+
+test("supports host-redacted session fields without exposing or changing private authority", () => {
+  const fixture = createFixture({
+    requireExplicitOwner: true,
+    mutateEvent(event) {
+      // OpenClaw 2026.9.5 removes sessionKey from non-lifecycle events while
+      // an active run has isControlUiVisible=false.
+      event.sessionKey = undefined;
+    },
+  });
+  assert.equal(fixture.control.setRunContext({
+    runId: RUN_ID, namespace: NAMESPACE, value: SECRET_VALUE,
+  }), true);
+  assert.equal(fixture.control.getRunContext({ runId: RUN_ID, namespace: NAMESPACE }), SECRET_VALUE);
+  assert.equal(fixture.control.clearRunContext({ runId: RUN_ID, namespace: NAMESPACE }), true);
+  for (const event of fixture.events) {
+    assert.equal(event.sessionKey, "agent:main:main");
+    assert.deepEqual(Object.keys(event.data), ["opId"]);
+    assert.doesNotMatch(JSON.stringify(event), /never-emit-this|also-private/);
+  }
+});
+
+test("rejects control events with an explicit conflicting or invalid session owner", () => {
+  for (const sessionKey of [null, "", "agent:other:main", "agent:main:other"]) {
+    const fixture = createFixture({
+      mutateEvent(event) {
+        event.sessionKey = sessionKey;
+      },
+    });
+    assert.throws(() => fixture.control.setRunContext({
+      runId: RUN_ID, namespace: NAMESPACE, value: SECRET_VALUE,
+    }), /run-context control is unavailable/);
+    assert.equal(fixture.values.get(NAMESPACE), undefined);
+  }
+});
+
+test("redacted events still require the same private operation, plugin and exact run", () => {
+  for (const change of [
+    (event) => { event.runId = "smart-remarkable-control-run-0002"; },
+    (event) => { event.data.opId = "00000000-0000-4000-8000-999999999999"; },
+    (event) => { event.data.pluginId = "another-plugin"; },
+  ]) {
+    const fixture = createFixture({
+      mutateEvent(event) {
+        delete event.sessionKey;
+        change(event);
+      },
+    });
+    assert.throws(() => fixture.control.setRunContext({
+      runId: RUN_ID, namespace: NAMESPACE, value: SECRET_VALUE,
+    }), /run-context control is unavailable/);
+    assert.equal(fixture.values.get(NAMESPACE), undefined);
   }
 });
 
