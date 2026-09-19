@@ -1,0 +1,24 @@
+; Dispatch-only AppLoad partial-repaint candidate.
+; Exact target: Ferrari firmware 3.28.0.169 with AppLoad
+; SHA-256 9a6d55d21852976e7c6cf34b1d09e5ca6e428547aa8c03d53d91b1bb9ff87b9a.
+;
+; Keep AppLoad's normal scaled-window behavior for every other application.
+; Dispatch is fixed to the Paper Pro's native portrait size and disables
+; windowed mode. Only when AppLoad also reports exact framebuffer/device
+; dimensions may its full-screen FBController preserve source damage rectangles
+; without coordinate scaling.
+
+VERSION 3.28.0.169
+
+AFFECT /appload/qml/window.qml
+    TRAVERSE [[8397993708429497603]]#[[6504254477]] > [[254501108490678590]]#mainWindowView > FBController#windowCanvas
+        REPLACE allowScaling WITH {
+            allowScaling: !(~&6504254477&~.~&8399487686344347164&~ &&
+                ~&6504254477&~.disablesWindowedMode &&
+                ~&6504254477&~.appName === "Dispatch" &&
+                ~&6504254477&~.scaledContentWidth === ~&6504254477&~.globalWidth &&
+                ~&6504254477&~.scaledContentHeight === ~&6504254477&~.globalHeight &&
+                qtfbKey !== -1)
+        }
+    END TRAVERSE
+END AFFECT

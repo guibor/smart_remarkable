@@ -14,6 +14,18 @@
 - Use the repository's existing =draw_text= implementation for answers; do not convert ordinary text into simulated pen strokes.
 - Consume root-only volatile trigger files under =/run/smart-remarkable= even while the Paper Pro touch device is emitting continuous events, and remove them when the worker stops.
 - Do not install the ABI-sensitive raw Xovi =llmbutton.so= LLM/Draw extension on firmware 3.28. A native-button candidate must use the firmware-specific QMLDiff/AppLoad path and add only the approved answer-here and agent actions, represented by exact stock reMarkable sparkle resources rather than text glyphs or custom assets.
+- Permit one optional Dispatch-only AppLoad repaint candidate on the exact
+  Ferrari =3.28.0.169= contract. It may replace only =allowScaling= in the
+  installed AppLoad =/appload/qml/window.qml= through QMLDiff, and may disable
+  scaling only when the attached QTFB window is named =Dispatch=, is full
+  screen, disables windowed mode, and reports source width and height exactly
+  equal to the device width and height. Every other application or Dispatch
+  state must retain =allowScaling: true=. Do not replace =appload.so= or alter
+  the Dispatch manifest to obtain this result. Promotion requires the exact
+  installed AppLoad, stock xochitl, hashtable, ten-QMD inventory, Dispatch
+  manifest, and Dispatch executable; an off-device backup; an independent
+  180-second stock rollback; the nested ReMagic watchdog; one exact eleven-QMD
+  load-marker proof; and physical handwriting A/B acceptance.
 - Refuse kernel-module loading by default and require the firmware-provided =/dev/uinput= device for this deployment.
 - Keep Smart Remarkable and T.M.R. mutually exclusive, give Smart its own tunnel port, and stop Smart whenever stock =xochitl= stops.
 - Keep Smart Remarkable's unauthenticated web server and debug/request logging disabled.
@@ -159,6 +171,14 @@
   rebased together. The surviving exact =.164= functional QMD may exist only
   during stock-mode migration; it must never be loaded on =.166= and must be
   moved into the complete recovery boundary before the new inert canary.
+- Dispatch latency work was previously constrained to client rendering and
+  input-loop changes. Exact disassembly of the installed AppLoad preimage and
+  its embedded QML showed that scaled partial rectangles take the old
+  divide-before-multiply path and collapse to a null/full repaint. The changed
+  requirement allows a separate, optional, exact-firmware QMLDiff host canary;
+  it still forbids a custom AppLoad binary, preserves scaled behavior outside
+  the exact native full-screen Dispatch predicate, and remains uninstalled
+  until its independent rollback and physical A/B gates pass.
 
 * Immediate next steps
 
@@ -270,6 +290,26 @@
 83. [ ] After physical inert-layout acceptance, promote the functional QMD and
     verify one disposable request through each icon with zero restarts and
     read-only root.
+84. [X] Build the exact =3.28.0.169= Dispatch-only AppLoad partial-repaint
+    source/QMD, reproduce it from the installed AppLoad preimage, compose it in
+    both relative AppLoad load orders with the current ten-QMD state, parse all
+    29 affected QML outputs, and exercise the atomic add/remove transaction
+    locally without contacting a device.
+85. [X] Complete a separate read-only live preflight after installing Dispatch
+    executable =d700b7c8...eab4=: Ferrari serial, firmware/build, stock xochitl,
+    AppLoad =9a6d55d2...7b9a=, current ten QMDs, manifest
+    =4c0b0adb...1a32c=, PID =306456=, zero restarts, and read-only root all
+    matched. This is eligibility evidence, not candidate activation.
+86. [ ] Review the final stage manifest and guarded controller, take and verify
+    the off-device backup, then activate the exact repaint QMD only through its
+    180-second stock watchdog plus the pinned ReMagic wrapper. Require exactly
+    eleven QMD load markers, the candidate filename once, the patched AppLoad
+    window processing marker, zero restarts, and read-only root.
+87. [ ] On a disposable Dispatch canvas, record the same 5-10 second
+    handwriting sample before and after the host candidate; verify visibly
+    lower pen latency, native coordinate alignment, clean strokes and exit,
+    then retain the candidate only if stock =xochitl= and every non-Dispatch
+    AppLoad application remain healthy.
 
 * Requirements changed for Paper Pro 3.28.0.169
 - Firmware =3.28.0.169= supersedes =3.28.0.166=. The unchanged OS build stamp

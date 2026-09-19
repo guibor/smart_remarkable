@@ -2,6 +2,100 @@
 
 Smart Remarkable is a user-space assistant that leaves reMarkable's stock `xochitl` process running. It reads the current framebuffer from `xochitl`, sends a normalized screenshot to the user's OpenClaw agent, and returns the result through virtual pen, touch, or keyboard devices backed by the kernel's existing `/dev/uinput` support. The production listener supports `pen-release` for one-shot/automatic sessions and `pen-hold` for explicit sessions; hold timing, normalized jitter radius, and minimum lasso extent are validated configuration values. A hold is classified only on lift, contacts begun while busy stay ineligible, and xochitl's detected marquee remains the final proof of a real lasso.
 
+## Dispatch-only AppLoad partial repaint candidate
+
+The optional Dispatch latency candidate is a host integration artifact, not a
+change to Smart Remarkable's worker and not a replacement AppLoad binary. The
+exact installed AppLoad preimage
+`9a6d55d21852976e7c6cf34b1d09e5ca6e428547aa8c03d53d91b1bb9ff87b9a`
+embeds `window.qml` with `FBController.allowScaling: true`. That binary's
+scaled dirty-rectangle path divides a partial rectangle by the source size
+before multiplying by the destination size. A normal pen-damage rectangle is
+therefore reduced to zero and reaches Qt as a null/full-item repaint. Dispatch
+can send partial damage promptly, but the host still schedules much larger
+work.
+
+`xovi-qmd/dispatch-appload-partial-repaint-3.28.0.169.source.qmd` replaces only
+that one binding. Scaling is disabled only when all of these runtime facts are
+simultaneously true:
+
+- the AppLoad title is exactly `Dispatch`;
+- the window is full screen and its manifest disables windowed mode;
+- QTFB is attached; and
+- `scaledContentWidth/Height` exactly equal `globalWidth/Height`.
+
+The native-size checks are the fail-safe boundary: any future Dispatch
+resolution, rotation/layout mismatch, windowed state, missing QTFB connection,
+or other application leaves AppLoad's existing scaling path enabled. The
+current manifest is separately pinned to
+`4c0b0adba890becb4aa85678c3dc345a9d8909f65a5b9734b809b4746341a32c`
+and the current executable to
+`d700b7c8c3df4d5750d0844169a0d50324f9d7fd2a8ac4f8667a40efa26ceab4`.
+No credential, network call, application launch, or boot behavior exists in
+the patch.
+
+The candidate modules are:
+
+- `ops/build-dispatch-appload-latency-candidate.sh`: `require_exact_file`
+  rejects an altered AppLoad preimage, firmware hashtable, source diff, or
+  build tool. The main build flow extracts the embedded AppLoad resources at
+  their reviewed addresses, rehashes the source against the exact promoted
+  3.28.0.169 hashtable, checks compatibility, applies the QMD offline, parses
+  the resulting window, and publishes the artifact only after its expected
+  hash matches.
+- `ops/dry-run-dispatch-appload-latency-transaction.sh`: `tree_hash` binds both
+  extracted resource trees; `verify_qmd_log` validates the exact QRR
+  load-marker contract. Its main flow reconstructs the current ten-QMD state,
+  composes the candidate before and after AppLoad's own embedded QMD, parses
+  all 29 resulting QML files, simulates the atomic install/removal, builds the
+  transfer manifest, and proves altered AppLoad, firmware and Dispatch inputs
+  fail closed. It contains no device transport.
+- `ops/deploy-dispatch-appload-latency-candidate.sh`: the Mac controller is
+  inert without an explicit `--activate`. When deliberately run, it first
+  completes the full local dry-run, pins the Ferrari SSH host key, stages only
+  the reviewed five-file transaction, asks the device half to prepare, copies
+  the safety archive back to the Mac and verifies both hashes before creating
+  the device acknowledgement, then starts one bounded activation unit.
+- `ops/device-install-dispatch-appload-latency-candidate.sh`:
+  `verify_stage`, `verify_qmd_set`, `verify_extensions`,
+  `verify_dispatch_manifest`, `verify_xovi_process`, and `verify_live` form
+  the complete preimage gate. They require the exact Ferrari serial,
+  firmware/build, stock executable, Xovi/QRR/broker/AppLoad/framebuffer-spy,
+  hashtable, ten QMDs, ReMagic/stock scripts, Dispatch executable and manifest.
+  Because the exact `start` and `stock` scripts execute mutable service and
+  hook trees, the gate also pins `start`, the sole `xochitl.service` source
+  directory, its QRR config, both absolute symlink targets, all four observed
+  AppleDouble metadata files, and requires the four pre/post start/stock hook
+  directories to be exact empty root-owned directories. The vendor xochitl
+  unit and its stock override are also hashed because rollback unmounts the
+  Xovi drop-in and restarts through those files.
+  The unusual live manifest ownership `501:20:644` is pinned only by its
+  manifest-specific check; firmware/runtime inputs remain root-owned. The
+  `prepare` action writes only a root-private recovery archive. The `activate`
+  action can run only as the named transient transaction unit, arms an
+  independent 180-second rollback timer, atomically adds the candidate, and
+  invokes the already-pinned ReMagic canary. Its bounded journal must contain
+  exactly eleven QMD load markers, each baseline name once, the candidate once,
+  and the AppLoad window processing marker, with no QRR failed-load marker.
+  HUP, INT, and TERM exit
+  immediately; the EXIT handler arms rollback rather than resuming mutation.
+- `ops/rollback-dispatch-appload-latency-candidate.sh`: stops the named
+  transaction before inspecting bytes, removes only the exact candidate, and
+  never deletes an unknown target. Once activation has begun it uses the
+  independently hashed stock script to restore stock `xochitl`; Xovi
+  reactivation is intentionally a later guarded action. The timer, this stock
+  fallback, and ReMagic's own shorter live watchdog are independent layers.
+
+The compiled candidate is
+`1eb2037f28c9891fbdc4a97d1e2916b8e923fe04004ae1ced03b5de73f59a60e`.
+Offline composition in both tested load orders yields identical patched
+`window.qml` bytes
+`af8d378b319e6ad3633ae729425f5c4dbd3d385100835a7e23f90e8f7f9eafa7`.
+This is exact-firmware/offline qualification only. A separate read-only live
+preflight has matched the contract and current live preimage,
+but the candidate has not been installed by this work; guarded restart and
+physical handwriting A/B remain promotion gates.
+
 ## Runtime flow
 
 The repository implements three trigger policies behind the same AppLoad
