@@ -383,17 +383,24 @@
     rollback paths, require a reviewed six-file stage receipt, off-device
     backup, independent 180-second rollback and stock fallback. This is local
     qualification only; neither candidate is installed.
-90. [-] Guardedly install the inert disabled =Dispatch= row, then physically
+90. [X] Guardedly install the inert disabled =Dispatch= row, then physically
     verify it appears with the stock send icon in a notebook and PDF, is absent
     from an EPUB, and leaves stock xochitl/AppLoad stable before approving the
     exact inert transaction ID. Transaction =20260919T144330Z-24855= is
     installed with xochitl PID =326054=, =NRestarts=0=, read-only root, exact
-    twelve-QMD loading, and an off-device backup; the physical check remains.
-91. [ ] Promote only that physically approved inert transaction to the
+    twelve-QMD loading, and an off-device backup. The user physically confirmed
+    the disabled row visible and greyed out and approved this exact transaction.
+91. [-] Promote only that physically approved inert transaction to the
     functional QMD. Verify one tap opens or reuses a native-size Dispatch
     window, a second tap does not create a duplicate, erasing and low-latency
     writing still work, exit is clean, all twelve QMDs load exactly once,
-    =NRestarts=0=, and =/= remains read-only.
+    =NRestarts=0=, and =/= remains read-only. Guarded functional transaction
+    =20260919T154323Z-58287= committed exact QMD =883f275b...5aece= with
+    off-device backup =5a800668...1f20e= and stage receipt
+    =8b7ecaf0...1d9=. The ReMagic sample and delayed postcheck held xochitl PID
+    =330637= with =NRestarts=0=, twelve exact QMDs, all expected Xovi mappings,
+    inactive safety units, no lock or rollback marker, and read-only root. The
+    physical tap/reuse/writing/erasing/exit checks remain.
 
 * Requirements changed for Paper Pro 3.28.0.169
 - Firmware =3.28.0.169= supersedes =3.28.0.166=. The unchanged OS build stamp

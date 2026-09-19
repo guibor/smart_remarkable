@@ -1,13 +1,14 @@
 # Dispatch document-menu candidate — Paper Pro 3.28.0.169
 
-Status: **inert canary installed; physical acceptance pending**.
+Status: **functional canary installed and machine-accepted; physical launch acceptance pending**.
 
 This record covers only the full-size Paper Pro (`reMarkable Ferrari`, serial
 `0A247209DABC7917`) on firmware `3.28.0.169`, build `20260806095513`. The
 candidate was first qualified without tablet contact, committed as `19903d6`,
-and pushed to `guibor/beta/pro/3.28.0.169`. The guarded controller then
-installed only the disabled inert row. Functional promotion remains blocked
-on the physical notebook/PDF/EPUB check below.
+and pushed to `guibor/beta/pro/3.28.0.169`. The guarded controller installed the
+disabled inert row, the user physically confirmed it visible and greyed out,
+and the exact approved inert transaction was then promoted through the guarded
+functional controller. Physical launch/reuse and handwriting acceptance remain.
 
 ## Inert deployment receipt
 
@@ -18,7 +19,29 @@ The nested ReMagic live test passed with xochitl PID `326054`,
 `NRestarts=0`, exact twelve-QMD loading, and a read-only root filesystem. The
 accepted latency QMD and final eraser-capable Dispatch executable remained at
 their pinned hashes. This receipt proves a healthy inert installation, not the
-required physical visibility or functional-launch acceptance.
+required physical visibility or functional-launch acceptance. The user later
+confirmed the row was visible and greyed out and approved this exact inert
+transaction for promotion.
+
+## Functional deployment receipt
+
+Guarded functional transaction `20260919T154323Z-58287` committed successfully
+from the exact inert predecessor. Its reviewed six-file stage receipt SHA-256
+is `8b7ecaf024a407d06894efba0e0999c7043d99f6e1e2a4df8ef84e592764d1d9`;
+the independently copied off-device safety archive SHA-256 is
+`5a8006680e6b42f719a521405fe9ae438eab423354ccd1173419b67f0f31f20e`.
+The functional QMD is exact `883f275b...5aece`; the launcher panel remains
+`bf052475...e8b0f7`, the latency QMD remains `1eb2037f...9a60e`, and the final
+Dispatch executable remains `f9896596...75cc`.
+
+The pinned ReMagic sample and a delayed read-only postcheck held one xochitl PID
+`330637` with `NRestarts=0`. All twelve QMDs loaded exactly once, all three
+functional affected-resource markers and the AppLoad window marker appeared, no
+QMD failed-load or relevant QML error appeared, every expected Xovi extension
+remained mapped, and `/` remained read-only. The install, rollback, and nested
+ReMagic units were inactive, the deployment lock was absent, and neither a
+rollback nor manual-intervention marker existed. This proves machine acceptance,
+not the remaining physical tap/reuse/writing/erasing/exit behavior.
 
 ## Integration decision
 
@@ -107,7 +130,7 @@ The complete test:
   fails verification; and
 - reported `device_contact=none`.
 
-## Guarded future transaction
+## Guarded deployment transaction
 
 The target-side installer pins the Ferrari identity, exact firmware/build,
 stock xochitl, Xovi, QRR, broker, AppLoad, framebuffer-spy, hashtable,
@@ -136,8 +159,8 @@ latency QMD and all eleven baseline inputs, then request the pinned stock
 xochitl path after any activation attempt. Xovi is intentionally not
 reactivated automatically after rollback.
 
-After a fresh read-only preflight and explicit deployment approval, the two
-separate commands are:
+The controller required a fresh read-only preflight and explicit approval for
+each of these two separate commands:
 
 ```sh
 ops/deploy-dispatch-document-menu-candidate.sh \
@@ -154,9 +177,8 @@ start `/home/root/xovi/start` directly.
 
 ## Physical acceptance still required
 
-After the inert canary, verify the disabled row appears once with the stock
-send icon in a notebook and PDF, does not appear in an EPUB, and the stock UI
-remains stable. Only then promote its exact transaction ID.
+The inert visual gate is complete: the user confirmed the disabled row visible
+and greyed out and approved transaction `20260919T144330Z-24855`.
 
 After functional promotion, verify one tap launches Dispatch, a second tap
 reuses rather than duplicates it, the error strip is not present, low-latency

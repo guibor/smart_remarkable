@@ -105,11 +105,15 @@ margin and 24–32 px minimum strokes, combining a note/handwriting motif with a
 send arrow. That tile asset is independent of the stock menu icon and is not
 changed by this candidate.
 
-The current device state is the disabled inert shortcut from transaction
-`20260919T144330Z-24855`. Its guarded restart completed with xochitl PID
-`326054`, zero restarts, twelve exact QMD inputs, and read-only `/`. The
-functional signal/controller hook must not replace it until the disabled row
-is physically verified in both a notebook and PDF and absent from EPUB.
+The disabled row from inert transaction `20260919T144330Z-24855` was physically
+confirmed visible and greyed out, satisfying its visual gate. Guarded
+functional transaction `20260919T154323Z-58287` then installed the exact
+functional QMD while preserving the launcher panel and latency QMD. Its
+ReMagic sample and delayed postcheck held xochitl PID `330637` with zero
+restarts, twelve exact QMD inputs, all expected Xovi extensions mapped,
+read-only `/`, inactive transaction/rollback/ReMagic units, no deployment lock,
+and no rollback or manual-intervention marker. This is machine acceptance;
+physical launch/reuse, writing/erasing, and clean-exit acceptance remain open.
 
 ## Dispatch-only AppLoad partial repaint candidate
 
