@@ -1,14 +1,24 @@
 # Dispatch document-menu candidate — Paper Pro 3.28.0.169
 
-Status: **device-free qualification passed; not installed**.
+Status: **inert canary installed; physical acceptance pending**.
 
 This record covers only the full-size Paper Pro (`reMarkable Ferrari`, serial
-`0A247209DABC7917`) on firmware `3.28.0.169`, build `20260806095513`. The work
-in this record made no tablet connection and performed no deploy, commit, or
-push. The deployment owner separately reported the live tablet healthy with
-read-only root, stable xochitl, eleven QMDs, the accepted Dispatch latency QMD,
-and final eraser-capable Dispatch executable. Those observations are a future
-prepare precondition, not evidence that this shortcut is installed.
+`0A247209DABC7917`) on firmware `3.28.0.169`, build `20260806095513`. The
+candidate was first qualified without tablet contact, committed as `19903d6`,
+and pushed to `guibor/beta/pro/3.28.0.169`. The guarded controller then
+installed only the disabled inert row. Functional promotion remains blocked
+on the physical notebook/PDF/EPUB check below.
+
+## Inert deployment receipt
+
+The guarded inert transaction `20260919T144330Z-24855` committed successfully.
+Its off-device safety archive SHA-256 is
+`4ee974fb68ad46a7540e87b59751cb77257214f78f00060b40a43f3d3086fe5f`.
+The nested ReMagic live test passed with xochitl PID `326054`,
+`NRestarts=0`, exact twelve-QMD loading, and a read-only root filesystem. The
+accepted latency QMD and final eraser-capable Dispatch executable remained at
+their pinned hashes. This receipt proves a healthy inert installation, not the
+required physical visibility or functional-launch acceptance.
 
 ## Integration decision
 

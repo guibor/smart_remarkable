@@ -105,6 +105,12 @@ margin and 24–32 px minimum strokes, combining a note/handwriting motif with a
 send arrow. That tile asset is independent of the stock menu icon and is not
 changed by this candidate.
 
+The current device state is the disabled inert shortcut from transaction
+`20260919T144330Z-24855`. Its guarded restart completed with xochitl PID
+`326054`, zero restarts, twelve exact QMD inputs, and read-only `/`. The
+functional signal/controller hook must not replace it until the disabled row
+is physically verified in both a notebook and PDF and absent from EPUB.
+
 ## Dispatch-only AppLoad partial repaint candidate
 
 The optional Dispatch latency candidate is a host integration artifact, not a

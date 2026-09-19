@@ -383,10 +383,12 @@
     rollback paths, require a reviewed six-file stage receipt, off-device
     backup, independent 180-second rollback and stock fallback. This is local
     qualification only; neither candidate is installed.
-90. [ ] Guardedly install the inert disabled =Dispatch= row, then physically
+90. [-] Guardedly install the inert disabled =Dispatch= row, then physically
     verify it appears with the stock send icon in a notebook and PDF, is absent
     from an EPUB, and leaves stock xochitl/AppLoad stable before approving the
-    exact inert transaction ID.
+    exact inert transaction ID. Transaction =20260919T144330Z-24855= is
+    installed with xochitl PID =326054=, =NRestarts=0=, read-only root, exact
+    twelve-QMD loading, and an off-device backup; the physical check remains.
 91. [ ] Promote only that physically approved inert transaction to the
     functional QMD. Verify one tap opens or reuses a native-size Dispatch
     window, a second tap does not create a duplicate, erasing and low-latency
