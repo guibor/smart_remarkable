@@ -17,6 +17,8 @@ STATE=/home/root/.codex-backups/pro329-apps-$ID
 OWNER=pro329-apps-install-$ID.service
 WATCH=pro329-apps-watchdog-$ID.service
 DROP=/run/systemd/system/xochitl.service.d/zzzz-pro329-apps-$ID.conf
+UNIT=/run/systemd/system/xochitl.service
+VENDOR=/run/systemd/system/xochitl.service.d/xochitl-service-override.conf
 LOCK=/run/pro329-apps-activation.lock
 MAX_SECONDS=180
 
@@ -149,8 +151,7 @@ candidate_process() {
         awk -v expected="$item" '$NF == expected {found=1} END {exit !found}' "/proc/$p/maps"
     done
     [ "$(systemctl show -p NRestarts --value xochitl.service)" = 0 ]
-    [ -z "$(systemctl show -p OnFailure --value xochitl.service)" ]
-    [ "$(systemctl show -p Restart --value xochitl.service)" = no ]
+    verify_runtime_policy candidate
     [ "$(systemctl show -p NRestarts --value notebook-date-index.service)" = 0 ]
     local d; d=$(read_pid notebook-date-index.service)
     [ "$(readlink -f "/proc/$d/exe")" = "$DATES/notebook-date-index" ]
@@ -169,25 +170,93 @@ no_other_owner() {
     units=$(systemctl list-units --type=service --type=timer --state=active,activating,deactivating --no-legend --plain | awk '{print $1}')
     ! printf '%s\n' "$units" | grep -Ev "^($OWNER|$WATCH)$" | grep -Eq '^(remagic-live|remarkable-beta-os-(hashtab|pro-bettertoc)|smart-remarkable-llm|dates-.*-(install|rollback)|dispatch-.*-(install|rollback)|notebook-ui-repair|rmstream-shortcut-(install|rollback))'
 }
-write_dropin() {
-    local mode=$1 temporary=$DROP.ready.$$
-    mkdir -p /run/systemd/system/xochitl.service.d
-    [ "$(readlink -f /run/systemd/system/xochitl.service.d)" = /run/systemd/system/xochitl.service.d ]
-    {
-        printf '[Unit]\nOnFailure=\nOnFailureJobMode=replace\nStartLimitAction=none\n[Service]\nRestart=no\n'
-        if [ "$mode" = candidate ]; then
-            printf 'Environment="LD_PRELOAD=%s/xovi.so" "XOVI_ROOT=%s/services/xochitl.service/" "QML_DISABLE_DISK_CACHE=1"\n' "$X" "$X"
-            printf 'StandardOutput=append:%s/xochitl.log\nStandardError=append:%s/xochitl.log\n' "$STATE" "$STATE"
-        else
-            printf 'UnsetEnvironment=LD_PRELOAD XOVI_ROOT QMLDIFF_HASHTAB_CREATE\n'
-        fi
-    } >"$STATE/dropin.ready"
-    [ ! -e "$temporary" ] && [ ! -L "$temporary" ]
-    cp "$STATE/dropin.ready" "$temporary"
+absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
+baseline_policy() {
+    absent "$UNIT" && absent "$VENDOR" && absent "$DROP" || return 1
+    [ "$(systemctl show -p FragmentPath --value xochitl.service)" = /usr/lib/systemd/system/xochitl.service ] || return 1
+    [ "$(systemctl show -p DropInPaths --value xochitl.service)" = /usr/lib/systemd/system/xochitl.service.d/xochitl-service-override.conf ]
+}
+render_mode() {
+    case "$1" in candidate|stock) ;; *) return 1;; esac
+    # OnFailure is a dependency: an empty assignment cannot remove it. The
+    # pinned full unit AND same-basename vendor drop-in are shadowed below.
+    printf '[Unit]\nOnFailureJobMode=replace\nStartLimitAction=none\n[Service]\nRestart=no\n'
+    if [ "$1" = candidate ]; then
+        printf 'Environment="LD_PRELOAD=%s/xovi.so" "XOVI_ROOT=%s/services/xochitl.service/" "QML_DISABLE_DISK_CACHE=1"\n' "$X" "$X"
+        printf 'StandardOutput=append:%s/xochitl.log\nStandardError=append:%s/xochitl.log\n' "$STATE" "$STATE"
+    else
+        printf 'UnsetEnvironment=LD_PRELOAD XOVI_ROOT QMLDIFF_HASHTAB_CREATE\n'
+    fi
+}
+make_policy_sources() {
+    # Only these two pinned OnFailure lines change; preserve all other bytes,
+    # including stock ExecStart, GPU/TEE dependencies and allocator settings.
+    sed '/^[[:space:]]*OnFailure[[:space:]]*=/d' /usr/lib/systemd/system/xochitl.service >"$STATE/unit.shadow"
+    sed '/^[[:space:]]*OnFailure[[:space:]]*=/d' /usr/lib/systemd/system/xochitl.service.d/xochitl-service-override.conf >"$STATE/vendor.shadow"
+    render_mode candidate >"$STATE/policy-candidate.conf"
+    render_mode stock >"$STATE/policy-stock.conf"
+    verify_policy_sources
+}
+verify_policy_sources() {
+    exact "$STATE/unit.shadow" 0cbc768bc2b28a15992e11185538c9ae7ce496fb354a75ab112ddd7f646ca863 || return 1
+    exact "$STATE/vendor.shadow" 9b9b319cc0c9173bcfee48ed9210937d292f4a8cea5e26011e5d23ee624af83c || return 1
+    local mode expected
+    for mode in stock candidate; do
+        expected=$(render_mode "$mode" | sha256sum | cut -d' ' -f1) || return 1
+        exact "$STATE/policy-$mode.conf" "$expected" || return 1
+    done
+}
+owned_or_absent() {
+    absent "$1" && return 0
+    case "$1" in
+        "$UNIT") exact "$UNIT" 0cbc768bc2b28a15992e11185538c9ae7ce496fb354a75ab112ddd7f646ca863;;
+        "$VENDOR") exact "$VENDOR" 9b9b319cc0c9173bcfee48ed9210937d292f4a8cea5e26011e5d23ee624af83c;;
+        "$DROP") exact "$DROP" "$(hash "$STATE/policy-candidate.conf")" || exact "$DROP" "$(hash "$STATE/policy-stock.conf")";;
+        *) return 1;;
+    esac
+}
+publish_owned() {
+    local source=$1 target=$2 temporary=$2.pro329-$ID.ready.$$
+    owned_or_absent "$target"
+    absent "$temporary"
+    cp "$source" "$temporary"
     chown root:root "$temporary"; chmod 0644 "$temporary"
-    mv -f "$temporary" "$DROP"
+    exact "$temporary" "$(hash "$source")"
+    owned_or_absent "$target"
+    mv -f "$temporary" "$target"
+}
+verify_runtime_policy() {
+    verify_policy_sources || return 1
+    exact "$UNIT" 0cbc768bc2b28a15992e11185538c9ae7ce496fb354a75ab112ddd7f646ca863 || return 1
+    exact "$VENDOR" 9b9b319cc0c9173bcfee48ed9210937d292f4a8cea5e26011e5d23ee624af83c || return 1
+    exact "$DROP" "$(hash "$STATE/policy-$1.conf")" || return 1
+    [ "$(systemctl show -p FragmentPath --value xochitl.service)" = "$UNIT" ] || return 1
+    [ "$(systemctl show -p DropInPaths --value xochitl.service)" = "$VENDOR $DROP" ] || return 1
+    [ -z "$(systemctl show -p OnFailure --value xochitl.service)" ] || return 1
+    [ "$(systemctl show -p Restart --value xochitl.service)" = no ]
+}
+write_policy() {
+    local mode=$1
+    verify_policy_sources
+    owned_or_absent "$UNIT"; owned_or_absent "$VENDOR"; owned_or_absent "$DROP"
+    mkdir -p /run/systemd/system/xochitl.service.d
+    [ "$(readlink -f /run/systemd/system)" = /run/systemd/system ]
+    [ "$(readlink -f /run/systemd/system/xochitl.service.d)" = /run/systemd/system/xochitl.service.d ]
+    publish_owned "$STATE/unit.shadow" "$UNIT"
+    publish_owned "$STATE/vendor.shadow" "$VENDOR"
+    publish_owned "$STATE/policy-$mode.conf" "$DROP"
     systemctl daemon-reload
-    [ -z "$(systemctl show -p OnFailure --value xochitl.service)" ]
+    # This is a real manager gate before any stop/restart, not a text assumption.
+    verify_runtime_policy "$mode"
+}
+remove_owned_policy() {
+    verify_policy_sources
+    # Check every destination before removing any file. Never remove a foreign
+    # file or symlink, even if an interrupted publication only reached one file.
+    owned_or_absent "$UNIT"; owned_or_absent "$VENDOR"; owned_or_absent "$DROP"
+    rm -f "$DROP" "$VENDOR" "$UNIT"
+    systemctl daemon-reload
+    baseline_policy
 }
 owner_alive() {
     local p start; read -r p start <"$STATE/owner"
@@ -216,16 +285,20 @@ rollback() {
     # Always quiesce the transaction before changing its activation surface.
     [ "$(read_pid "$OWNER")" = 0 ] || return 1
     verify_device
-    write_dropin stock
-    systemctl stop xochitl.service
+    # A failed pre-restart gate may leave the original stock process untouched.
+    # Recover the temporary policy directly; do not restart a healthy stock UI.
+    if ! stock_process; then
+        write_policy stock
+        systemctl stop xochitl.service
+        systemctl reset-failed xochitl.service
+        systemctl start xochitl.service
+        local n; for n in $(seq 1 30); do stock_process && break; sleep 1; done
+    fi
     [ ! -e "$STATE/dates-started" ] || systemctl stop notebook-date-index.service
-    systemctl reset-failed xochitl.service
-    systemctl start xochitl.service
-    local n; for n in $(seq 1 30); do stock_process && break; sleep 1; done
     stock_process
-    # Remove only our /run file, after stock is proved healthy.
-    rm -f "$DROP"
-    systemctl daemon-reload
+    # Remove only our three /run files, after stock is proved healthy.
+    remove_owned_policy
+    stock_process
     root_ro
     mark rolled-back "stock:$(read_pid xochitl.service)"
     rmdir "$LOCK" 2>/dev/null || true
@@ -235,12 +308,12 @@ verify_stage
 verify_device
 if [ "$ACTION" = prepare ]; then
     verify_files; stock_process; no_other_owner; no_app_running
-    [ "$(systemctl show -p FragmentPath --value xochitl.service)" = /usr/lib/systemd/system/xochitl.service ]
-    [ "$(systemctl show -p DropInPaths --value xochitl.service)" = /usr/lib/systemd/system/xochitl.service.d/xochitl-service-override.conf ]
+    baseline_policy
     [ ! -e "$STATE" ] && [ ! -L "$STATE" ]
     ! systemctl is-active --quiet notebook-date-index.service
     ! pidof notebook-date-index >/dev/null
     mkdir -m 0700 "$STATE"
+    make_policy_sources
     settings_snapshot >"$STATE/settings.sha256"
     tar -czf "$STATE/safety-backup.tgz" -C /home/root xovi/exthome/qt-resource-rebuilder \
         .local/lib/notebook-date-index .local/share/notebook-date-index \
@@ -303,7 +376,7 @@ verify_files; stock_process; no_other_owner; no_app_running
 ! systemctl is-active --quiet notebook-date-index.service
 ! pidof notebook-date-index >/dev/null
 sha256sum -c "$STATE/settings.sha256" >/dev/null
-[ "$(systemctl show -p DropInPaths --value xochitl.service)" = /usr/lib/systemd/system/xochitl.service.d/xochitl-service-override.conf ]
+baseline_policy
 mkdir "$LOCK"
 mark owner "$$ $(pid_start $$)"
 systemd-run --unit="${WATCH%.service}" --collect --property=Type=exec --property=KillMode=control-group \
@@ -315,7 +388,7 @@ trap 'touch "$STATE/abort-requested"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-write_dropin candidate
+write_policy candidate
 mark dates-started owned
 systemd-run --unit=notebook-date-index --collect --property=Restart=on-failure --property=RestartSec=5 \
     --property=MemoryMax=96M --property=NoNewPrivileges=yes "$DATES/notebook-date-index"

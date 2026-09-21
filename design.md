@@ -32,19 +32,37 @@ runtime/app bytes, unmodified settings, stock firmware and no other owner. Its
 `prepare` action captures a private app/history backup while the writer is stopped;
 activation requires an explicit off-device verification marker. `activate` runs
 under systemd, arms an independent owner-identity/deadline watchdog, installs its
-own volatile late-sorting xochitl override (clearing vendor failure targets), starts
+own volatile full xochitl unit and same-basename vendor drop-in shadows, starts
 the unchanged Dates writer and validates a stable process/QMD log. It waits for
 a separate Mac `commit`; lost SSH or owner death cannot silently accept the run.
 
-The `rollback` function kills/quiesces the owner before replacing the override
-with a stock-only environment, stopping only the Dates service it created, and
-restarting stock under the same failure-target mask. Only after a valid stock
-process does it remove its own `/run` override. It never rewinds Dates history or
+`make_policy_sources` derives the two shadows from hash-pinned vendor files,
+removing only their `OnFailure=` lines and preserving every other byte.
+`publish_owned` atomically publishes only absent or exact known files;
+`verify_runtime_policy` checks both file hashes and the real manager's fragment,
+drop-in list, empty failure-target list and no-restart setting before any restart.
+`render_mode` provides a separate late-sorting candidate/stock environment file.
+This replaces the initial empty-`OnFailure=` attempt: systemd dependency lists
+cannot be reset by empty drop-in assignments. That attempt stopped at its live
+gate before restarting xochitl. A separately guarded stock-only shadow probe
+passed the real manager checks without changing stock PID 3381, then removed its
+shadows and restored the exact vendor policy. The complete activation/owner-death
+recovery remains a separate live qualification step.
+
+The `rollback` function kills/quiesces the owner first. If stock is already
+healthy, it removes the owned policy without restarting the UI. Otherwise it
+publishes a stock-only environment and restarts stock under the same failure-target
+mask. It stops only the Dates service it created. After a valid stock process,
+`remove_owned_policy` verifies ownership of all three paths before removing any,
+reloads the manager, and verifies the original vendor fragment/drop-in paths.
+Unknown content or symlinks are never removed. It never rewinds Dates history or
 device settings. Commit and rollback race on one atomic hard link whose complete
 contents identify the decision; there is no claimed-but-empty marker window.
 `tests/pro-3.29-activation-policy.mjs` extracts only helpers into a mocked local
-environment and checks rollback order, ownership, late decisions and filesystem
-races. It does not establish live recovery. Old 3.28 controllers remain untouched.
+environment and checks exact shadow generation, partial publication cleanup,
+foreign-file refusal, no-restart recovery, rollback order, ownership, late decisions
+and filesystem races. It does not establish live recovery. Old 3.28 controllers
+remain untouched; the old triple-tap wrapper is not qualified for 3.29.
 The watchdog restarts after unexpected failure with at most three persisted
 attempts; it never extends the original deadline. A retry can resume only its
 own already-claimed rollback, and completed rollback is a no-op. Stock detection

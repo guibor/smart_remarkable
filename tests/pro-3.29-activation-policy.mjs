@@ -11,9 +11,12 @@ assert(source.includes(digest));
 assert.equal(manifest.trim().split('\n').length,11);
 assert(!manifest.includes('partial-repaint'));
 assert.doesNotMatch(source.replace(/^\s*#.*$/gm,''),/\binstall -|find[^\n]*-printf|mount -o|remount|systemctl enable|\/bin\/bash "\$.*REMAGIC/);
-assert.match(source,/OnFailure=\\nOnFailureJobMode=replace\\nStartLimitAction=none/);
+assert.doesNotMatch(source,/printf[^\n]*OnFailure=\\n/,'Empty dependency resets do not work in systemd');
+assert.match(source,/FragmentPath --value xochitl.service\)" = "\$UNIT"/);
+assert.match(source,/DropInPaths --value xochitl.service\)" = "\$VENDOR \$DROP"/);
 assert.match(source,/UnsetEnvironment=LD_PRELOAD XOVI_ROOT QMLDIFF_HASHTAB_CREATE/);
-assert(source.indexOf('systemd-run --unit="${WATCH')<source.indexOf('write_dropin candidate\n'));
+assert(source.indexOf('systemd-run --unit="${WATCH')<source.indexOf('write_policy candidate\n'));
+assert(source.indexOf('write_policy candidate\n')<source.indexOf('systemctl restart xochitl.service'));
 assert.match(source,/cat "\$STATE\/mac-backup-verified"/);
 assert.match(source,/verify_files; verify_device; verify_log; no_app_running/);
 assert.match(source,/RuntimeMaxSec=360/);
@@ -42,16 +45,17 @@ ${defs}
 systemctl() { printf 'systemctl:%s\\n' "$*" >>"$STATE/calls"; }
 read_pid() { printf '%s\\n' "\${MOCK_OWNER_PID:-0}"; }
 verify_device() { printf 'verify-device\\n' >>"$STATE/calls"; }
-write_dropin() { printf 'dropin:%s\\n' "$1" >>"$STATE/calls"; }
-stock_process() { printf 'stock-proof\\n' >>"$STATE/calls"; }
+write_policy() { printf 'policy:%s\\n' "$1" >>"$STATE/calls"; }
+remove_owned_policy() { printf 'remove-owned-policy\\n' >>"$STATE/calls"; systemctl daemon-reload; }
+stock_process() { printf 'stock-proof\\n' >>"$STATE/calls"; if [ ! -e "$STATE/first-stock-check" ]; then touch "$STATE/first-stock-check"; return 1; fi; }
 root_ro() { printf 'root-ro\\n' >>"$STATE/calls"; }
 ${body}`],{env:{...process.env,...vars},encoding:'utf8'});
   return {dir,result};
 }
 const rollbackCase=shell('mark dates-started owned\nrollback timeout');
 const calls=fs.readFileSync(path.join(rollbackCase.dir,'calls'),'utf8');
-assert(calls.indexOf('systemctl:kill')<calls.indexOf('dropin:stock'));
-assert(calls.indexOf('systemctl:stop mock-owner')<calls.indexOf('dropin:stock'));
+assert(calls.indexOf('systemctl:kill')<calls.indexOf('policy:stock'));
+assert(calls.indexOf('systemctl:stop mock-owner')<calls.indexOf('policy:stock'));
 assert(calls.includes('systemctl:stop notebook-date-index.service'));
 assert(calls.indexOf('stock-proof')<calls.indexOf('systemctl:daemon-reload'));
 assert.equal(fs.readFileSync(path.join(rollbackCase.dir,'decision'),'utf8'),'rollback:20260921T000000Z-1\n');
@@ -59,7 +63,13 @@ assert(fs.existsSync(path.join(rollbackCase.dir,'rolled-back')));
 const unowned=shell('rollback owner-died');
 assert(!fs.readFileSync(path.join(unowned.dir,'calls'),'utf8').includes('stop notebook-date-index.service'));
 const retried=shell('mark rollback-ready "rollback:$ID"\nln "$STATE/rollback-ready" "$STATE/decision"\nrollback watchdog-retry\nrollback late-retry');
-assert.equal((fs.readFileSync(path.join(retried.dir,'calls'),'utf8').match(/dropin:stock/g)||[]).length,1,'An interrupted claim resumes; completed rollback is idempotent');
+assert.equal((fs.readFileSync(path.join(retried.dir,'calls'),'utf8').match(/policy:stock/g)||[]).length,1,'An interrupted claim resumes; completed rollback is idempotent');
+const alreadyStock=shell('touch "$STATE/first-stock-check"\nrollback policy-gate-failed');
+const alreadyStockCalls=fs.readFileSync(path.join(alreadyStock.dir,'calls'),'utf8');
+assert(!alreadyStockCalls.includes('policy:stock'));
+assert(!alreadyStockCalls.includes('systemctl:stop xochitl.service'));
+assert(!alreadyStockCalls.includes('systemctl:start xochitl.service'));
+assert(alreadyStockCalls.includes('remove-owned-policy'),'A pre-restart failure recovers without restarting a healthy stock process');
 // Check the actual stock predicate in a conditional (errexit is disabled there).
 const failedService=shell(`${fn('stock_process')}\nsystemctl() { return 1; }\nif stock_process; then exit 8; fi`);
 assert(!fs.existsSync(path.join(failedService.dir,'calls')));
@@ -71,6 +81,47 @@ const claim=shell('mark rollback-ready "rollback:$ID"\nln "$STATE/rollback-ready
 assert(fs.readFileSync(path.join(claim.dir,'decision'),'utf8').startsWith('rollback:'));
 const listing=shell('touch "$Q/a.qmd" "$Q/.hidden.qrr" "$Q/old.rcc" "$Q/hashtab"\nqmd_names');
 assert.equal(listing.result,'.hidden.qrr\na.qmd\nold.rcc\n');
+
+// The exact pinned vendor fixtures must differ from their shadows ONLY in the
+// two OnFailure lines. This tests generation, not systemd manager semantics.
+const firmware='/Users/mdf/code/remarkable-beta-os/.cache/firmware/3.29.0.148';
+for(const [file,pinned,shadow] of [
+  ['xochitl.service','23f537cf59d527bfbf4823f372385d613e1ade0961c98831c935a372018f9566','0cbc768bc2b28a15992e11185538c9ae7ce496fb354a75ab112ddd7f646ca863'],
+  ['xochitl-service-override.conf','a9432caffacb29d6fcb35136dcc3cb43d8737eb6c2efcb35ea335725f42082d1','9b9b319cc0c9173bcfee48ed9210937d292f4a8cea5e26011e5d23ee624af83c'],
+]){
+  const original=fs.readFileSync(path.join(firmware,file));
+  assert.equal(createHash('sha256').update(original).digest('hex'),pinned);
+  const transformed=execFileSync('sed',['/^[[:space:]]*OnFailure[[:space:]]*=/d'],{input:original});
+  assert.equal(createHash('sha256').update(transformed).digest('hex'),shadow);
+  assert.equal((original.toString().match(/^OnFailure=.+$/gm)||[]).length,1);
+  assert.equal(transformed.toString(),original.toString().replace(/^OnFailure=.+\n/gm,''));
+  assert(source.includes(shadow));
+}
+// Run the real ownership/cleanup functions against an isolated filesystem.
+// Mock only external manager and device checks; never invoke the entry point.
+const policyDefs=['absent','exact','hash','render_mode','owned_or_absent','remove_owned_policy','verify_runtime_policy'].map(fn).join('\n');
+const partial=shell(`${policyDefs}
+UNIT=$STATE/xochitl.service; VENDOR=$STATE/vendor.conf; DROP=$STATE/drop.conf; X=/home/root/xovi
+hash() { shasum -a 256 "$1" | cut -d' ' -f1; }
+readlink() { if [ "$1" = -f ]; then printf '%s\\n' "$2"; else command readlink "$@"; fi; }
+verify_policy_sources() { :; }
+baseline_policy() { absent "$UNIT" && absent "$VENDOR" && absent "$DROP"; }
+render_mode candidate >"$STATE/policy-candidate.conf"; render_mode stock >"$STATE/policy-stock.conf"
+sed '/^[[:space:]]*OnFailure[[:space:]]*=/d' '${firmware}/xochitl.service' >"$UNIT"
+cp "$STATE/policy-candidate.conf" "$DROP"
+remove_owned_policy
+baseline_policy`);
+assert(!fs.existsSync(path.join(partial.dir,'xochitl.service')));
+for(const foreign of ['content','symlink']){
+  assert.throws(()=>shell(`${policyDefs}
+UNIT=$STATE/xochitl.service; VENDOR=$STATE/vendor.conf; DROP=$STATE/drop.conf; X=/home/root/xovi
+hash() { shasum -a 256 "$1" | cut -d' ' -f1; }
+readlink() { if [ "$1" = -f ]; then printf '%s\\n' "$2"; else command readlink "$@"; fi; }
+verify_policy_sources() { :; }
+${foreign==='content'?'printf foreign >"$UNIT"':'ln -s foreign "$UNIT"'}
+remove_owned_policy`));
+}
+assert(source.indexOf('stock_process\n    # Remove only our three')<source.indexOf('remove_owned_policy\n    stock_process'));
 
 // Real filesystem hard-link races: exactly one complete decision wins, never
 // an empty marker or a directory claimed before contents exist.
@@ -86,4 +137,4 @@ for(let n=0;n<32;n++){
   assert.equal(results.filter(code=>code===0).length,1);
   assert(['commit:complete\n','rollback:complete\n'].includes(fs.readFileSync(path.join(dir,'decision'),'utf8')));
 }
-console.log('Pro 3.29 activation policy passed: syntax, pins, portability constraints, rollback ordering, ownership, late commit and 32 atomic races. Not device qualification.');
+console.log('Pro 3.29 activation policy passed: syntax, pins, exact shadow generation, partial-publication cleanup, foreign-file refusal, stock-no-restart recovery, rollback ordering, late commit and 32 atomic races. Not device qualification.');

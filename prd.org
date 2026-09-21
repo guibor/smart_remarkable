@@ -13,11 +13,21 @@
 - [ ] Seal new runtime table, pass full-stack gates, qualify recovery, then
   guarded restore and separately verify notebook launch/return and repaint.
 - [ ] Resolve the independent Smart runtime gate before functional promotion.
+- [X] Prove the actual manager can mask the new firmware's two failure targets
+  using only pinned volatile full-unit and vendor-drop-in shadows, without a
+  restart. The stock-only policy probe preserved PID 3381 and cleaned up.
+- [ ] Qualify revised controller owner-death fallback, then activate/commit.
 
 * Requirements changed for 3.29
 - The exact 3.28-only custom Dispatch repaint exception below is historical.
   AppLoad 0.6 fixes the underlying conversion; keep ordinary scaling enabled
   and omit the old QMD rather than applying competing behavior.
+- The initial 3.29 late-drop-in =OnFailure== reset was rejected before any
+  restart: dependency lists cannot be cleared that way. Replace it with a
+  volatile full unit plus same-basename vendor shadow, removing only the pinned
+  failure-target lines. Prove manager state before restart; remove only owned
+  shadows after stock recovery. Do not restore the unqualified old triple-tap
+  wrapper; post-reboot reactivation uses a fresh guarded Mac transaction.
 
 * Requirements
 

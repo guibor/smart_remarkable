@@ -87,8 +87,9 @@ the same ID. Do not execute an unreviewed or silently modified stage.
    then create its root-only `mac-backup-verified` with the exact text
    `mac-backup:BACKUP_SHA256`. Existing broad maintenance backups remain necessary.
 3. Run `activate` in `pro329-apps-install-ID.service` with Type=exec and
-   KillMode=control-group. It creates an independent watchdog, clears vendor
-   failure targets in its own `/run` override, starts existing Dates r6, and
+   KillMode=control-group. It creates an independent watchdog, shadows the pinned
+   vendor unit and same-basename vendor drop-in under `/run` without their failure
+   targets, checks the actual manager policy, starts existing Dates r6, and
    checks 30 seconds of stable runtime before publishing `ready`.
 4. Within the 180-second independent deadline, freshly inspect the state and run
    the separate `commit` action from the Mac. Without this fresh client action,
@@ -96,15 +97,44 @@ the same ID. Do not execute an unreviewed or silently modified stage.
    decision prevents late commits from racing rollback. Preserve the recovery log.
 
 Rollback never restores older notebook history/settings. It stops only the
-writer it started, masks vendor failure actions while restarting pinned stock,
-then removes its own volatile override after stock proof. No root remount,
+writer it started. If stock is already healthy (for example, a pre-restart gate
+failed), it restores the vendor policy without restarting xochitl. Otherwise it
+masks vendor failure actions while restarting pinned stock. After stock proof,
+it removes only the three exact owned volatile files and confirms the original
+manager fragment/drop-in paths. Unknown files and symlinks are refused. No root remount,
 permanent unit, autolaunched app, agent send or screen broadcast is involved.
-Local policy tests cover ordering/ownership/late decisions and 32 hard-link races;
+Local policy tests cover pinned byte-preserving shadow generation, partial
+publication, foreign-file refusal, stock-no-restart recovery, ordering/ownership/
+late decisions and 32 hard-link races;
 BusyBox portability excludes GNU find -printf and the absent install command.
 Live recovery qualification is a separate maintenance-owner gate.
 The watchdog itself restarts on failure, bounded to three persisted attempts.
 Retries retain the original deadline and resume only the same rollback decision;
 they do not reset the acceptance window. Exhaustion records manual intervention.
+
+### Failure-policy correction and live evidence
+
+The first controller tried to clear both vendor failure dependencies using an
+empty `OnFailure=` assignment. Its live assertion rejected the still-present
+targets **before any xochitl restart**; stock PID 3381 stayed healthy. This is a
+systemd dependency rule, not an app/QMD failure: dependency lists cannot be reset
+by empty drop-in assignments. See the official
+[systemd unit documentation](https://github.com/systemd/systemd/blob/v253/man/systemd.unit.xml)
+(unit load precedence, drop-in precedence, and the overriding-vendor-settings example).
+
+The revised route strips only `OnFailure=` from the pinned full unit and vendor
+drop-in, yielding SHA-256 `0cbc768bc2b28a15992e11185538c9ae7ce496fb354a75ab112ddd7f646ca863`
+and `9b9b319cc0c9173bcfee48ed9210937d292f4a8cea5e26011e5d23ee624af83c`.
+The maintenance owner's stock-only live probe
+`20260921T191215Z-6913-systemd-policy-probe` passed: the real manager selected both
+`/run` shadows, reported no failure targets, and returned to its original vendor
+paths on cleanup. PID 3381 did not change. This proves policy semantics, not the
+complete activation controller's owner-death fallback or physical app behavior.
+
+On commit these `/run` shadows remain only until reboot. After reboot, use a
+fresh exact-target inventory and this controller's prepare/backup/activate/commit
+route. Do not run the old ReMagic/triple-tap activation wrapper: its 3.28 inventory
+is not qualified for this stack, and no unattended replacement is installed.
 
 Offline results on 2026-09-21: captured-table full composition passed in three
 orders plus Dates preview, 29 resources each; generated QML parsing and old-
