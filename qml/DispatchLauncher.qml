@@ -32,7 +32,9 @@ Item {
             && application.id === applicationId
             && application.name === applicationName
             && application.externalType === 2
-            && application.aspectRatio === "original"
+            && application.aspectRatio === 0.75
+            && application.width === 0
+            && application.supportsRotation === false
             && application.disablesWindowedMode === true
             && application.supportsScaling === false;
     }
@@ -101,6 +103,8 @@ Item {
         if (!window.fullscreen)
             window.maximize();
         window.forceActiveFocus();
+        if (window.windowCanvas)
+            window.windowCanvas.forceActiveFocus();
     }
 
     function openDispatch() {
@@ -146,6 +150,7 @@ Item {
             y: 0,
             appName: application.name,
             supportsScaling: application.supportsScaling,
+            supportsRotation: false,
             disablesWindowedMode: application.disablesWindowedMode,
             virtualKeyboardLayout: application.virtualKeyboardLayout,
             virtualKeyboardRef: virtualKeyboard,
@@ -164,10 +169,16 @@ Item {
             return;
         }
 
-        window.closed.connect(function() { window.destroy(); });
+        window.closed.connect(function() {
+            // AppLoad 0.6's normal launcher clears only its own keyboard.
+            // Keep another application's keyboard intact on a reuse/close race.
+            if (virtualKeyboard.active && virtualKeyboard.config === window.keyboardConfig)
+                virtualKeyboard.active = false;
+            window.destroy();
+        });
         let pid = -1;
         try {
-            // AppLoad 0.5.0 exposes this exact four-argument Q_INVOKABLE.
+            // AppLoad 0.6.0 retains this exact four-argument Q_INVOKABLE.
             pid = library.launchExternal(application.id, qtfbKey, [], ({}));
         } catch (error) {
             console.warn("Dispatch shortcut launch exception:", String(error));

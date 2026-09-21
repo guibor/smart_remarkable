@@ -1,5 +1,24 @@
 #+title: Smart Remarkable Paper Pro Deployment
 
+* Pro 3.29.0.148 maintenance (2026-09-21)
+- Restore accepted functions on an independently qualified Pro stack, preserving
+  private configuration and the accepted Dispatch executable. Do not select the
+  newer standalone profile-client build merely because it is in dist/.
+- Adopt AppLoad 0.6's upstream repaint fix and remove our now-redundant repaint
+  QMD from the new explicit stack. Adapt only the notebook launcher contract.
+- Smart lasso buttons remain inert while the server's final pre-inference
+  admission gate is unavailable. Firmware restoration must not waive this gate.
+- No Move, server, worker, model/session or notebook-writer update is authorized
+  by this local firmware integration step.
+- [ ] Seal new runtime table, pass full-stack gates, qualify recovery, then
+  guarded restore and separately verify notebook launch/return and repaint.
+- [ ] Resolve the independent Smart runtime gate before functional promotion.
+
+* Requirements changed for 3.29
+- The exact 3.28-only custom Dispatch repaint exception below is historical.
+  AppLoad 0.6 fixes the underlying conversion; keep ordinary scaling enabled
+  and omit the old QMD rather than applying competing behavior.
+
 * Requirements
 
 - Both lasso actions must share Dispatch's maintained server-side reading,

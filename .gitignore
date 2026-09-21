@@ -1,6 +1,8 @@
 /target
 /tmp
 /.cache
+/build/pro-3.29.0.148/
+/build/pro-3.29-activation-policy/
 /bridge/node_modules
 /.env
 .aider*

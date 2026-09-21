@@ -1,5 +1,57 @@
 # Design
 
+## Pro 3.29.0.148 integration (2026-09-21, offline candidate)
+
+This isolated branch contains new exact-firmware inert Smart and functional/inert
+Dispatch-menu QMDs. No functional Smart 3.29 patch is qualified: the server
+admission blocker below remains unchanged. No bridge/server or worker deployment
+is part of the firmware restoration.
+
+The base now selects audited upstream AppLoad 0.6.0. Its framebuffer controller
+performs dirty-rectangle coordinate conversion natively; the old custom Dispatch
+`allowScaling` patch must be absent from the new 11-QMD external inventory.
+`DispatchLauncher.isExactApplication` validates its numeric 0.75 aspect ratio,
+width 0, rotation disabled, and the existing fixed/fullscreen client contract.
+`bringForward` focuses the new native window canvas as AppLoad itself does.
+The close callback clears only this window's active keyboard configuration, not
+another application's keyboard. It then destroys only the owned window.
+
+`tests/dispatch-document-menu-harness.mjs` tests the new model/focus/cleanup
+contract and rejects legacy, ambiguous, rotated, missing or failed launches.
+`tests/pro-3.29-apps-test.mjs` builds six app candidate QMDs, pins accepted Dates
+and RMStream external payloads, composes all eleven external QMDs with embedded
+AppLoad resources in three orderings, parses generated QML, checks semantic
+anchors and firmware rejection, then runs the Qt Dispatch lifecycle harness.
+It is strictly offline; it never connects to a tablet or server. Structural
+diagnostic mapping does not replace runtime table qualification or recovery.
+See `PRO-3.29-PORT.md` for provenance, accepted binaries and remaining gates.
+
+`ops/activate-pro-3.29-fullstack.sh` is a new activation-only controller, not a
+package installer. It requires the exact published eleven-QMD inventory, pinned
+runtime/app bytes, unmodified settings, stock firmware and no other owner. Its
+`prepare` action captures a private app/history backup while the writer is stopped;
+activation requires an explicit off-device verification marker. `activate` runs
+under systemd, arms an independent owner-identity/deadline watchdog, installs its
+own volatile late-sorting xochitl override (clearing vendor failure targets), starts
+the unchanged Dates writer and validates a stable process/QMD log. It waits for
+a separate Mac `commit`; lost SSH or owner death cannot silently accept the run.
+
+The `rollback` function kills/quiesces the owner before replacing the override
+with a stock-only environment, stopping only the Dates service it created, and
+restarting stock under the same failure-target mask. Only after a valid stock
+process does it remove its own `/run` override. It never rewinds Dates history or
+device settings. Commit and rollback race on one atomic hard link whose complete
+contents identify the decision; there is no claimed-but-empty marker window.
+`tests/pro-3.29-activation-policy.mjs` extracts only helpers into a mocked local
+environment and checks rollback order, ownership, late decisions and filesystem
+races. It does not establish live recovery. Old 3.28 controllers remain untouched.
+The watchdog restarts after unexpected failure with at most three persisted
+attempts; it never extends the original deadline. A retry can resume only its
+own already-claimed rollback, and completed rollback is a no-op. Stock detection
+uses explicit failures and readable `/proc` checks because Bash disables errexit
+inside functions used as conditions. Persistent failure leaves an explicit
+manual-intervention marker rather than looping through unbounded restarts.
+
 ## Shared Dispatch interpretation (2026-09-19)
 
 **Deployment status:** prepared and tested locally, not active. The installed

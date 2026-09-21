@@ -53,6 +53,15 @@ FocusScope {
     property bool disablesWindowedMode: false
     property string appName: ""
     property bool supportsScaling: false
+    property bool supportsRotation: false
+    property alias windowCanvas: canvas
+    property var keyboardConfig: ({id: "dispatch"})
+    property int canvasFocusCalls: canvas.focusCalls
+    QtObject {
+        id: canvas
+        property int focusCalls: 0
+        function forceActiveFocus() { focusCalls++; }
+    }
     property var qtfbKey: -1
     property int appPid: -1
     property bool minimized: false
@@ -63,7 +72,6 @@ FocusScope {
     signal closed
     function maximize() { maximizeCalls++; fullscreen = !fullscreen; }
     function simulateCoordinatorUnload() {
-        virtualKeyboardRef.active = false;
         closed();
     }
 }
@@ -115,7 +123,9 @@ Rectangle {
             id: "external::remarkable-dispatch",
             name: "Dispatch",
             externalType: 2,
-            aspectRatio: "original",
+            aspectRatio: 0.75,
+            width: 0,
+            supportsRotation: false,
             disablesWindowedMode: true,
             supportsScaling: false,
             virtualKeyboardLayout: null
@@ -177,6 +187,7 @@ Rectangle {
         primaryWindow.appPid = 4242;
 
         keyboard.active = true;
+        keyboard.config = primaryWindow.keyboardConfig;
         primaryWindow.simulateCoordinatorUnload();
         Qt.callLater(afterClose);
     }
@@ -230,10 +241,22 @@ Rectangle {
             check(panel.appLibrary.launches === 0 && findWindows().length === 0, "missing app fails without launch");
 
             const wrong = exactApp();
-            wrong.aspectRatio = "move";
+            wrong.aspectRatio = 0.5625;
             panel.appLibrary.applications = [wrong];
             panel.openDispatch();
             check(panel.appLibrary.launches === 0, "wrong app contract fails without launch");
+
+            const legacy = exactApp();
+            legacy.aspectRatio = "original";
+            panel.appLibrary.applications = [legacy];
+            panel.openDispatch();
+            check(panel.appLibrary.launches === 0, "old AppLoad string contract fails closed");
+
+            const rotating = exactApp();
+            rotating.supportsRotation = true;
+            panel.appLibrary.applications = [rotating];
+            panel.openDispatch();
+            check(panel.appLibrary.launches === 0, "unqualified rotation fails closed");
 
             panel.appLibrary.applications = [exactApp(), exactApp()];
             panel.openDispatch();
@@ -258,6 +281,7 @@ Rectangle {
             check(primary.minWidth === 400 && primary.minHeight === 533, "minimum original-device dimensions");
             check(primary.implicitWidth === 400 && primary.implicitHeight === 533, "implicit original-device dimensions");
             check(primary.virtualKeyboardRef === keyboard, "shared AppLoad keyboard wired");
+            check(!primary.supportsRotation && primary.canvasFocusCalls === 1, "fixed Pro framebuffer focused without rotation");
 
             panel.openDispatch();
             check(panel.appLibrary.launches === 1, "second tap reuses existing window");
