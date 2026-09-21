@@ -1,9 +1,35 @@
-# Pro 3.29.0.148 local integration candidate
+# Pro 3.29.0.148 restoration receipt
 
-This branch is not deployed. It contains no device/server mutation. Exact stock
+The exact Pro runtime was restored and committed on 2026-09-21. Physical feature
+acceptance remains pending; Smart lasso controls remain inert. Exact stock
 SHA-256: `4f433281c71a29d07921665b4724420735f3c88aceb431067f3a432b3f89f6a4`.
 AppLoad v0.6.0 source: `7ec0830c97570bf5c607f3f458ea78edfa03e5a3`.
 Release: <https://github.com/asivery/rm-appload/releases/tag/v0.6.0>.
+
+## Live restoration receipt
+
+The maintenance owner completed transaction `20260921T193500Z-3` using controller
+SHA-256 `d153c5d6e001cec979f472c35f074d5b66325df2c56e9e149ffed8cb1f0a2173`,
+stage manifest `f98cbcf05e5af03dc85f80e057c6582109cdb40f43ac2098daed7a98e9dbac6c`
+and the eleven-QMD inventory
+`5fe7e2ec3291efa692c90df769ea521d9e399d3da6e7448f9a9071caca71652d`.
+Its safety archive was copied and verified on the Mac at
+`77df2b4108f7dc82276a3bf1ec516b09aa728a142f73e6a028744e3b4779966d`.
+
+Ready state was inspected at 19:37:13 UTC and a fresh Mac commit succeeded.
+At 19:37:47 UTC, xochitl PID 14472 and Dates PID 14463 were active with zero
+automatic restarts; the owner/watchdog were inactive, the lock was absent and
+root remained read-only. Exact mappings, eleven QMD loads, environment and strict
+log checks passed. Private configuration and both Gestik hashes were unchanged.
+Normal `vellum update` also passed with 578 packages.
+The post-deadline check at 19:39:06 UTC confirmed the same two PIDs and zero
+restarts, all eleven QMD hashes and five runtime libraries, with root read-only;
+the temporary awake inhibitor was then stopped.
+
+This is machine/runtime acceptance, not proof of physical pen, navigation,
+Dispatch launch/return, or screen-sharing behavior. No Move/server mutation,
+Smart functional promotion, agent request or automatic broadcast occurred.
+Dates cross-notebook transfer remains separate and unimplemented.
 
 ## Upstream review
 

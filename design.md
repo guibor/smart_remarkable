@@ -1,6 +1,15 @@
 # Design
 
-## Pro 3.29.0.148 integration (2026-09-21, offline candidate)
+## Pro 3.29.0.148 integration (2026-09-21, runtime restored)
+
+Transaction `20260921T193500Z-3` committed the exact eleven-QMD stack with
+AppLoad 0.6 after fresh Mac acceptance. At 19:37:47 UTC, xochitl PID 14472 and
+Dates PID 14463 were active with zero automatic restarts, both temporary owners
+were inactive, the lock was gone and root remained read-only. Runtime mappings,
+QMD/log/environment guards and unchanged private/Gestik configuration passed.
+`PRO-3.29-PORT.md` records complete controller, inventory, stage and backup hashes.
+Physical UI behavior remains unverified; no functional Smart or server release
+is implied by this successful firmware restoration.
 
 This isolated branch contains new exact-firmware inert Smart and functional/inert
 Dispatch-menu QMDs. No functional Smart 3.29 patch is qualified: the server
@@ -46,8 +55,9 @@ This replaces the initial empty-`OnFailure=` attempt: systemd dependency lists
 cannot be reset by empty drop-in assignments. That attempt stopped at its live
 gate before restarting xochitl. A separately guarded stock-only shadow probe
 passed the real manager checks without changing stock PID 3381, then removed its
-shadows and restored the exact vendor policy. The complete activation/owner-death
-recovery remains a separate live qualification step.
+shadows and restored the exact vendor policy. Independent failure-triggered
+recovery was subsequently exercised by the rejected second trial below; the
+third trial's successful runtime commit is recorded above.
 
 The `rollback` function kills/quiesces the owner first. If stock is already
 healthy, it removes the owned policy without restarting the UI. Otherwise it

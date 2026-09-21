@@ -10,13 +10,16 @@
   admission gate is unavailable. Firmware restoration must not waive this gate.
 - No Move, server, worker, model/session or notebook-writer update is authorized
   by this local firmware integration step.
-- [ ] Seal new runtime table, pass full-stack gates, qualify recovery, then
-  guarded restore and separately verify notebook launch/return and repaint.
+- [X] Seal new runtime table, pass full-stack gates, qualify failure recovery,
+  and guardedly restore. Transaction =20260921T193500Z-3= committed at stable
+  UI PID 14472 / Dates PID 14463, zero restarts, unchanged settings and root ro.
+- [ ] Physically verify notebook launch/return, pen repaint and restored controls.
 - [ ] Resolve the independent Smart runtime gate before functional promotion.
 - [X] Prove the actual manager can mask the new firmware's two failure targets
   using only pinned volatile full-unit and vendor-drop-in shadows, without a
   restart. The stock-only policy probe preserved PID 3381 and cleaned up.
-- [ ] Qualify revised controller owner-death fallback, then activate/commit.
+- [X] Exercise the independent controller's failure-triggered stock fallback,
+  then activate/commit the corrected stack; physical acceptance remains separate.
 - [X] Preserve the complete previously qualified QRR environment, including
   local-file XHR read/write, and verify it in the candidate process. Trial 2
   rejected theme-token errors and safely restored stock PID 11162; no commit.
