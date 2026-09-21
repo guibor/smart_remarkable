@@ -131,6 +131,24 @@ The maintenance owner's stock-only live probe
 paths on cleanup. PID 3381 did not change. This proves policy semantics, not the
 complete activation controller's owner-death fallback or physical app behavior.
 
+The second full trial `20260921T191800Z-2` then loaded all eleven QMDs and AppLoad
+but was rejected by the strict log gate for obsolete BetterTOC theme-token
+references. The independent watchdog restored stock PID 11162 with zero automatic
+restarts and the original vendor unit/drop-in paths. No activation was committed.
+BetterTOC r1 fixes its separator, disabled-link color and notification-close icon.
+This controller also restores the complete environment from the already pinned
+QRR config: `QML_DISABLE_DISK_CACHE=1`, `QML_XHR_ALLOW_FILE_WRITE=1` and
+`QML_XHR_ALLOW_FILE_READ=1`. Merely setting XOVI_ROOT did not apply that config.
+Candidate and stock process checks now verify those permissions explicitly;
+stock must have none of the XOVI/QML runtime variables. Regression tests retain
+strict TypeError rejection and add undefined-color and disabled-local-XHR errors.
+The r1 full composition again passed all three orderings plus Dates preview
+(29 resources), generated QML parsing, theme-token regressions, old-firmware
+rejection and the Dispatch lifecycle harness. The installed inventory now has
+SHA-256 `5fe7e2ec3291efa692c90df769ea521d9e399d3da6e7448f9a9071caca71652d`;
+only BetterTOC changed to `f1113c1702e2ebd5ef0167d310b7e1d5c26695e175c4d70d09116d53f8bc323e`.
+All ten other QMDs and accepted external app payloads remain byte-identical.
+
 On commit these `/run` shadows remain only until reboot. After reboot, use a
 fresh exact-target inventory and this controller's prepare/backup/activate/commit
 route. Do not run the old ReMagic/triple-tap activation wrapper: its 3.28 inventory

@@ -60,7 +60,7 @@ verify_stage() {
     [ "$(stat -c %u:%g:%a "$STAGE/qmd.sha256")" = 0:0:600 ]
     [ "$(stat -c %u:%g:%a "$STAGE/SHA256SUMS")" = 0:0:600 ]
     # Manifest content is additionally pinned in the reviewed script below.
-    exact "$STAGE/qmd.sha256" 6dadc2f4a6317c7a3edf32b4535c2a35afdd562b58ff08aa6b1421a18b0b932a
+    exact "$STAGE/qmd.sha256" 5fe7e2ec3291efa692c90df769ea521d9e399d3da6e7448f9a9071caca71652d
 }
 verify_device() {
     [ "$(tr -d '\r\n' </sys/devices/soc0/machine)" = 'reMarkable Ferrari' ] || return 1
@@ -130,6 +130,26 @@ no_app_running() {
         esac
     done
 }
+verify_environment() {
+    local mode=$1 environment=$2 expected
+    case "$mode" in
+        candidate)
+            for expected in "LD_PRELOAD=$X/xovi.so" "XOVI_ROOT=$X/services/xochitl.service/" \
+                QML_DISABLE_DISK_CACHE=1 QML_XHR_ALLOW_FILE_WRITE=1 QML_XHR_ALLOW_FILE_READ=1 MALLOC_ARENA_MAX=8; do
+                [ "$(printf '%s\n' "$environment" | grep -Fxc "$expected")" -eq 1 ] || return 1
+            done
+            [ "$(printf '%s\n' "$environment" | grep -Ec '^(LD_PRELOAD|XOVI_ROOT|QML_DISABLE_DISK_CACHE|QML_XHR_ALLOW_FILE_WRITE|QML_XHR_ALLOW_FILE_READ|QMLDIFF_HASHTAB_CREATE)=')" -eq 5 ];;
+        stock)
+            ! printf '%s\n' "$environment" | grep -Eq '^(LD_PRELOAD|XOVI_ROOT|QML_DISABLE_DISK_CACHE|QML_XHR_ALLOW_FILE_WRITE|QML_XHR_ALLOW_FILE_READ|QMLDIFF_HASHTAB_CREATE)=';;
+        *) return 1;;
+    esac
+}
+verify_process_environment() {
+    local environment
+    [ -r "/proc/$1/environ" ] || return 1
+    environment=$(tr '\0' '\n' <"/proc/$1/environ") || return 1
+    verify_environment "$2" "$environment"
+}
 stock_process() {
     # Explicit returns matter: rollback calls this function in an AND-list,
     # where Bash deliberately disables errexit inside the whole function.
@@ -139,7 +159,7 @@ stock_process() {
     [ "$(readlink -f "/proc/$p/exe")" = /usr/bin/xochitl ] || return 1
     [ -r "/proc/$p/maps" ] && [ -r "/proc/$p/environ" ] || return 1
     ! grep -Fq "$X/xovi.so" "/proc/$p/maps" || return 1
-    ! tr '\0' '\n' <"/proc/$p/environ" | grep -q '^LD_PRELOAD=.' || return 1
+    verify_process_environment "$p" stock || return 1
     [ "$(systemctl show -p NRestarts --value xochitl.service)" = 0 ]
 }
 candidate_process() {
@@ -147,6 +167,7 @@ candidate_process() {
     systemctl is-active --quiet notebook-date-index.service
     local p item; p=$(read_pid xochitl.service); [[ "$p" =~ ^[1-9][0-9]*$ ]]
     [ "$(readlink -f "/proc/$p/exe")" = /usr/bin/xochitl ]
+    verify_process_environment "$p" candidate
     for item in "$X/xovi.so" "$EXT/qt-resource-rebuilder.so" "$EXT/appload.so" "$EXT/xovi-message-broker.so" "$EXT/framebuffer-spy.so"; do
         awk -v expected="$item" '$NF == expected {found=1} END {exit !found}' "/proc/$p/maps"
     done
@@ -163,7 +184,7 @@ verify_log() {
     while read -r _ name; do
         [ "$(grep -Fc "[qmldiff]: Loading file $name" "$STATE/xochitl.log")" -eq 1 ]
     done <"$STAGE/qmd.sha256"
-    ! grep -Eiq 'Failed to load file|ReferenceError|TypeError|is not a type|Cannot assign|QQmlComponent: Component is not ready|Binding loop' "$STATE/xochitl.log"
+    ! grep -Eiq 'Failed to load file|ReferenceError|TypeError|is not a type|Cannot assign|Unable to assign|QQmlComponent: Component is not ready|Binding loop|XMLHttpRequest: Using .* on a local file is disabled' "$STATE/xochitl.log"
 }
 no_other_owner() {
     local units
@@ -183,9 +204,12 @@ render_mode() {
     printf '[Unit]\nOnFailureJobMode=replace\nStartLimitAction=none\n[Service]\nRestart=no\n'
     if [ "$1" = candidate ]; then
         printf 'Environment="LD_PRELOAD=%s/xovi.so" "XOVI_ROOT=%s/services/xochitl.service/" "QML_DISABLE_DISK_CACHE=1"\n' "$X" "$X"
+        # Preserve all three Environment entries in the already pinned QRR
+        # service configuration; XOVI_ROOT alone does not apply that drop-in.
+        printf 'Environment="QML_XHR_ALLOW_FILE_WRITE=1" "QML_XHR_ALLOW_FILE_READ=1"\n'
         printf 'StandardOutput=append:%s/xochitl.log\nStandardError=append:%s/xochitl.log\n' "$STATE" "$STATE"
     else
-        printf 'UnsetEnvironment=LD_PRELOAD XOVI_ROOT QMLDIFF_HASHTAB_CREATE\n'
+        printf 'UnsetEnvironment=LD_PRELOAD XOVI_ROOT QMLDIFF_HASHTAB_CREATE QML_DISABLE_DISK_CACHE QML_XHR_ALLOW_FILE_WRITE QML_XHR_ALLOW_FILE_READ\n'
     fi
 }
 make_policy_sources() {

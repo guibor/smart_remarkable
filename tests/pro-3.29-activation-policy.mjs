@@ -15,6 +15,9 @@ assert.doesNotMatch(source,/printf[^\n]*OnFailure=\\n/,'Empty dependency resets 
 assert.match(source,/FragmentPath --value xochitl.service\)" = "\$UNIT"/);
 assert.match(source,/DropInPaths --value xochitl.service\)" = "\$VENDOR \$DROP"/);
 assert.match(source,/UnsetEnvironment=LD_PRELOAD XOVI_ROOT QMLDIFF_HASHTAB_CREATE/);
+assert.match(source,/Environment="QML_XHR_ALLOW_FILE_WRITE=1" "QML_XHR_ALLOW_FILE_READ=1"/);
+assert.match(source,/Unable to assign/);
+assert.match(source,/XMLHttpRequest: Using/);
 assert(source.indexOf('systemd-run --unit="${WATCH')<source.indexOf('write_policy candidate\n'));
 assert(source.indexOf('write_policy candidate\n')<source.indexOf('systemctl restart xochitl.service'));
 assert.match(source,/cat "\$STATE\/mac-backup-verified"/);
@@ -81,10 +84,36 @@ const claim=shell('mark rollback-ready "rollback:$ID"\nln "$STATE/rollback-ready
 assert(fs.readFileSync(path.join(claim.dir,'decision'),'utf8').startsWith('rollback:'));
 const listing=shell('touch "$Q/a.qmd" "$Q/.hidden.qrr" "$Q/old.rcc" "$Q/hashtab"\nqmd_names');
 assert.equal(listing.result,'.hidden.qrr\na.qmd\nold.rcc\n');
+const acceptedEnvironment='LD_PRELOAD=/home/root/xovi/xovi.so\nXOVI_ROOT=/home/root/xovi/services/xochitl.service/\nQML_DISABLE_DISK_CACHE=1\nQML_XHR_ALLOW_FILE_WRITE=1\nQML_XHR_ALLOW_FILE_READ=1\nMALLOC_ARENA_MAX=8';
+const environmentCases=[
+  ['candidate',acceptedEnvironment,true],
+  ['candidate',acceptedEnvironment.replace('QML_XHR_ALLOW_FILE_READ=1\n',''),false],
+  ['candidate',acceptedEnvironment.replace('QML_XHR_ALLOW_FILE_WRITE=1','QML_XHR_ALLOW_FILE_WRITE=0'),false],
+  ['candidate',acceptedEnvironment+'\nQMLDIFF_HASHTAB_CREATE=1',false],
+  ['candidate',acceptedEnvironment+'\nQML_XHR_ALLOW_FILE_READ=1',false],
+  ['stock','MALLOC_ARENA_MAX=8\nPATH=/usr/bin:/bin',true],
+  ['stock','MALLOC_ARENA_MAX=8\nQML_XHR_ALLOW_FILE_READ=1',false],
+  ['stock','LD_PRELOAD=',false],
+];
+for(const [mode,environment,valid] of environmentCases){
+  shell(`${fn('verify_environment')}\nX=/home/root/xovi\nif verify_environment '${mode}' ${JSON.stringify(environment).replace(/\\n/g,'\n')}; then ${valid?'true':'exit 9'}; else ${valid?'exit 9':'true'}; fi`);
+}
+for(const error of [null,'TypeError: Cannot read property size of undefined','Unable to assign [undefined] to QColor','XMLHttpRequest: Using GET on a local file is disabled by default.']){
+  const qmdLines=manifest.trim().split('\n').map(line=>'[qmldiff]: Loading file '+line.trim().split(/\s+/)[1]).join('\n')+'\n';
+  shell(`${fn('verify_log')}
+STAGE=$STATE
+printf '%s' '${manifest}' >"$STAGE/qmd.sha256"
+printf '%s' '${qmdLines+(error||'')}' >"$STATE/xochitl.log"
+if verify_log; then ${error?'exit 9':'true'}; else ${error?'true':'exit 9'}; fi`);
+}
 
 // The exact pinned vendor fixtures must differ from their shadows ONLY in the
 // two OnFailure lines. This tests generation, not systemd manager semantics.
 const firmware='/Users/mdf/code/remarkable-beta-os/.cache/firmware/3.29.0.148';
+const acceptedQrr=fs.readFileSync(path.join(firmware,'qt-resource-rebuilder.conf'),'utf8');
+assert.equal(createHash('sha256').update(acceptedQrr).digest('hex'),'6036f7776f8775529f94056fafe066ff373f5aa6bca39633bfd4dabfc1552ffd');
+const rendered=shell(`${fn('render_mode')}\nX=/home/root/xovi\nrender_mode candidate`).result;
+for(const [,entry] of acceptedQrr.matchAll(/^Environment="([^"]+)"$/gm)) assert(rendered.includes('"'+entry+'"'),entry);
 for(const [file,pinned,shadow] of [
   ['xochitl.service','23f537cf59d527bfbf4823f372385d613e1ade0961c98831c935a372018f9566','0cbc768bc2b28a15992e11185538c9ae7ce496fb354a75ab112ddd7f646ca863'],
   ['xochitl-service-override.conf','a9432caffacb29d6fcb35136dcc3cb43d8737eb6c2efcb35ea335725f42082d1','9b9b319cc0c9173bcfee48ed9210937d292f4a8cea5e26011e5d23ee624af83c'],
@@ -137,4 +166,4 @@ for(let n=0;n<32;n++){
   assert.equal(results.filter(code=>code===0).length,1);
   assert(['commit:complete\n','rollback:complete\n'].includes(fs.readFileSync(path.join(dir,'decision'),'utf8')));
 }
-console.log('Pro 3.29 activation policy passed: syntax, pins, exact shadow generation, partial-publication cleanup, foreign-file refusal, stock-no-restart recovery, rollback ordering, late commit and 32 atomic races. Not device qualification.');
+console.log('Pro 3.29 activation policy passed: syntax, pins, exact shadow generation, accepted environment parity, strict error logs, partial-publication cleanup, foreign-file refusal, stock-no-restart recovery, rollback ordering, late commit and 32 atomic races. Not device qualification.');

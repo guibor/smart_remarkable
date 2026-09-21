@@ -93,6 +93,14 @@ for(const [name,qmds] of variants) {
   const toolbar=read('qt/qml/xofm/libs/toolbar/qml/Toolbar.qml');
   assert(toolbar.indexOf('id: ndiDatesButton')<toolbar.indexOf('id: tocButton'),'Dates precedes BetterTOC');
   assert.match(toolbar,/stockShowableToolsCount/);
+  assert.doesNotMatch(toolbar,/Values\.colorMidGray/,'Removed 3.29 color token must not survive composition');
+  assert.match(toolbar,/ArkTokens\.Toolbar\.primary\.foldout\.divider\.fill/);
+  const toc=read('qml/device/view/documentview/TableOfContent.qml');
+  assert.doesNotMatch(toc,/Values\.colorMidGray/);
+  assert.match(toc,/ArkTokens\.Style\.interaction\.icon\.disabled/);
+  const notification=read('qt/qml/xofm/libs/system/qml/StatusIndicatorNotification.qml');
+  assert.doesNotMatch(notification,/Style\.variable\.icon/,'Removed 3.29 icon-size token must not survive composition');
+  assert.match(notification,/root\.type\.message\.icon\.sizing/);
   const menu=read('qt/qml/xofm/libs/toolbar/qml/SettingsMenu.qml');
   assert.match(menu,/label: "Dispatch"/); assert.match(menu,/Start screen sharing/); assert.match(menu,/label: "Dates"/);
   for(const p of ['qml/device/view/documentview/DocumentView.qml','qml/device/view/documentview/PagesActions.qml','qml/device/view/documentview/HwcDialog.qml','qt/qml/xofm/modules/library/ui/qml/LibraryActions.qml']) {
@@ -123,6 +131,7 @@ fs.writeFileSync(path.join(out,'dispatch-harness.log'),log);
 assert.equal(checked.status,0,checked.error?.message||log);
 assert.match(log,/Dispatch document-menu runtime PASSED/);
 fs.writeFileSync(path.join(out,'qmd-sha256.txt'),fs.readdirSync(runtime).sort().map(n=>sha(path.join(runtime,n))+'  '+n+'\n').join(''));
+if(!structuralOnly) assert.equal(fs.readFileSync(path.join(out,'qmd-sha256.txt'),'utf8'),fs.readFileSync(path.join(repo,'ops/pro-3.29-qmd.sha256'),'utf8'),'Composed runtime must match the controller inventory exactly');
 fs.writeFileSync(path.join(out,'ordered-full-stack.sha256'),[appQmd,...ordered].map(p=>sha(p)+'  '+p+'\n').join(''));
 const report={status:'offline-composition-passed-not-deployed',structuralOnly,tableSha256:sha(table),qmdCount:11,embeddedQmdCount:1,counts,runtime,inputs};
 fs.writeFileSync(path.join(out,'qualification.json'),JSON.stringify(report,null,2)+'\n');

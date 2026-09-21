@@ -70,6 +70,18 @@ uses explicit failures and readable `/proc` checks because Bash disables errexit
 inside functions used as conditions. Persistent failure leaves an explicit
 manual-intervention marker rather than looping through unbounded restarts.
 
+The second live trial loaded all eleven QMDs and AppLoad, then the strict log
+gate rejected BetterTOC's stale theme-token references. Its watchdog successfully
+restored stock PID 11162, zero automatic restarts and original vendor unit paths.
+The same trial exposed missing local-file XHR permissions: pointing XOVI_ROOT at
+a directory does not install its systemd configuration. `render_mode` now
+explicitly preserves all three entries from the already pinned QRR service config
+(cache disabled, local XHR read/write enabled). The `verify_environment` and
+`verify_process_environment` helpers require exact expected values in the running
+candidate and their absence in stock. The log gate also rejects undefined-color
+assignments and disabled-local-XHR warnings; it was not relaxed to accept the
+failed trial. BetterTOC's r1 owns the theme-token correction.
+
 ## Shared Dispatch interpretation (2026-09-19)
 
 **Deployment status:** prepared and tested locally, not active. The installed

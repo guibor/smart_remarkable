@@ -17,6 +17,9 @@
   using only pinned volatile full-unit and vendor-drop-in shadows, without a
   restart. The stock-only policy probe preserved PID 3381 and cleaned up.
 - [ ] Qualify revised controller owner-death fallback, then activate/commit.
+- [X] Preserve the complete previously qualified QRR environment, including
+  local-file XHR read/write, and verify it in the candidate process. Trial 2
+  rejected theme-token errors and safely restored stock PID 11162; no commit.
 
 * Requirements changed for 3.29
 - The exact 3.28-only custom Dispatch repaint exception below is historical.
