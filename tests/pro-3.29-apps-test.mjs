@@ -8,9 +8,9 @@ import {execFileSync, spawnSync} from 'node:child_process';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const worktrees = path.dirname(repo);
-const dates = path.join(worktrees, 'notebook-date-index-pro-3290148');
-const stream = path.join(worktrees, 'appload-rmstream-beta-pro-3290148');
-const fw = '3.29.0.148';
+const dates = path.join(worktrees, 'notebook-date-index-pro-3290152');
+const stream = path.join(worktrees, 'appload-rmstream-beta-pro-3290152');
+const fw = '3.29.0.152';
 const firmware = process.env.RM_PRO_FIRMWARE_DIR || '/Users/mdf/code/remarkable-beta-os/.cache/firmware/'+fw;
 const table = process.env.RM_PRO_HASHTAB || path.join(firmware, 'hashtab');
 const tool = process.env.QMLDIFF_BIN || '/Users/mdf/code/remarkable-beta-os/.cache/tools/qmldiff-25681c3-bin';
@@ -22,14 +22,14 @@ const run = (cmd, args, cwd=repo) => execFileSync(cmd, args, {cwd, stdio:'inheri
 const files = dir => fs.readdirSync(dir, {withFileTypes:true}).flatMap(e =>
   e.isDirectory() ? files(path.join(dir,e.name)) : [path.join(dir,e.name)]);
 
-exact(path.join(firmware, 'xochitl'), '4f433281c71a29d07921665b4724420735f3c88aceb431067f3a432b3f89f6a4');
+exact(path.join(firmware, 'xochitl'), '7aa5d67da6850d7021ade5a2232edeb5f34550236eca6f7a102f37f962dd4bd2');
 exact(path.join(firmware, 'appload-0.6.so'), '5b2dd6c066da6932d88a1d62be1068ca5ba751f481636dd51f727221db62e3ad');
 exact(path.join(firmware, 'appload-0.6-embedded.qmd'), '69147587485e8f90336f8e504f48ffebb39212b47572d9cd990b7cfd12ec692a');
 exact(tool, '5d48704b2b55702bf553f65e0fac46bc2eacd72d3d995ac52b379df7e0ce973d');
 assert(fs.statSync(table).isFile(), 'A separately derived exact-target hashtable is required');
 // Until a runtime-derived table is sealed by the maintenance owner, this gate
 // establishes structural/source compatibility only, never deployment approval.
-const runtimeTableSha256 = '1f2a0f7177dac3cdfc030ff32b4643170dd2ef6e2f6c6369b4c4168513ce01f0';
+const runtimeTableSha256 = '5d5e9e6fe21a9dfbed27306aa57b137e3efdf59f5ba904df4440e222cdd2fe86';
 const structuralOnly = sha(table) !== runtimeTableSha256;
 if(table === path.join(firmware,'hashtab')) exact(table,runtimeTableSha256);
 fs.mkdirSync(out, {recursive:true});
@@ -42,7 +42,8 @@ exact(path.join(stream,'qml/ScreenSharing.qml'), 'bc453c77f41e04778642bdaa15db59
 const compile = (source, destination) => {
   fs.copyFileSync(source,destination);
   run(tool, ['hash-diffs', table, destination]);
-  run(tool, ['check-compatibility', table, destination]);
+  const compatibility = execFileSync(tool, ['check-compatibility', table, destination], {encoding:'utf8'}).trim();
+  assert.equal(compatibility, 'No compatibility errors found.', destination);
 };
 compile(path.join(dates,'build/notebook-date-index.source.qmd'), path.join(runtime,'notebook-date-index.qmd'));
 compile(path.join(stream,'shortcut.source.qmd'), path.join(runtime,'rmstream-shortcut.qmd'));
@@ -131,7 +132,7 @@ fs.writeFileSync(path.join(out,'dispatch-harness.log'),log);
 assert.equal(checked.status,0,checked.error?.message||log);
 assert.match(log,/Dispatch document-menu runtime PASSED/);
 fs.writeFileSync(path.join(out,'qmd-sha256.txt'),fs.readdirSync(runtime).sort().map(n=>sha(path.join(runtime,n))+'  '+n+'\n').join(''));
-if(!structuralOnly) assert.equal(fs.readFileSync(path.join(out,'qmd-sha256.txt'),'utf8'),fs.readFileSync(path.join(repo,'ops/pro-3.29-qmd.sha256'),'utf8'),'Composed runtime must match the controller inventory exactly');
+if(!structuralOnly) assert.equal(fs.readFileSync(path.join(out,'qmd-sha256.txt'),'utf8'),fs.readFileSync(path.join(repo,'ops/pro-3.29.0.152-qmd.sha256'),'utf8'),'Composed runtime must match the controller inventory exactly');
 fs.writeFileSync(path.join(out,'ordered-full-stack.sha256'),[appQmd,...ordered].map(p=>sha(p)+'  '+p+'\n').join(''));
 const report={status:'offline-composition-passed-not-deployed',structuralOnly,tableSha256:sha(table),qmdCount:11,embeddedQmdCount:1,counts,runtime,inputs};
 fs.writeFileSync(path.join(out,'qualification.json'),JSON.stringify(report,null,2)+'\n');

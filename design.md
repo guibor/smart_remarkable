@@ -1,5 +1,28 @@
 # Design
 
+## Exact .152 base controller (coordinated local handoff)
+
+`ops/activate-pro-3.29.0.152-fullstack.sh` is a separate exact-target copy of
+the accepted .148 stock-to-base controller. Only firmware/build/stock/table,
+the final eleven-QMD manifest and current Dispatch binary/external-manifest
+pins change. Its atomic commit/rollback, independent watchdog, full-unit and
+same-basename failure-policy shadows, settings checks and off-device backup
+requirement are unchanged. Restyle and Companion are deliberately absent here;
+the Companion owner prepares their subsequent combined overlay controller.
+`RM_ACTIVATION_VERSION=3.29.0.152 node tests/pro-3.29-activation-policy.mjs`
+runs the existing focused policy/race harness on this new file. ReManager owns
+all staging, publication and device activation. This local handoff is not a
+claim of device activation or physical acceptance.
+
+## Pro 3.29.0.152 preparation
+
+New version-pinned QMD source files preserve inert Smart and functional/inert
+Dispatch document-menu variants. The existing offline cross-repository test
+now targets the isolated .152 Dates/RMStream branches and fresh stock cache.
+The prior controller and .148 receipt remain historical, not deployment inputs.
+The maintenance task owns device operations and the complete native integration.
+There is no Dispatch executable, server, or admission-policy change here.
+
 ## Pro 3.29.0.148 integration (2026-09-21, runtime restored)
 
 Transaction `20260921T193500Z-3` committed the exact eleven-QMD stack with
