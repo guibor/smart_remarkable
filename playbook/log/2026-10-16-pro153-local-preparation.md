@@ -24,3 +24,10 @@ the first .153 table. Four app QMDs and previews rebuilt successfully with
 candidate-only status. New full-cohort test consumes Dates `build/` (corrected
 from supplied `.build/`) and .153 RMStream source without sibling writes.
 Full composition/sealing still waits for the final package peers and table proof.
+
+Table proof subsequently arrived: both sorted dumps independently hash to
+`deb95682d991670d7dc006ddbb8e102ed9423f2f76ae1c878ad736f2885d8879`.
+Selected raw .153 table pinned at `927a5cac...917417`; app-hook tests and four-app
+build-only gate pass without diagnostic mode. All payload hashes were freshly
+confirmed unchanged by the coordinator. Only seven final peers/full-cohort
+composition remain before controller sealing; no external operation here.

@@ -30,7 +30,7 @@ exact(tool, '5d48704b2b55702bf553f65e0fac46bc2eacd72d3d995ac52b379df7e0ce973d');
 assert(fs.statSync(table).isFile(), 'A separately derived exact-target hashtable is required');
 // Until a runtime-derived table is sealed by the maintenance owner, this gate
 // establishes structural/source compatibility only, never deployment approval.
-const runtimeTableSha256 = 'PENDING_EXACT_153_RUNTIME_TABLE';
+const runtimeTableSha256 = '927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417';
 const structuralOnly = sha(table) !== runtimeTableSha256;
 if(process.argv.includes('--candidate-table')) exact(table,'927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417');
 else exact(table,runtimeTableSha256);

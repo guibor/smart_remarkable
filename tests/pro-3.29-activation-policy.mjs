@@ -5,10 +5,17 @@ import path from 'node:path';
 import {execFileSync,spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 const version=process.env.RM_ACTIVATION_VERSION||'3.29.0.148';
-assert(['3.29.0.148','3.29.0.152'].includes(version));
-const controller=version==='3.29.0.152'?'ops/activate-pro-3.29.0.152-fullstack.sh':'ops/activate-pro-3.29-fullstack.sh';
+assert(['3.29.0.148','3.29.0.152','3.29.0.153'].includes(version));
+const controller=version==='3.29.0.148'?'ops/activate-pro-3.29-fullstack.sh':`ops/activate-pro-${version}-fullstack.sh`;
 const source=fs.readFileSync(controller,'utf8');
-const manifest=fs.readFileSync(version==='3.29.0.152'?'ops/pro-3.29.0.152-qmd.sha256':'ops/pro-3.29-qmd.sha256','utf8');
+const manifest=fs.readFileSync(version==='3.29.0.148'?'ops/pro-3.29-qmd.sha256':`ops/pro-${version}-qmd.sha256`,'utf8');
+if(version==='3.29.0.153'){
+  assert.doesNotMatch(source,/PENDING_EXACT|exit 78/,'Unsealed controller cannot pass the activation policy gate');
+  assert.match(source,/IMG_VERSION="3\.29\.0\.153"/);
+  assert.match(source,/9d6d844d793b6242345c7c25667451620c48b2cc28986a21049fa8d534042dd4/);
+  assert.match(source,/927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417/);
+  assert.match(source,/profiles\/mdf-dot.json/);
+}
 const digest=createHash('sha256').update(manifest).digest('hex');
 assert(source.includes(digest));
 assert.equal(manifest.trim().split('\n').length,11);

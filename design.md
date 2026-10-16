@@ -2,6 +2,15 @@
 
 ## Pro 3.29.0.153 local preparation
 
+The .153 table is now sealed after two coordinator-owned captures and locally
+verified canonical dump equality. The default app-hook test and build-only
+four-app gate pass against that exact raw table. The activation controller
+remains disabled solely pending the seven final package peers and full-stack
+composition. `pro-3.29-activation-policy.mjs` now selects the .153 controller
+and explicitly rejects any pending sentinel or disabled-entry banner.
+The candidate-stage description below records the earlier phase, not runtime
+or physical acceptance.
+
 `tests/pro-3.29.0.153-apps-test.mjs` prepares the complete four-app plus seven
 package-peer base, retaining the previous semantic/ordering/preview checks.
 It consumes the Dates owner's actual `build/` outputs (not `.build/`) without

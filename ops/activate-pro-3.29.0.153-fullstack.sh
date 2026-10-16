@@ -3,7 +3,7 @@
 # transaction. No package install, root remount, boot hook, notebook or server edit.
 set -Eeuo pipefail
 umask 077
-# UNSEALED: exact .153 table/peer manifest/vendor policy await coordinator evidence.
+# UNSEALED: final .153 eleven-QMD peer manifest awaits coordinator evidence.
 # Deliberately stop before all entry-point actions, including prepare/watchdog.
 printf '%s\n' 'Unsealed .153 controller: local preparation only' >&2
 exit 78
@@ -91,7 +91,7 @@ verify_files() {
             *) return 1;;
         esac
     done < <(names "$EXT")
-    exact "$Q/hashtab" PENDING_EXACT_153_RUNTIME_TABLE
+    exact "$Q/hashtab" 927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417
     [ "$(readlink -f "$Q")" = "$Q" ] && [ ! -L "$Q" ]
     (cd "$Q" && sha256sum -c "$STAGE/qmd.sha256") >/dev/null
     [ "$(qmd_names)" = "$(awk '{print $2}' "$STAGE/qmd.sha256" | sort)" ]

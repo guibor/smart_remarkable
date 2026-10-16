@@ -23,8 +23,8 @@ exact(tool,'5d48704b2b55702bf553f65e0fac46bc2eacd72d3d995ac52b379df7e0ce973d');
 exact(path.join(previous,'appload-0.6.so'),'5b2dd6c066da6932d88a1d62be1068ca5ba751f481636dd51f727221db62e3ad');
 exact(path.join(previous,'appload-0.6-embedded.qmd'),'69147587485e8f90336f8e504f48ffebb39212b47572d9cd990b7cfd12ec692a');
 // A prior table is usable ONLY as an explicitly labelled source diagnostic.
-// A deployable gate will replace this sentinel with the coordinator's new pin.
-const runtimeTableHash = 'PENDING_EXACT_153_RUNTIME_TABLE';
+// Two independent .153 captures are canonically equal; pin the selected raw file.
+const runtimeTableHash = '927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417';
 if (!structuralOnly) exact(table,runtimeTableHash);
 else exact(table,'5d5e9e6fe21a9dfbed27306aa57b137e3efdf59f5ba904df4440e222cdd2fe86');
 

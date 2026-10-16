@@ -19,7 +19,7 @@ for(const name of ['rollback','owner_alive','decision_committed','mark','stock_p
 assert.match(source,/IMG_VERSION="3\.29\.0\.153"/);
 assert.match(source,/9d6d844d793b6242345c7c25667451620c48b2cc28986a21049fa8d534042dd4/);
 assert.doesNotMatch(source,/7aa5d67da6850d7021ade5a2232edeb5f34550236eca6f7a102f37f962dd4bd2/);
-assert.match(source,/PENDING_EXACT_153_RUNTIME_TABLE/);
+assert.match(source,/927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417/);
 assert.match(source,/PENDING_EXACT_153_ELEVEN_QMD_MANIFEST/);
 assert(source.indexOf('exit 78')<source.indexOf('ACTION='));
 assert.match(extract(source,'settings_snapshot'),/profiles\/mdf-dot.json/);

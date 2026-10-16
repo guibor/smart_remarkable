@@ -1,8 +1,38 @@
 # Pro .153 Smart/Dispatch local handoff
 
-Status: **app-hook structural checks passed; activation controller UNSEALED**.
+Status: **app-hook checks pass against the qualified .153 runtime table;
+activation controller UNSEALED pending seven package peers**.
 No tablet/server connection or write was performed by this task. The maintenance
 coordinator is the sole publisher/activator. Do not stage this controller yet.
+
+## Latest qualification update
+
+The table and payload-input blockers in the historical preparation notes below
+are resolved. Both independent runtime dumps sort to SHA-256
+`deb95682d991670d7dc006ddbb8e102ed9423f2f76ae1c878ad736f2885d8879`,
+independently recomputed here. The selected raw .153 table is pinned to
+`927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417`.
+Coordinator receipt: `profiles/pro-3.29.0.153-table.json`. All app-hook tests
+pass against it with `structuralOnly:false`; candidate hashes below are unchanged.
+
+Four runtime app outputs are ready in `build/pro-3.29.0.153/qmd/`:
+
+| File | SHA-256 |
+| --- | --- |
+| dispatch-document-menu-3.29.0.153.qmd | `d8a2e16cc478d28325ecb17acbd885c2933e85b4c81ea4aecca1e858f00dcddf` |
+| notebook-date-index.qmd | `3b8af61be70e7ba44027ec03487126b4881c76c441388d4710dbae3922371ac7` |
+| rmstream-shortcut.qmd | `2df377801c4c577faaa7a85fff6851712e3fe8bbc5b77e69b78ef60f6422feb5` |
+| smart-remarkable-llm.qmd | `5a39997620a99b2ef8fe54e5c166034df9861e3c2f78a9dfe711e10a4b7c622c` |
+
+All accepted client, manifest, launcher, worker, Dates and RMStream panel
+fingerprints were freshly verified unchanged by the coordinator. The supplied
+Dates path was corrected to `build/`; no sibling files were changed here.
+Only the final seven-package peer inventory/full composition remains before
+sealing the controller. Every controller action still exits 78. The policy test
+now accepts `.153` as a target but refuses a controller with pending pins or
+the disabled entry point. The full activation-policy test is not yet passable.
+
+## Earlier preparation notes (superseded by update above)
 
 Worktree: `/Users/mdf/code/.worktrees/smart-remarkable-pro-3290153`.
 Branch: `beta/pro/3.29.0.153`, based on .152 commit `c672ade`.

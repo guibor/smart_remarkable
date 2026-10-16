@@ -8,6 +8,8 @@
 - Keep the functional Dispatch document menu and inert Smart lasso buttons.
   AppLoad 0.6 owns repaint conversion; no old partial-repaint QMD is restored.
 - [ ] Seal the runtime-derived .153 table and exact eleven-QMD peer manifest.
+  - [X] Two captures canonical-equal; selected table pinned and app-hook checks pass.
+  - [ ] Seven package peers and exact full eleven-QMD manifest still required.
 - [X] Rebuild all four app-owned QMDs against the first captured .153 table,
   retaining candidate-only status pending the canonical-equal proof and peers.
 - [ ] Pass complete stock/AppLoad/eleven-QMD composition, then hand off the
