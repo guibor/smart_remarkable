@@ -1,5 +1,24 @@
 #+title: Smart Remarkable Paper Pro Deployment
 
+* Pro 3.29.0.153 maintenance (2026-10-16)
+- Prepare in a new exact-firmware worktree, without tablet or server writes.
+  The maintenance coordinator is the sole device writer.
+- Preserve the accepted Dispatch client, Dot-first profile, private settings,
+  manifest and approved icon. Shared Dot/OpenClaw services are independent.
+- Keep the functional Dispatch document menu and inert Smart lasso buttons.
+  AppLoad 0.6 owns repaint conversion; no old partial-repaint QMD is restored.
+- [ ] Seal the runtime-derived .153 table and exact eleven-QMD peer manifest.
+- [ ] Pass complete stock/AppLoad/eleven-QMD composition, then hand off the
+  activation-only controller for coordinator-owned backup/watchdog validation.
+- [ ] Record machine and physical acceptance separately; neither is implied
+  by local source/Qt harness tests.
+
+* Requirements changed for .153
+- .152 controls remain historical. New stock SHA-256 and firmware guards are
+  required even though the affected extracted QML is byte-identical. Until
+  runtime table and peers are supplied, the new controller must exit before
+  any action. Never substitute a structural table as runtime qualification.
+
 * Pro 3.29.0.152 maintenance (2026-10-10)
 - Local coordinated controller handoff: exact .152 stock-to-eleven-app-base
   controller prepared separately; old .148 controller remains historical.

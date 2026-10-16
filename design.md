@@ -1,5 +1,26 @@
 # Design
 
+## Pro 3.29.0.153 local preparation
+
+`tests/pro-3.29.0.153-dispatch-smart.mjs` pins the new stock binary, checks all
+five affected extracted resources against the preceding exact capture, compiles
+functional/inert Dispatch and inert Smart candidates, composes with pinned
+AppLoad 0.6 in both load orders, parses generated QML, checks wrong-firmware
+rejection and runs the existing offscreen launcher lifecycle harness. Explicit
+`--structural-only` uses the old pinned table strictly as a diagnostic; it does
+not qualify deployment or the eleven-QMD package cohort.
+
+`ops/activate-pro-3.29.0.153-fullstack.sh` retains the previous activation-only
+controller's backup, owner/watchdog, atomic decision, volatile policy shadows,
+stable process and settings checks. Its entry point is deliberately disabled
+until the coordinator supplies the exact runtime table and final eleven-QMD
+manifest; missing pins are named sentinels, never old .152 hash guesses.
+Vendor policy/runtime hashes were rechecked unchanged by the coordinator.
+The private-state snapshot also covers surviving Dispatch profiles and icon,
+including the accepted Dot-first setup. No client, worker, server or model
+change is included. The coordinator owns publication and activation, and
+Restyle/Companion/WebPDF additions remain their separately qualified overlay.
+
 ## Exact .152 base controller (coordinated local handoff)
 
 `ops/activate-pro-3.29.0.152-fullstack.sh` is a separate exact-target copy of
