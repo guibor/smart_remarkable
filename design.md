@@ -2,21 +2,19 @@
 
 ## Pro 3.29.0.153 local preparation
 
-The .153 table is now sealed after two coordinator-owned captures and locally
-verified canonical dump equality. The default app-hook test and build-only
-four-app gate pass against that exact raw table. The activation controller
-remains disabled solely pending the seven final package peers and full-stack
-composition. `pro-3.29-activation-policy.mjs` now selects the .153 controller
-and explicitly rejects any pending sentinel or disabled-entry banner.
-The candidate-stage description below records the earlier phase, not runtime
-or physical acceptance.
+The .153 table is sealed after two coordinator-owned captures and locally
+verified canonical dump equality. Full eleven-QMD composition and controller
+policy/race tests pass. The controller is sealed to the device-relative manifest
+in `ops/pro-3.29.0.153-qmd.sha256`; its exact frozen hash and artifact paths are
+in `PRO-3.29.0.153-HANDOFF.md`. Coordinator-reported activation is recorded
+separately from local tests and still does not establish physical acceptance.
 
 `tests/pro-3.29.0.153-apps-test.mjs` prepares the complete four-app plus seven
 package-peer base, retaining the previous semantic/ordering/preview checks.
 It consumes the Dates owner's actual `build/` outputs (not `.build/`) without
-writing to sibling worktrees. `--candidate-table` admits only the coordinator's
-first captured .153 hash and still labels results structural-only until the
-canonical-equal capture is confirmed and the runtime pin is sealed. `--build-only`
+writing to sibling worktrees. The runtime table is now pinned to the qualified
+.153 hash; the historical `--candidate-table` option selects that same hash.
+`--build-only`
 produces the four app QMDs and inert preview variants without claiming full
 cohort composition. AppLoad payloads are the unchanged hash-pinned 0.6 artifacts.
 
@@ -30,9 +28,10 @@ not qualify deployment or the eleven-QMD package cohort.
 
 `ops/activate-pro-3.29.0.153-fullstack.sh` retains the previous activation-only
 controller's backup, owner/watchdog, atomic decision, volatile policy shadows,
-stable process and settings checks. Its entry point is deliberately disabled
-until the coordinator supplies the exact runtime table and final eleven-QMD
-manifest; missing pins are named sentinels, never old .152 hash guesses.
+stable process and settings checks. Its entry point was enabled only after the
+exact runtime table and final eleven-QMD manifest passed full local qualification.
+The preparation test checks provenance, unchanged safety functions, exact pins,
+and rejection of incomplete entry arguments without touching device paths.
 Vendor policy/runtime hashes were rechecked unchanged by the coordinator.
 The private-state snapshot also covers surviving Dispatch profiles and icon,
 including the accepted Dot-first setup. No client, worker, server or model

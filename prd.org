@@ -7,15 +7,19 @@
   manifest and approved icon. Shared Dot/OpenClaw services are independent.
 - Keep the functional Dispatch document menu and inert Smart lasso buttons.
   AppLoad 0.6 owns repaint conversion; no old partial-repaint QMD is restored.
-- [ ] Seal the runtime-derived .153 table and exact eleven-QMD peer manifest.
+- [X] Seal the runtime-derived .153 table and exact eleven-QMD peer manifest.
   - [X] Two captures canonical-equal; selected table pinned and app-hook checks pass.
-  - [ ] Seven package peers and exact full eleven-QMD manifest still required.
+  - [X] Seven final package peers and exact full eleven-QMD manifest qualified.
 - [X] Rebuild all four app-owned QMDs against the first captured .153 table,
-  retaining candidate-only status pending the canonical-equal proof and peers.
-- [ ] Pass complete stock/AppLoad/eleven-QMD composition, then hand off the
+  now fully qualified after canonical-equal proof and final peer composition.
+- [X] Pass complete stock/AppLoad/eleven-QMD composition, then hand off the
   activation-only controller for coordinator-owned backup/watchdog validation.
-- [ ] Record machine and physical acceptance separately; neither is implied
-  by local source/Qt harness tests.
+- [X] Record coordinator-reported base machine acceptance: UI 6240, Dates 6231,
+  zero automatic restarts, all eleven QMDs; see exact artifact handoff.
+- [ ] Coordinator/user to verify physical launch, return, repaint and controls;
+  local tests and reported startup do not establish physical acceptance.
+- Next: preserve frozen base while the coordinator qualifies native overlays.
+  Move is a separate port; no Pro binary/settings qualification transfers.
 
 * Requirements changed for .153
 - .152 controls remain historical. New stock SHA-256 and firmware guards are

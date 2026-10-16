@@ -31,3 +31,19 @@ Selected raw .153 table pinned at `927a5cac...917417`; app-hook tests and four-a
 build-only gate pass without diagnostic mode. All payload hashes were freshly
 confirmed unchanged by the coordinator. Only seven final peers/full-cohort
 composition remain before controller sealing; no external operation here.
+
+## Final qualification and coordinator receipt
+
+All seven peers arrived and the full eleven-QMD plus embedded AppLoad composition
+passed four variants, 29 resources each. Dispatch, Dates and RMStream harnesses
+passed; Dates creation explicitly selects the full-composition and preview paths.
+Controller provenance and the .153 policy harness pass, including 32 atomic races.
+Removed the disabled entry guard only after qualification; sealed manifest
+`57a56233d20187ce7253d3f08a796056970bbeb2d9cb4a1632923bf12b9076ce` and froze
+controller `e741290cb979b6f90ac13bd7e857ddc8b5d28470650d667ae6688407c7da022c`.
+See the handoff for absolute-input manifest and generated artifact paths.
+
+The coordinator reports committed base activation, UI 6240 / Dates 6231,
+NRestarts 0, eleven QMDs; native overlays proceed under its separate ownership.
+This task did not connect to or write any tablet/server. Physical acceptance is
+still separate. No ready Move AppLoad/Dispatch/Smart qualification is asserted.

@@ -1,11 +1,40 @@
 # Pro .153 Smart/Dispatch local handoff
 
-Status: **app-hook checks pass against the qualified .153 runtime table;
-activation controller UNSEALED pending seven package peers**.
+Status: **full eleven-QMD base qualified locally; controller sealed and frozen**.
 No tablet/server connection or write was performed by this task. The maintenance
-coordinator is the sole publisher/activator. Do not stage this controller yet.
+coordinator is the sole publisher/activator.
 
-## Latest qualification update
+## Final artifacts and acceptance (2026-10-16)
+
+Paths below are relative to `/Users/mdf/code/.worktrees/smart-remarkable-pro-3290153`.
+
+- Controller: `ops/activate-pro-3.29.0.153-fullstack.sh`, SHA-256
+  `e741290cb979b6f90ac13bd7e857ddc8b5d28470650d667ae6688407c7da022c`.
+- Eleven-device-relative manifest: `ops/pro-3.29.0.153-qmd.sha256`, SHA-256
+  `57a56233d20187ce7253d3f08a796056970bbeb2d9cb4a1632923bf12b9076ce`.
+- Twelve-absolute-input manifest: `build/pro-3.29.0.153/ordered-full-stack.sha256`,
+  SHA-256 `feaa3e971c9a9dd4152f7f9ff35fdd2f037cb04d4f014d529a301134e49a1b79`.
+- Input resources: `build/pro-3.29.0.153/inputs`; eleven runtime QMDs:
+  `build/pro-3.29.0.153/qmd`; report: `build/pro-3.29.0.153/qualification.json`.
+
+All four full-stack variants (AppLoad first/last, apps last, Dates preview)
+produce 29 resources and pass composition and semantic checks. Dispatch Qt,
+Dates source/UI/flash/creation, and RMStream direct-control harnesses pass.
+The controller provenance and .153 policy harness pass, including 32 atomic
+races. Final Dates creation uses `NDI_COMPOSED` and `NDI_PREVIEW_COMPOSED`
+pointing to the actual full-stack outputs, not the absent sibling default paths.
+
+The coordinator subsequently reported the exact controller/base activated and
+committed: UI PID 6240, Dates PID 6231, zero automatic restarts, all eleven QMDs.
+This is coordinator-reported machine acceptance, not an independent device
+check here or physical UI acceptance. Native overlays remain separately owned.
+The coordinator retains complete stage and off-device backup receipts; abbreviated
+hashes in its notification are not reproduced as complete verification evidence.
+
+No Move qualification is supplied. Chiappa's independent QRR-only stack does
+not qualify AppLoad, Dispatch/Smart binaries, or Pro private settings for Move.
+
+## Table and app qualification
 
 The table and payload-input blockers in the historical preparation notes below
 are resolved. Both independent runtime dumps sort to SHA-256
@@ -27,10 +56,9 @@ Four runtime app outputs are ready in `build/pro-3.29.0.153/qmd/`:
 All accepted client, manifest, launcher, worker, Dates and RMStream panel
 fingerprints were freshly verified unchanged by the coordinator. The supplied
 Dates path was corrected to `build/`; no sibling files were changed here.
-Only the final seven-package peer inventory/full composition remains before
-sealing the controller. Every controller action still exits 78. The policy test
-now accepts `.153` as a target but refuses a controller with pending pins or
-the disabled entry point. The full activation-policy test is not yet passable.
+The seven final package peers were then composed successfully, the exact
+manifest pinned, and the disabled entry point removed. The policy test refuses
+pending pins and passes on the final frozen controller above.
 
 ## Earlier preparation notes (superseded by update above)
 

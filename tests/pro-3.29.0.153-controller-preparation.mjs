@@ -1,4 +1,4 @@
-// Local draft checks. This is not activation/runtime qualification.
+// Local controller provenance/argument checks. Not activation/runtime qualification.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {execFileSync,spawnSync} from 'node:child_process';
@@ -20,13 +20,13 @@ assert.match(source,/IMG_VERSION="3\.29\.0\.153"/);
 assert.match(source,/9d6d844d793b6242345c7c25667451620c48b2cc28986a21049fa8d534042dd4/);
 assert.doesNotMatch(source,/7aa5d67da6850d7021ade5a2232edeb5f34550236eca6f7a102f37f962dd4bd2/);
 assert.match(source,/927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417/);
-assert.match(source,/PENDING_EXACT_153_ELEVEN_QMD_MANIFEST/);
-assert(source.indexOf('exit 78')<source.indexOf('ACTION='));
+assert.doesNotMatch(source,/PENDING_EXACT|exit 78/);
+assert.match(source,/57a56233d20187ce7253d3f08a796056970bbeb2d9cb4a1632923bf12b9076ce/);
 assert.match(extract(source,'settings_snapshot'),/profiles\/mdf-dot.json/);
 execFileSync('bash',['-n',file]);
 for(const action of ['prepare','activate','commit','watchdog']){
   const result=spawnSync('bash',[file,action],{encoding:'utf8'});
-  assert.equal(result.status,78);
-  assert.match(result.stderr,/Unsealed .153 controller/);
+  // No ID/stage/reviewed hash: reject before invoking any device-dependent helper.
+  assert.equal(result.status,2);
 }
-console.log('PASS: .153 draft rejects every entry action; safety functions identical to policy-tested .152; exact target and profile-preservation checks present. NOT SEALED.');
+console.log('PASS: .153 sealed controller rejects incomplete arguments; safety functions identical to policy-tested .152; exact target, table, inventory and profile-preservation checks present. Not device qualification.');

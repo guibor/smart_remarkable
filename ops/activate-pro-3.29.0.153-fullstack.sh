@@ -3,10 +3,6 @@
 # transaction. No package install, root remount, boot hook, notebook or server edit.
 set -Eeuo pipefail
 umask 077
-# UNSEALED: final .153 eleven-QMD peer manifest awaits coordinator evidence.
-# Deliberately stop before all entry-point actions, including prepare/watchdog.
-printf '%s\n' 'Unsealed .153 controller: local preparation only' >&2
-exit 78
 ACTION=${1:-}; STAGE=${2:-}; REVIEWED=${3:-}; ID=${4:-}
 case "$ACTION" in prepare|activate|commit|watchdog) ;; *) exit 2;; esac
 [[ "$ID" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || exit 2
@@ -64,7 +60,7 @@ verify_stage() {
     [ "$(stat -c %u:%g:%a "$STAGE/qmd.sha256")" = 0:0:600 ]
     [ "$(stat -c %u:%g:%a "$STAGE/SHA256SUMS")" = 0:0:600 ]
     # Manifest content is additionally pinned in the reviewed script below.
-    exact "$STAGE/qmd.sha256" PENDING_EXACT_153_ELEVEN_QMD_MANIFEST
+    exact "$STAGE/qmd.sha256" 57a56233d20187ce7253d3f08a796056970bbeb2d9cb4a1632923bf12b9076ce
 }
 verify_device() {
     [ "$(tr -d '\r\n' </sys/devices/soc0/machine)" = 'reMarkable Ferrari' ] || return 1
