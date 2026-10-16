@@ -2,6 +2,15 @@
 
 ## Pro 3.29.0.153 local preparation
 
+`tests/pro-3.29.0.153-apps-test.mjs` prepares the complete four-app plus seven
+package-peer base, retaining the previous semantic/ordering/preview checks.
+It consumes the Dates owner's actual `build/` outputs (not `.build/`) without
+writing to sibling worktrees. `--candidate-table` admits only the coordinator's
+first captured .153 hash and still labels results structural-only until the
+canonical-equal capture is confirmed and the runtime pin is sealed. `--build-only`
+produces the four app QMDs and inert preview variants without claiming full
+cohort composition. AppLoad payloads are the unchanged hash-pinned 0.6 artifacts.
+
 `tests/pro-3.29.0.153-dispatch-smart.mjs` pins the new stock binary, checks all
 five affected extracted resources against the preceding exact capture, compiles
 functional/inert Dispatch and inert Smart candidates, composes with pinned

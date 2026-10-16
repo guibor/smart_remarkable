@@ -18,3 +18,9 @@ client, bridge servers, worker and firmware are not changed.
 Next: exact new runtime table, final seven peers and current Dates/RMStream
 inputs, full eleven-QMD composition and manifest sealing before coordinator
 publication. Machine and physical acceptance remain distinct and unperformed.
+
+Follow-up: coordinator reverified accepted app payloads unchanged and supplied
+the first .153 table. Four app QMDs and previews rebuilt successfully with
+candidate-only status. New full-cohort test consumes Dates `build/` (corrected
+from supplied `.build/`) and .153 RMStream source without sibling writes.
+Full composition/sealing still waits for the final package peers and table proof.

@@ -62,6 +62,19 @@ sandbox returned a false missing-NEON error, while the normal local check passed
 
 ## Needed to finish sealing
 
+Follow-up: the coordinator reverified all accepted Dispatch/Smart/launcher,
+Dates writer/panel/helper and RMStream panel hashes unchanged. Four app-owned
+QMDs and inert variants now build against the first .153 table
+`927a5cac7fbb4031a0f78c2ec59bc795c499e330d5029aaa993e99e7dd917417` under
+`build/pro-3.29.0.153/`. This is still candidate-only, pending canonical-equal
+capture confirmation and the seven package peers. The actual Dates generated
+directory is `build/`, not `.build/`; the test consumes it without modifying
+the Dates worktree.
+
+```sh
+node tests/pro-3.29.0.153-apps-test.mjs --candidate-table --build-only
+```
+
 1. Fresh .153 runtime-derived `hashtab`, exact hash and capture receipt. Extraction
    alone is not that receipt.
 2. Exactly seven final .153 package QMDs, retaining the accepted Gestik reset-view
