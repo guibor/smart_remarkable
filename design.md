@@ -66,6 +66,29 @@ cohort. Neither the old sealed handoff nor the Move may be changed implicitly.
 The existing .153 lasso buttons remain inert; source qualification and server
 deployment do not establish tablet installation or physical acceptance.
 
+`examples/dot-input-probe.c` tests the narrower hypothesis that the first
+virtual device omitted marker capabilities required for discovery. It clones
+only advertised capabilities into a temporary virtual device for twenty seconds
+and emits zero events. Recognition, actual drawing and installation are still
+separate gates; this probe cannot modify a notebook.
+
+The full-capability probe also failed xochitl discovery, despite udev reporting
+`ID_INPUT_TABLET=1`. It emitted no events and was removed. Do not add further
+production dependence on the virtual-pen route.
+
+`dot_answer::image` prepares a tightly cropped, transparent, antialiased PNG
+from the locally generated layout. It checks finite density, pixel/encoded
+budgets and glyph bounds, and disables external image resolution. It does no
+input, network or notebook I/O. `dot-layout` now previews this image candidate.
+The heading baseline and line pitch are36 virtual units: the bundled font's
+ascent exceeded the former28-unit baseline. Rendering and bounds tests cover
+English and Hebrew headings along with transparent antialiased raster output.
+Exact `.153` binary inspection resolves `insertImageFileAsSceneItem` through
+the Qt metaobject: the file is synchronously decoded and copied before a
+scene operation is queued. That is evidence about file lifetime only, not
+placement, completion or undo qualification. The native insertion adapter
+must remain uninstalled until a disposable-page test establishes those.
+
 ## Pro 3.29.0.153 local preparation
 
 The .153 table is sealed after two coordinator-owned captures and locally

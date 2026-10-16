@@ -1,5 +1,5 @@
 //! Pure rendering probe: never opens an input device, network or notebook.
-use smart_remarkable::{dot_answer, touch::Rect, util};
+use smart_remarkable::{dot_answer, touch::Rect};
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     anyhow::ensure!(args.len() == 3, "Usage: dot-layout OUTPUT.png TEXT");
@@ -12,15 +12,11 @@ fn main() -> anyhow::Result<()> {
             h: 200,
         },
     )?;
-    let bitmap = util::svg_to_bitmap(&plan.svg, 768, 1024)?;
-    util::write_bitmap_to_file(&bitmap, &args[1])?;
-    let paths = dot_answer::strokes(&plan)?;
+    let rendered = dot_answer::image(&plan, 2.0)?;
+    std::fs::write(&args[1], &rendered.png)?;
     println!(
-        "rect={:?} strokes={} points={} continuation={}",
-        plan.rect,
-        paths.len(),
-        paths.iter().map(Vec::len).sum::<usize>(),
-        plan.truncated
+        "rect={:?} image={}x{} continuation={}",
+        plan.rect, rendered.width, rendered.height, plan.truncated
     );
     Ok(())
 }

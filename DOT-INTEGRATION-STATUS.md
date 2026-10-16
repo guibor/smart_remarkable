@@ -25,6 +25,9 @@ Branch: `beta/pro/3.29.0.153`, as requested. This is **not a tablet release**.
 
 - 109 Rust library tests and 5 application tests passed. Final all-target
   `cargo check --offline --all-targets` passed (pre-existing warnings remain).
+- Follow-up image-renderer suite: **112 library tests passed**, including
+  cropped transparent/antialiased output, Hebrew headings, invalid density,
+  rectangle overflow, transport retry and source-context regressions.
 - Environment parser tests and shell syntax checks passed.
 - Exact `.153` compatibility and complete 13-QMD composition passed in both
   supported native-last/native-after-TOC orders; all generated QML parses.
@@ -54,6 +57,48 @@ Dot response may still enter normal conversation/PDF history. This checkpoint
 does not establish answer, cloud delivery, physical sync or phone visibility.
 
 ### Local renderer qualification blocker
+
+Follow-up: a full-capability clone of the real Elan marker device also failed
+recognition by xochitl. udev set `ID_INPUT_TABLET=1`, but xochitl never opened the
+new event node. No events were emitted. The virtual device was destroyed and
+the verified `/tmp/dot-input-probe` binary removed; `touchscreen0` returned to
+the physical event2 device. UI PID15545 / zero restarts was rechecked.
+
+The replacement local candidate now produces cropped transparent antialiased
+PNGs rather than simulated handwritten glyphs. Tests caught and fixed a heading
+ascent bug in the existing layout (baseline28 was too high for the bundled
+font); baseline/line pitch36 preserves the checked answer rectangle.
+This prepares an image only: **no production native insertion adapter is yet
+connected or installed**.
+
+Exact `.153` binary audit (offline, no native addresses called):
+- SceneController string table `0xfd648c`, metadata `0xfd4620`, static metacall
+  `0x61d7d0`; jump table `0x12b6cec`.
+- Method120 `insertImageFileAsSceneItem(QUrl,QPointF)` resolves to `0x640f70`.
+  It calls `QImageReader::read` synchronously, copies the decoded image and
+  captured scene/page state, and queues a scene operation via `0x8dd830`.
+- Lambda `0x648df0` calls `0x637f00`; image-item builder `0x637c30` appears to
+  construct a centered local rectangle. This is a hypothesis, not measured
+  native position/scale or undo acceptance.
+- Public metadata includes `selectionItemCount`, `selectionContainsImage`,
+  `pendingEdit`, `working`, `imagePasted` and `updated`, but no total image-item
+  count. No stock QML `imagePasted` handler was found.
+
+The Companion owner is preparing an offline disposable-notebook diagnostic;
+only this maintenance coordinator may stage/activate it. Existing personal
+notebooks, the accepted native handoff and the separate Dot app stay untouched.
+
+### Dot activity inspection
+
+The synthetic request remains `awaiting_dot` on a fresh server check, service
+PID2068099 / zero restarts. Official MCP Events documentation distinguishes
+webhook receipt from asynchronous task processing and permits batching; neither
+batching nor a paused task has been established as the cause. The configured
+personal Dot was historically named Hadamard. The user was asked nonblockingly
+to inspect Hadamard → Activity for a paused task, pending approval or error.
+The available desktop UI cannot be automated, and a new signed-in browser
+diagnostic tab repeatedly timed out. Access to an unrelated financial chat was
+denied; no workaround, subscription replacement or impersonated reply is used.
 
 The no-pen-down probe created `Smart Dot answer pen` as `/dev/input/event4` for
 ten seconds. Running xochitl opened event0–event3 but **did not open event4**.

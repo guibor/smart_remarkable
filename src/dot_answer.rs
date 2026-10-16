@@ -11,6 +11,65 @@ pub struct AnswerPlan {
     pub truncated: bool,
 }
 
+/// A tightly cropped image, ready for the native scene-image insertion path.
+/// Pixel dimensions are explicit: they are NOT yet qualified scene dimensions.
+/// No file path, SVG, URL, or placement command is accepted from Dot.
+pub struct AnswerImage {
+    pub png: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Render at a caller-selected, bounded density. Only our local layout may
+/// supply SVG. Preserve antialiasing and transparency instead of tracing glyphs
+/// into thousands of pen strokes. This function performs no device/file I/O.
+pub fn image(plan: &AnswerPlan, pixels_per_unit: f32) -> Result<AnswerImage> {
+    ensure!(
+        pixels_per_unit.is_finite() && (1.0..=3.0).contains(&pixels_per_unit),
+        "Invalid answer image density"
+    );
+    let r = plan.rect;
+    ensure!(
+        r.x >= 0 && r.y >= 0 && r.w > 0 && r.h > 0 && r.x.checked_add(r.w).is_some_and(|v| v <= 768) && r.y.checked_add(r.h).is_some_and(|v| v <= 1024),
+        "Invalid answer image bounds"
+    );
+    let width = (r.w as f32 * pixels_per_unit).ceil() as u32;
+    let height = (r.h as f32 * pixels_per_unit).ceil() as u32;
+    ensure!(u64::from(width) * u64::from(height) <= 4_000_000, "Answer image exceeds pixel budget");
+    let mut options = Options::default();
+    options.fontdb = Arc::new(util::build_fontdb());
+    // No network or local file resolver: generated SVG contains only text.
+    options.image_href_resolver = resvg::usvg::ImageHrefResolver {
+        resolve_data: Box::new(|_, _, _| None),
+        resolve_string: Box::new(|_, _| None),
+    };
+    let tree = Tree::from_str(&plan.svg, &options)?;
+    let bounds = tree.root().abs_bounding_box();
+    ensure!(
+        bounds.width() > 0.0
+            && bounds.height() > 0.0
+            && bounds.left() >= r.x as f32
+            && bounds.top() >= r.y as f32
+            && bounds.right() <= (r.x + r.w) as f32
+            && bounds.bottom() <= (r.y + r.h) as f32,
+        "Answer content extends outside image bounds"
+    );
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height).ok_or_else(|| anyhow::anyhow!("Cannot allocate bounded answer image"))?;
+    let transform = resvg::tiny_skia::Transform::from_row(
+        pixels_per_unit,
+        0.0,
+        0.0,
+        pixels_per_unit,
+        -(r.x as f32) * pixels_per_unit,
+        -(r.y as f32) * pixels_per_unit,
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    ensure!(pixmap.pixels().iter().any(|p| p.alpha() > 0), "Empty rendered answer");
+    let png = pixmap.encode_png()?;
+    ensure!(png.len() <= 2_000_000, "Answer image exceeds encoded budget");
+    Ok(AnswerImage { png, width, height })
+}
+
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -56,7 +115,9 @@ pub fn layout(markdown: &str, selection: Rect) -> Result<AnswerPlan> {
         h: 994 - top,
     };
     ensure!(rect.h >= 100, "No readable answer area below this selection; use Dot/PDF");
-    let max_lines = ((rect.h - 16) / 32).min(16) as usize;
+    // The bundled CJK font has a taller ascent than typical Latin fonts.
+    // Keep the first heading baseline inside the box, including its ascent.
+    let max_lines = ((rect.h - 16) / 36).min(16) as usize;
     let mut options = Options::default();
     options.fontdb = Arc::new(util::build_fontdb());
     let width = |line: &str, heading: bool| -> Result<f32> {
@@ -115,7 +176,7 @@ pub fn layout(markdown: &str, selection: Rect) -> Result<AnswerPlan> {
             // usvg resolves bidi shaping inside each line; RTL's x anchor is its
             // right edge, LTR's is its left edge. Check final bounds below.
             let rtl = text.chars().find(|c| c.is_alphabetic()).is_some_and(|c| ('\u{590}'..='\u{8ff}').contains(&c));
-            line_svg(text, if rtl { rect.x + rect.w - 8 } else { rect.x + 8 }, rect.y + 28 + i as i32 * 32, *heading)
+            line_svg(text, if rtl { rect.x + rect.w - 8 } else { rect.x + 8 }, rect.y + 36 + i as i32 * 36, *heading)
         })
         .collect();
     let result = svg(&body);
@@ -128,10 +189,10 @@ pub fn layout(markdown: &str, selection: Rect) -> Result<AnswerPlan> {
             && bounds.top() >= rect.y as f32
             && bounds.right() <= (rect.x + rect.w) as f32
             && bounds.bottom() <= (rect.y + rect.h) as f32,
-        "Rendered answer exceeds its safe area; use Dot/PDF"
+        "Rendered answer exceeds its safe area ({bounds:?} vs {rect:?}); use Dot/PDF"
     );
     let rect = Rect {
-        h: lines.len() as i32 * 32 + 12,
+        h: lines.len() as i32 * 36 + 12,
         ..rect
     };
     Ok(AnswerPlan { svg: result, rect, truncated })
@@ -270,5 +331,64 @@ mod tests {
     #[test]
     fn xml_is_only_text() {
         assert_eq!(escape("<script>&\""), "&lt;script&gt;&amp;&quot;");
+    }
+
+    #[test]
+    fn native_image_is_cropped_transparent_and_antialiased() {
+        let plan = layout(
+            "# A clear answer\nTen is the sum of seven and three.",
+            Rect {
+                x: 160,
+                y: 100,
+                w: 400,
+                h: 200,
+            },
+        )
+        .unwrap();
+        let output = image(&plan, 2.0).unwrap();
+        let decoded = ::image::load_from_memory(&output.png).unwrap().to_rgba8();
+        assert_eq!(decoded.dimensions(), (output.width, output.height));
+        assert_eq!(output.width, plan.rect.w as u32 * 2);
+        assert_eq!(output.height, plan.rect.h as u32 * 2);
+        assert!(decoded.pixels().any(|p| p.0[3] == 0));
+        assert!(decoded.pixels().any(|p| p.0[3] > 0 && p.0[3] < 255));
+        assert!(decoded.pixels().any(|p| p.0 == [0, 0, 0, 255]));
+    }
+
+    #[test]
+    fn native_image_rejects_unbounded_density_and_forged_rect() {
+        let mut plan = layout(
+            "A short answer",
+            Rect {
+                x: 160,
+                y: 100,
+                w: 400,
+                h: 200,
+            },
+        )
+        .unwrap();
+        for density in [f32::NAN, f32::INFINITY, -1.0, 0.5, 3.1] {
+            assert!(image(&plan, density).is_err());
+        }
+        plan.rect.w = i32::MAX;
+        assert!(image(&plan, 2.0).is_err());
+        plan.rect.w = 10;
+        assert!(image(&plan, 2.0).is_err());
+    }
+
+    #[test]
+    fn native_image_handles_hebrew_headings() {
+        let plan = layout(
+            "# תשובה קצרה\nשבע ועוד שלוש הם עשר.",
+            Rect {
+                x: 160,
+                y: 100,
+                w: 400,
+                h: 200,
+            },
+        )
+        .unwrap();
+        let output = image(&plan, 2.0).unwrap();
+        assert!(output.width > 0 && output.height > 0 && output.png.len() > 100);
     }
 }

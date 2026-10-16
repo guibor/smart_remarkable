@@ -31,6 +31,13 @@
 - [ ] Qualify exact .153 QMD/worker stack and deploy with settings/rollback intact.
 - Next: resolve additive local rendering, then publish a fresh guarded base and
   Companion cohort. The installed stack stays unchanged until that gate passes.
+- [X] Recheck virtual marker discovery with the complete physical capability
+  set, without emitting input. udev recognizes a tablet, but xochitl still
+  ignores it. Probe removed; UI PID15545 and zero restarts preserved.
+- [ ] Qualify native =insertImageFileAsSceneItem= with a disposable notebook:
+  exact position/size, independent undo, save/reopen, and async page ownership.
+  Local cropped antialiased PNG preparation replaces the glyph-tracing
+  candidate; it is not yet connected to a production notebook writer.
 
 * Requirements changed for Dot lasso routing
 The previous lasso route used canonical OpenClaw/WhatsApp and plain-text
