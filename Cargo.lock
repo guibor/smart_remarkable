@@ -2885,6 +2885,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "sha2",
  "svg2polylines",
  "tokio",
  "tokio-stream",

@@ -1,5 +1,71 @@
 # Design
 
+## Dot lasso integration: server deployed, tablet candidate not installed
+
+`src/llm_engine/dot.rs` uses the real subscribed Dot inbox, not an OpenAI-like
+model endpoint. `request` binds a once-generated UUID, action, source, both PNG
+digests and normalized notebook context using the server's canonical JSON.
+`submit` retries that identical request after transport errors, server errors
+or an interrupted acceptance body. `validate_result` checks every response's
+identity/fingerprint and the final Markdown digest. `execute` returns after
+acceptance for send-only, or polls for a bounded answer-here window. No remote
+SVG, tool call or pen command is executed. Cross-language fixture and local
+HTTP tests cover canonicalization, binding, digest and retry behavior.
+
+`SelectionPageContext` comes from a single prepared framebuffer. The server
+retains the selected image in the existing Dot inbox; supporting page/title/
+page metadata remain in bounded server memory for at most one hour and are
+cleared on reply. They are never included in the rolling PDF. This changes
+selected-content retention relative to the old OpenClaw route, not ChatGPT's
+own history or memory. The shared server interpretation policy is maintained
+by the Dispatch repository; its deployed commit is `2156761`.
+
+`scripts/dot-runtime-env.sh` parses only two literal private configuration keys,
+without evaluating shell content. `run-dot-once.sh` verifies the exact Ferrari
+firmware and private file ownership before running an isolated buttons-only
+worker. `run-armed-once.sh` selects it only when `.dot.env` is provisioned;
+no such file has been installed by this change. Existing OpenClaw settings
+remain untouched. No SSH tunnel, kernel-module loading or boot hook is added.
+
+`llm-button-dot-3.29.0.153.source.qmd` disables requests in paired, Quick Pad,
+corner-pane and transitional views until their coordinate mapping is qualified.
+Its persistent `smartDotOwner` survives destruction of the stock selection
+child. `closeAndAcknowledge` binds the original page; `invalidateWrite` cancels
+on navigation/context changes, a new selection or timeout. `authorizeWrite`
+has distinct pre-tool and final phases. The final phase echoes a fresh random
+challenge created after physical input monitoring starts; a delayed earlier
+acknowledgment cannot authorize insertion into another identical-looking page.
+`appload-launch.sh` binds each marker to the active selection and challenge.
+The offline QMD test evaluates these actual functions and composes both
+supported orders of the complete 13-QMD stack without changing sealed inputs.
+
+`src/dot_answer.rs` is EXPERIMENTAL presentation work, not an accepted renderer.
+`layout` creates bounded print-style SVG below the selection, with fixed readable
+font sizes, wrapping, XML escaping and RTL embedding. `strokes` traces bounded
+glyph centerlines. `AnswerPen` would emit through a separate virtual pen so
+physical user input remains distinguishable. A no-pen-down probe on the Pro
+proved that xochitl does not open that hotplugged device: this route must remain
+disabled. The production runner deliberately supplies no qualification flag.
+Native `pasteClipboardContent` is a root-text flow operation, not a separately
+positioned box. HWC's `MergeWithPreviousAction` is part of a destructive conversion
+transaction and must not be reused for independent generated answers.
+
+The Dot worker never acquires the legacy physical-pen injector, and its main
+callback cannot reach legacy erase/arbitrary-SVG handlers. It
+requires original-page identity, unchanged pixels, blank answer bounds and
+fresh owner/input checks before any experimental output. These checks are not
+evidence that output was accepted. `examples/dot-layout.rs` renders without
+I/O to a notebook; `dot-pen-probe.rs` emits no positions or pen-down events;
+`dot-roundtrip.rs` explicitly sends one labelled synthetic request and only
+prints a verified reply. It never opens tablet input or notebook files.
+
+Do not hot-swap Smart under the current native supervisor: its manifest pins
+both the old binary and QMD. Deployment needs normal recovery to the healthy
+base, a new guarded Smart base update, and a freshly captured/qualified native
+cohort. Neither the old sealed handoff nor the Move may be changed implicitly.
+The existing .153 lasso buttons remain inert; source qualification and server
+deployment do not establish tablet installation or physical acceptance.
+
 ## Pro 3.29.0.153 local preparation
 
 The .153 table is sealed after two coordinator-owned captures and locally

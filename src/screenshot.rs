@@ -69,6 +69,22 @@ pub struct NormalizedView {
 }
 
 impl NormalizedView {
+    /// A deliberately strict empty-area test for additive Dot ink. Templates,
+    /// images or existing strokes cause a remote-only fallback, never erasure.
+    pub fn region_is_blank(&self, rect: crate::touch::Rect) -> bool {
+        if rect.x < 0 || rect.y < 0 || rect.w <= 0 || rect.h <= 0
+            || rect.x.checked_add(rect.w).is_none_or(|r| r > self.width as i32)
+            || rect.y.checked_add(rect.h).is_none_or(|b| b > self.height as i32)
+            || self.rgba.len() != self.width as usize * self.height as usize * 4 { return false; }
+        for y in rect.y..rect.y + rect.h {
+            for x in rect.x..rect.x + rect.w {
+                let i = ((y as u32 * self.width + x as u32) * 4) as usize;
+                if self.rgba[i..i+3].iter().any(|v| *v < 245) { return false; }
+            }
+        }
+        true
+    }
+
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
     }

@@ -4,6 +4,7 @@ pub mod config;
 pub mod coordinator;
 pub mod device;
 pub mod document_context;
+pub mod dot_answer;
 pub mod embedded_assets;
 pub mod image_gen;
 pub mod keyboard;

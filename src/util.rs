@@ -896,7 +896,9 @@ fn render_chinese_font_test_png() {
     ];
     let svg = build_svg_from_lines(&lines);
     let bitmap = svg_to_bitmap(&svg, 768, 1024).unwrap();
-    write_bitmap_to_file(&bitmap, "/private/tmp/claude-501/-Users-yang-Downloads-remarkable-app/8697c15e-ba77-4d86-a32d-4eb6ec49b9f8/scratchpad/chinese_font_test.png").unwrap();
+    let output = std::env::temp_dir().join(format!("smart-font-test-{}.png", std::process::id()));
+    write_bitmap_to_file(&bitmap, output.to_str().unwrap()).unwrap();
+    std::fs::remove_file(output).unwrap();
 }
 
 #[test]

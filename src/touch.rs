@@ -29,6 +29,8 @@ pub enum PenTool {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TriggerCorner {
+    /// Dot accepts only context-bearing native button descriptors.
+    ButtonsOnly,
     UpperRight,
     UpperLeft,
     LowerRight,
@@ -45,6 +47,7 @@ pub enum TriggerCorner {
 impl TriggerCorner {
     pub fn from_string(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
+            "buttons-only" => Ok(TriggerCorner::ButtonsOnly),
             "ur" | "upper-right" => Ok(TriggerCorner::UpperRight),
             "ul" | "upper-left" => Ok(TriggerCorner::UpperLeft),
             "lr" | "lower-right" => Ok(TriggerCorner::LowerRight),
@@ -125,6 +128,7 @@ impl SelectionOrientation {
 pub enum SelectionAckPhase {
     Prepared,
     Closed,
+    WriteBack,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -625,6 +629,7 @@ pub async fn wait_for_selection_acknowledgement(
     let path = match phase {
         SelectionAckPhase::Prepared => SELECTION_PREPARE_ACK_FILE,
         SelectionAckPhase::Closed => SELECTION_CLOSE_ACK_FILE,
+        SelectionAckPhase::WriteBack => "/run/smart-remarkable/selection_write_ack",
     };
     let deadline = tokio::time::Instant::now() + SELECTION_ACK_TIMEOUT;
     loop {
@@ -637,6 +642,41 @@ pub async fn wait_for_selection_acknowledgement(
         }
         if tokio::time::Instant::now() >= deadline {
             anyhow::bail!("Timed out waiting for the nonce-bound selection acknowledgement");
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// A fresh random challenge is created only AFTER physical input monitoring
+/// starts. QML reads and echoes it in the final owner acknowledgment. A delayed
+/// pre-tool publisher cannot bless a later view, even with an identical bitmap.
+pub async fn authorize_dot_final_write(
+    descriptor: &SelectionDescriptor,
+    keyboard: &std::sync::Arc<std::sync::Mutex<crate::keyboard::Keyboard>>,
+    cancellation: &SmartRemarkableCancellation,
+) -> Result<()> {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::OpenOptionsExt;
+    const CHALLENGE: &str = "/run/smart-remarkable/write-challenge";
+    const ACK: &str = "/run/smart-remarkable/selection_write_final_ack";
+    struct Cleanup;
+    impl Drop for Cleanup { fn drop(&mut self) { let _ = std::fs::remove_file(CHALLENGE); let _ = std::fs::remove_file(ACK); } }
+    let mut random = [0u8;32]; std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+    let challenge: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    // No overwrite of an existing challenge; stale/foreign state fails closed.
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(CHALLENGE)?;
+    let _cleanup = Cleanup;
+    file.write_all(format!("{challenge}\n").as_bytes())?; drop(file);
+    keyboard.lock().map_err(|_| anyhow::anyhow!("Keyboard lock poisoned"))?.request_dot_final_authorization()?;
+    let expected = format!("{challenge},{}", descriptor.acknowledgement_payload());
+    let deadline = tokio::time::Instant::now() + SELECTION_ACK_TIMEOUT;
+    loop {
+        if let Some(payload) = consume_marker_file(ACK, 0)? {
+            anyhow::ensure!(payload.trim_end_matches('\n') == expected, "Final Dot authorization challenge mismatch");
+            return Ok(());
+        }
+        if cancellation.should_cancel() || tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("Fresh Dot owner authorization unavailable; use Dot/PDF");
         }
         sleep(Duration::from_millis(25)).await;
     }
@@ -2006,7 +2046,7 @@ impl Touch {
             TriggerCorner::UpperLeft => x < CORNER_SIZE && y < CORNER_SIZE,
             TriggerCorner::LowerRight => x > VIRTUAL_WIDTH as i32 - CORNER_SIZE && y > VIRTUAL_HEIGHT as i32 - CORNER_SIZE,
             TriggerCorner::LowerLeft => x < CORNER_SIZE && y > VIRTUAL_HEIGHT as i32 - CORNER_SIZE,
-            TriggerCorner::FourFinger => false,                          // handled by slot counting, not position
+            TriggerCorner::FourFinger | TriggerCorner::ButtonsOnly => false,
             TriggerCorner::PenRelease | TriggerCorner::PenHold => false, // pen stream
         }
     }

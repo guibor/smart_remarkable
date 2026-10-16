@@ -377,6 +377,13 @@ impl Keyboard {
         self.selection_handshake_chord(EvdevKey::KEY_9)
     }
 
+    pub fn request_dot_write_authorization(&mut self) -> Result<()> {
+        self.selection_handshake_chord(EvdevKey::KEY_6)
+    }
+    pub fn request_dot_final_authorization(&mut self) -> Result<()> {
+        self.selection_handshake_chord(EvdevKey::KEY_5)
+    }
+
     /// Restore chrome for a prepared selection when local capture fails. The
     /// QML shortcut is disabled after close, so this cannot reopen a selection.
     pub fn restore_prepared_selection(&mut self) -> Result<()> {

@@ -1,5 +1,47 @@
 #+title: Smart Remarkable Paper Pro Deployment
 
+* Dot lasso routing (2026-10-16)
+- Stay on the current firmware-specific branch. Route both lasso actions to
+  the owner's actual ChatGPT Dot through the Dispatch bridge, not OpenClaw or
+  an API model impersonating Dot. Keep the existing Dispatch flow compatible.
+- Attach explicit originating app/action, selection kind, notebook display
+  name, page identity/number and same-frame current-page context. The selected
+  material is focal input; surrounding page/title content is supporting data.
+- Share thoughtful request interpretation with Dispatch: resolve shorthand
+  and mixed-language writing, infer a useful bounded task, ask only when a
+  consequential ambiguity remains, and never infer authority for external acts.
+- Answer-here should produce a legible answer below the selected material,
+  including visual structure when useful. Do not overwrite original ink,
+  draw outside the safe area, or insert after page/view/input changes.
+- Send-to-Dot has no local notebook-writing side effects. Both modes retain
+  Dot conversation/PDF delivery when local placement is unavailable.
+- Keep queued, answered, cloud-delivered and locally inserted outcomes distinct.
+- [X] Implement/test Dot source context and asynchronous request/result contract.
+  Shared server policy and selection API deployed by Dispatch at =2156761=.
+- [X] Implement/test authenticated tablet transport, immutable retries and
+  fingerprint/digest-bound replies. A synthetic live request was queue accepted;
+  this is not physical lasso or local insertion acceptance.
+- [X] Qualify offline exact-table/full-stack QMD composition and persistent
+  page-owner leases, including fresh final authorization challenges.
+- [ ] Complete a usable additive local answer renderer. The isolated virtual
+  pen probe is NOT recognized by running .153 xochitl; do not enable it.
+- [ ] Prove final presentation with actual device fonts and an expendable test
+  notebook. Native root-document paste is not a free-position text-box API;
+  do not copy HWC's MergeWithPreviousAction or rearrange existing typed text.
+- [ ] Qualify exact .153 QMD/worker stack and deploy with settings/rollback intact.
+- Next: resolve additive local rendering, then publish a fresh guarded base and
+  Companion cohort. The installed stack stays unchanged until that gate passes.
+
+* Requirements changed for Dot lasso routing
+The previous lasso route used canonical OpenClaw/WhatsApp and plain-text
+write-back. Dot is now the requested destination; the old disabled buttons
+and OpenClaw-specific admission block are not a functional Dot implementation.
+Dot memories remain managed by ChatGPT, not copied to the server or tablet.
+Selected images use Dot's existing durable inbox history. Whole-page supporting
+images and notebook/page metadata are server-memory-only for at most one hour,
+cleared after a reply; they are not added to the rolling PDF. Tablet request
+content remains in memory; no durable local outbox is introduced.
+
 * Pro 3.29.0.153 maintenance (2026-10-16)
 - Prepare in a new exact-firmware worktree, without tablet or server writes.
   The maintenance coordinator is the sole device writer.

@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod dot;
 pub mod google;
 pub mod openai;
 
@@ -21,7 +22,7 @@ pub enum SelectionKind {
 
 pub const SELECTION_PAGE_CONTEXT_VERSION: &str = "selection-page-v1";
 
-/// OpenClaw-only context assembled from one prepared framebuffer. Direct
+/// OpenClaw/Dot context assembled from one prepared framebuffer. Direct
 /// providers keep their historical single-image request shape.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SelectionPageContext {

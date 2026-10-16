@@ -12,6 +12,14 @@ ulimit -c 0
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 EXPECTED_APP=/home/root/xovi/exthome/appload/smart-remarkable
+if [ -e "$HERE/.dot.env" ] || [ -L "$HERE/.dot.env" ]; then
+    DOT_RUNNER="$HERE/scripts/run-dot-once.sh"
+    [ "$HERE" = "$EXPECTED_APP" ] && [ ! -L "$HERE" ] &&
+        [ "$(stat -c %u:%g:%a "$HERE")" = 0:0:755 ] &&
+        [ -f "$DOT_RUNNER" ] && [ ! -L "$DOT_RUNNER" ] &&
+        [ "$(stat -c %u:%g:%a "$DOT_RUNNER")" = 0:0:755 ] || exit 1
+    exec /bin/sh "$DOT_RUNNER"
+fi
 MODE_SETTINGS="$HERE/scripts/mode-settings.sh"
 RUNTIME_ENV_PARSER="$HERE/scripts/openclaw-runtime-env.sh"
 if [ "$HERE" != "$EXPECTED_APP" ] ||

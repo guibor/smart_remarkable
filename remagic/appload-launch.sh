@@ -31,6 +31,8 @@ WHATSAPP_ONLY_TRIGGER="$STATE_DIR/send_button_trigger"
 BUSY_FILE="$STATE_DIR/busy"
 PREPARE_ACK_FILE="$STATE_DIR/selection_prepare_ack"
 CLOSE_ACK_FILE="$STATE_DIR/selection_close_ack"
+WRITE_ACK_FILE="$STATE_DIR/selection_write_ack"
+WRITE_FINAL_ACK_FILE="$STATE_DIR/selection_write_final_ack"
 ADMISSION_LOCK="$STATE_DIR/selection-admission.lock"
 LIFECYCLE_DIR=/run/smart-remarkable-lifecycle
 LIFECYCLE_LOCK="$LIFECYCLE_DIR/launcher.lock"
@@ -89,6 +91,20 @@ case "${1:-}" in
             }
         ACK_SNAPSHOT=$SMART_SELECTION_SNAPSHOT
         ACTION=selection-prepare-ack
+        ;;
+    --selection-write-final-ack=*)
+        final_payload=${1#--selection-write-final-ack=}
+        FINAL_CHALLENGE=${final_payload%%,*}
+        [ "${#FINAL_CHALLENGE}" -eq 64 ] || exit 2
+        case "$FINAL_CHALLENGE" in *[!0-9a-f]*) exit 2 ;; esac
+        smart_parse_selection_snapshot "${final_payload#*,}" || exit 2
+        ACK_SNAPSHOT=$SMART_SELECTION_SNAPSHOT
+        ACTION=selection-write-final-ack
+        ;;
+    --selection-write-ack=*)
+        smart_parse_selection_snapshot "${1#--selection-write-ack=}" || exit 2
+        ACK_SNAPSHOT=$SMART_SELECTION_SNAPSHOT
+        ACTION=selection-write-ack
         ;;
     --selection-close-ack=*)
         smart_parse_selection_snapshot \
@@ -324,6 +340,17 @@ deliver_selection_ack_locked() {
     case "$ACTION" in
         selection-prepare-ack) ack_target=$PREPARE_ACK_FILE ;;
         selection-close-ack) ack_target=$CLOSE_ACK_FILE ;;
+        selection-write-ack) ack_target=$WRITE_ACK_FILE ;;
+        selection-write-final-ack)
+            challenge_file="$STATE_DIR/write-challenge"
+            [ -f "$challenge_file" ] && [ ! -L "$challenge_file" ] &&
+                [ "$(stat -c %u:%g:%a:%h "$challenge_file")" = 0:0:600:1 ] || return 1
+            [ "$(wc -c < "$challenge_file" | tr -d ' ')" = 65 ] || return 1
+            IFS= read -r expected_challenge < "$challenge_file" || return 1
+            [ "$FINAL_CHALLENGE" = "$expected_challenge" ] || return 1
+            SMART_SELECTION_ACK="$FINAL_CHALLENGE,$SMART_SELECTION_ACK"
+            ack_target=$WRITE_FINAL_ACK_FILE
+            ;;
         *) return 1 ;;
     esac
     publish_root_marker "$SMART_SELECTION_ACK" "$ack_target" selection-ack
@@ -412,7 +439,7 @@ stop_session_unit_if_present() {
 }
 
 case "$ACTION" in
-    selection-prepare-ack|selection-close-ack)
+    selection-prepare-ack|selection-close-ack|selection-write-ack|selection-write-final-ack)
         deliver_selection_ack
         exit 0
         ;;

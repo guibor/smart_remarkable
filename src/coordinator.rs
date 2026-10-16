@@ -90,13 +90,14 @@ pub enum ProcessingOutcome {
 /// In-memory authorization for a delayed write-back. The full normalized
 /// post-close framebuffer is retained so activation can allow only known
 /// toolbar/cursor deltas while rejecting every page-content change.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WriteBackViewGuard {
+    pub descriptor: Option<crate::touch::SelectionDescriptor>,
     pub orientation: Option<crate::touch::SelectionOrientation>,
     pub baseline: crate::screenshot::NormalizedView,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum WriteBackGuardState {
     #[default]
     Unrestricted,
@@ -114,6 +115,7 @@ fn verified_post_close_guard(
     orientation: crate::touch::SelectionOrientation,
 ) -> Option<WriteBackViewGuard> {
     write_back_view_matches(baseline, current).then(|| WriteBackViewGuard {
+        descriptor: None,
         orientation: Some(orientation),
         baseline: baseline.clone(),
     })
@@ -1030,12 +1032,15 @@ pub async fn processing_task(
             )
             .await
             {
-                Ok(guard) => Some(guard),
+                Ok(mut guard) => {
+                    guard.descriptor = Some(descriptor.clone());
+                    Some(guard)
+                }
                 Err(error) if cancellation.should_cancel() => return Err(error),
                 Err(error) => {
                     info!(
                         "Original page could not be rebound after local close ({}); \
-                         continuing canonical OpenClaw/WhatsApp delivery with tablet insertion suppressed",
+                         continuing remote delivery with tablet insertion suppressed",
                         error
                     );
                     None
@@ -1174,7 +1179,7 @@ pub async fn processing_task(
     engine_guard.set_response_mode(response_mode);
     engine_guard.set_selection_kind(effective_selection_kind);
     engine_guard.clear_content();
-    if config.engine.as_deref() == Some("openclaw") {
+    if matches!(config.engine.as_deref(), Some("openclaw" | "dot")) {
         if let Some(context) = selection_page_context {
             engine_guard.set_selection_page_context(Some(context));
             engine_guard.add_text_content(&prompt);
