@@ -1,8 +1,41 @@
-; Smart Remarkable answer-here and agent selection-menu buttons.
+; Smart Remarkable send-only Dot selection menu. Answer-writing disabled.
 ; Exact target: Ferrari firmware 3.29.0.153.
 ; No credentials, file I/O, network I/O, native ABI calls, or Draw action.
 
 VERSION 3.29.0.153
+
+AFFECT /qml/common/Values.qml
+    TRAVERSE Item
+        LOCATE BEFORE ALL
+        INSERT {
+            property bool smartDotSendBusy: false
+            property double smartDotSendEpoch: 0
+            signal smartDotSendFailed()
+        }
+    END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/main/MainView.qml
+    TRAVERSE Background#root
+        LOCATE AFTER ALL
+        INSERT {
+            Loader {
+                id: smartDotReceiptHost
+                anchors.fill: parent
+                z: 21001
+                source: "file:///home/root/xovi/exthome/appload/smart-remarkable/integration/DotSendStatus.qml"
+                visible: item && item.notifying
+                onLoaded: console.log("Dot notebook: receipt host ready")
+            }
+            Connections {
+                target: Values
+                function onSmartDotSendFailed() {
+                    if (smartDotReceiptHost.item) smartDotReceiptHost.item.consume({state:"failed", epoch_ms:Date.now()})
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT
 
 AFFECT /qml/common/SceneSelectionHandler.qml
     TRAVERSE Item#selectionRoot
@@ -27,6 +60,7 @@ AFFECT /qml/common/SceneSelectionHandler.qml
             INSERT {
                 ArkControls.ContextualMenu.Button {
                     id: smartRemarkableLlmButton
+                    visible: false
                     focusPolicy: Qt.NoFocus
                     type: tools.type
                     // One pending snapshot shared by both buttons prevents a
@@ -85,7 +119,7 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         id: smartRemarkablePendingReset
                         interval: 45000
                         repeat: false
-                        onTriggered: smartRemarkableLlmButton.clearPendingMode()
+                        onTriggered: smartRemarkableLlmButton.clearPendingMode(true)
                     }
 
                     // Phase one: immediately before capture, re-read the live
@@ -150,7 +184,8 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         }
                     }
 
-                    function clearPendingMode() {
+                    function clearPendingMode(failed) {
+                        if (failed && Values.smartDotSendBusy) Values.smartDotSendFailed()
                         smartRemarkablePendingReset.stop()
                         pendingPrepared = false
                         pendingSnapshot = ""
@@ -163,8 +198,7 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                             console.warn("SR_WAND stage=pending-rejected")
                             return
                         }
-                        if (mode !== "write_back" &&
-                                mode !== "whatsapp_only") {
+                        if (mode !== "whatsapp_only" || Values.smartDotSendBusy) {
                             console.warn("SR_WAND stage=mode-rejected")
                             return
                         }
@@ -179,6 +213,8 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         pendingMode = mode
                         pendingSnapshot = snapshot
                         pendingPrepared = false
+                        Values.smartDotSendEpoch = Date.now()
+                        Values.smartDotSendBusy = true
                         smartRemarkablePendingReset.restart()
                         // Let the stock selected state paint before AppLoad's
                         // synchronous process-start check. Revalidate the exact
@@ -190,19 +226,19 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                                     pendingSnapshot !== snapshot) {
                                 console.warn(
                                     "SR_WAND stage=deferred-pending-rejected")
-                                clearPendingMode()
+                                clearPendingMode(true)
                                 return
                             }
                             if (!selectionRoot.visible) {
                                 console.warn(
                                     "SR_WAND stage=deferred-hidden-rejected")
-                                clearPendingMode()
+                                clearPendingMode(true)
                                 return
                             }
                             if (captureSnapshot() !== snapshot) {
                                 console.warn(
                                     "SR_WAND stage=deferred-snapshot-rejected")
-                                clearPendingMode()
+                                clearPendingMode(true)
                                 return
                             }
                             if (!launchArgument(
@@ -210,7 +246,7 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                                     descriptor)) {
                                 console.warn(
                                     "SR_WAND stage=launch-rejected")
-                                clearPendingMode()
+                                clearPendingMode(true)
                             }
                         })
                     }
@@ -260,6 +296,13 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                         var offAxisTolerance = 0.5
                         var xScale = Math.abs(xDx) / selectionRoot.width
                         var yScale = Math.abs(yDy) / selectionRoot.height
+                        // This send-only Pro release captures the physical
+                        // 1620x2160 viewport. Reject reduced/moved panes rather
+                        // than mapping relative coordinates onto another view.
+                        if (Math.abs(Math.min(rootOrigin.x, rootX.x, rootY.x)) > 1 ||
+                                Math.abs(Math.min(rootOrigin.y, rootX.y, rootY.y)) > 1 ||
+                                Math.abs(Math.max(rootOrigin.x, rootX.x, rootY.x) - 1620) > 1 ||
+                                Math.abs(Math.max(rootOrigin.y, rootX.y, rootY.y) - 2160) > 1) return ""
                         var scaleTolerance = Math.max(
                             0.001, Math.max(xScale, yScale) * 0.001)
                         if (!isFinite(xDx) || !isFinite(xDy) ||
@@ -462,10 +505,11 @@ AFFECT /qml/common/SceneSelectionHandler.qml
 
                 ArkControls.ContextualMenu.Button {
                     id: smartRemarkableSendButton
-                    enabled: selectionRoot.smartRemarkableContextAllowed
+                    enabled: selectionRoot.smartRemarkableContextAllowed && !Values.smartDotSendBusy
                     focusPolicy: Qt.NoFocus
                     type: tools.type
-                    iconSource: "qrc:/icons/sparkles.svg"
+                    iconSource: "qrc:/ark/icons/send"
+                    text: qsTr("Send to Dot")
                     selected: smartRemarkableLlmButton.pendingMode === "whatsapp_only"
 
                     onClicked: smartRemarkableLlmButton.requestMode(

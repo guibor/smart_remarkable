@@ -120,6 +120,11 @@ case "${1:-}" in
         exit 2
         ;;
 esac
+if [ -e "$HERE/.dot.env" ] && [ "$ACTION" = selection-button ] &&
+    [ "$RESPONSE_MODE" != whatsapp_only ]; then
+    echo "Dot answer-writing is disabled; use Send to Dot" >&2
+    exit 2
+fi
 if [ "$ACTION" = selection-button ]; then
     # Fifteen minutes each for in-RAM tunnel and HTTP transport recovery need
     # more than the ten-minute `once` tile lifetime. Explicit buttons therefore

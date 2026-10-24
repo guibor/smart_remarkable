@@ -338,6 +338,12 @@ impl Screenshot {
             return Ok(());
         }
 
+        if std::env::var("SMART_DOT_FRAMEBUFFER_SPY").as_deref() == Ok("1") {
+            let img = crate::dot_framebuffer::capture()?;
+            let png = Self::normalize_image(img, orientation, true)?;
+            if let ScreenshotMode::Real { data, .. } = &mut self.mode { *data = png; }
+            return Ok(());
+        }
         // For real mode, handle separately to avoid borrowing issues
         // Find xochitl's process
         debug!("screenshot: finding pid");
@@ -615,6 +621,10 @@ impl Screenshot {
     fn process_image(&self, data: Vec<u8>, orientation: Option<crate::touch::SelectionOrientation>) -> Result<Vec<u8>> {
         let format = self.raw_framebuffer_format();
         let img = Self::image_from_raw_framebuffer(data, format)?;
+        Self::normalize_image(img, orientation, format == RawFramebufferFormat::RmppRgba8)
+    }
+
+    fn normalize_image(img: image::DynamicImage, orientation: Option<crate::touch::SelectionOrientation>, rgba: bool) -> Result<Vec<u8>> {
 
         debug!("Resizing image to {}x{}", VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
         let resized_img = img.resize_exact(VIRTUAL_WIDTH, VIRTUAL_HEIGHT, image::imageops::FilterType::Nearest);
@@ -633,8 +643,8 @@ impl Screenshot {
         let mut resized_png_data = Vec::new();
         let encoder = image::codecs::png::PngEncoder::new(&mut resized_png_data);
 
-        match format {
-            RawFramebufferFormat::RmppRgba8 => {
+        match rgba {
+            true => {
                 encoder.write_image(
                     resized_img.as_rgba8().unwrap().as_raw(),
                     VIRTUAL_WIDTH,

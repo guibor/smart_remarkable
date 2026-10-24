@@ -226,6 +226,7 @@ impl LLMEngine for Dot {
     }
 
     async fn execute(&mut self, cancellation: &SmartRemarkableCancellation, mut status_callback: Option<StatusCallback>) -> Result<()> {
+        ensure!(!self.mode.writes_to_tablet(), "Dot answer-writing is disabled; use Send to Dot");
         let url = endpoint(&self.base_url)?;
         ensure!(!self.key.is_empty(), "Dot tablet key is not configured");
         let context = self.context.take().context("Dot needs a verified same-capture page context (v3 selection)")?;
@@ -295,6 +296,13 @@ impl LLMEngine for Dot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn answer_writing_is_rejected_before_network_or_tools() {
+        let mut dot = Dot::new(&HashMap::new());
+        dot.register_tool("dot_answer", json!({}), Box::new(|_| panic!("writer reached")));
+        let error = dot.execute(&SmartRemarkableCancellation::new(), None).await.unwrap_err();
+        assert!(error.to_string().contains("answer-writing is disabled"));
+    }
     #[test]
     fn endpoints_are_https_and_credential_free() {
         assert!(endpoint("https://example.test/dot").is_ok());

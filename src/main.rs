@@ -1247,83 +1247,8 @@ fn register_tools(
 ) -> Result<()> {
     use serde_json::Value as json;
 
-    if config.engine.as_deref() == Some("dot") {
-        let guard_slot = Arc::clone(&write_back_view_guard);
-        let selected_slot = Arc::clone(&selection_slot);
-        let no_draw = config.no_draw;
-        let output = config.output_file.clone();
-        let dot_keyboard = Arc::clone(&keyboard);
-        engine.register_tool("dot_answer", serde_json::json!({}), Box::new(move |arguments| {
-            let result = (|| -> Result<()> {
-                let markdown = arguments["markdown"].as_str().ok_or_else(|| anyhow::anyhow!("Missing Dot answer"))?;
-                let selection = selected_slot.lock().map_err(|_| anyhow::anyhow!("Selection lock poisoned"))?.take()
-                    .ok_or_else(|| anyhow::anyhow!("No verified selection for Dot answer"))?;
-                let plan = smart_remarkable::dot_answer::layout(markdown, selection)?;
-                if no_draw {
-                    if let Some(path) = &output { std::fs::write(path, &plan.svg)?; }
-                    return Ok(());
-                }
-                let guard = match guard_slot.lock().map_err(|_| anyhow::anyhow!("View lock poisoned"))?.clone() {
-                    WriteBackGuardState::Exact(guard) => guard,
-                    _ => anyhow::bail!("Dot insertion requires verified post-close view"),
-                };
-                let current = take_write_back_view(guard.orientation)?;
-                anyhow::ensure!(coordinator::write_back_view_matches(&guard.baseline, &current)
-                    && current.region_is_blank(plan.rect), "Page changed or answer area contains content; use Dot/PDF");
-                let paths = smart_remarkable::dot_answer::strokes(&plan)?;
-                // Firmware-specific virtual-pen recognition must be qualified
-                // before production enablement; an endpoint migration alone is
-                // never an authority to inject an unqualified input device.
-                anyhow::ensure!(std::env::var("DOT_GUARDED_INK_QUALIFIED").as_deref() == Ok("pro-3.29.0.153"),
-                    "Dot ink renderer awaits exact-firmware qualification; answer is in Dot/PDF");
-                let descriptor = guard.descriptor.as_ref().ok_or_else(|| anyhow::anyhow!("No bound Dot page descriptor"))?;
-                // Fresh UI-side identity/context check, not just bitmap
-                // equality (two distinct blank pages can look identical).
-                let _ = std::fs::remove_file("/run/smart-remarkable/selection_write_ack");
-                dot_keyboard.lock().map_err(|_| anyhow::anyhow!("Keyboard lock poisoned"))?.request_dot_write_authorization()?;
-                tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(
-                    smart_remarkable::touch::wait_for_selection_acknowledgement(descriptor,
-                        smart_remarkable::touch::SelectionAckPhase::WriteBack, &SmartRemarkableCancellation::new())))?;
-                let _previous_tool = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        Touch::new(false, TriggerCorner::UpperRight).switch_to_tool(PenTool::Ballpoint).await
-                    })
-                })?;
-                anyhow::ensure!(guard.baseline.changed_pixels_are_within(&take_write_back_view(guard.orientation)?, &[WRITE_BACK_TOOL_CHROME]),
-                    "Page changed during pen activation; use Dot/PDF");
-                let mut input_monitor = WriteBackInputMonitor::start()?;
-                let mut answer_pen = smart_remarkable::dot_answer::AnswerPen::new()?;
-                std::thread::sleep(Duration::from_millis(200));
-                // The persistent QML owner invalidates its lease on every
-                // document/page/context transition, including away-and-back.
-                // Reauthorize after tool activation with physical monitoring
-                // already running, closing the identical-blank-page gap.
-                tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(
-                    smart_remarkable::touch::authorize_dot_final_write(descriptor,
-                        &dot_keyboard, &SmartRemarkableCancellation::new())))?;
-                anyhow::ensure!(!input_monitor.interaction_detected()?
-                    && guard.baseline.changed_pixels_are_within(&take_write_back_view(guard.orientation)?, &[WRITE_BACK_TOOL_CHROME]),
-                    "Page/input changed before Dot insertion");
-                // A separate virtual pen is additive only. Do not restore a
-                // tool by tapping after an interruption: the user now owns UI.
-                let mut last_view_check = std::time::Instant::now() - Duration::from_secs(1);
-                answer_pen.draw(&paths, || {
-                    if input_monitor.interaction_detected()? { return Ok(true); }
-                    if last_view_check.elapsed() >= Duration::from_millis(100) {
-                        let view = take_write_back_view(guard.orientation)?;
-                        if !guard.baseline.changed_pixels_are_within(&view, &[plan.rect, WRITE_BACK_TOOL_CHROME]) { return Ok(true); }
-                        last_view_check = std::time::Instant::now();
-                    }
-                    Ok(false)
-                })?;
-                log::info!("Dot local ink emitted (visible acceptance separate), continuation={}", plan.truncated);
-                Ok(())
-            })();
-            if let Err(error) = result { log::warn!("Dot local insertion skipped/stopped: {error}"); }
-        }));
-        // Dot can never reach the legacy arbitrary SVG/erase/sketch callbacks.
-        return Ok(());
-    }
+    // The shipped Dot path is strictly send-only; no writer is registered.
+    if config.engine.as_deref() == Some("dot") { return Ok(()); }
 
     // Register draw_text tool
     let output_file = config.output_file.clone();

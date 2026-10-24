@@ -1,14 +1,52 @@
 # Design
 
-## Dot lasso integration: server deployed, tablet candidate not installed
+## Send-only Pro installed (2026-10-24)
+
+The production Dot route now refuses write-back before capture and again in
+the transport; `register_tools` registers no Dot answer callback. The launcher
+rejects non-send descriptors when Dot is configured. The native QMD hides the
+answer action and permits only `whatsapp_only` (legacy internal enum naming;
+the wire mode/destination is `send_to_dot`).
+
+`dot_receipt::Receipt` publishes only a timestamp and capture/sent/failed state
+to a private atomic file in `/run`; its drop guard reports failures on early
+returns. Only a verified remote acceptance marks it sent. `DotSendStatus.qml`
+ignores older receipts, gates duplicate clicks while pending, and reuses the
+accepted selection helper's passive toast without input interception. It never
+opens a notebook file or invokes a writer. Existing nonce-bound prepare/capture/
+close acknowledgements continue to bind the crop and supporting page to one
+native selection. The complete Pro cohort is active under transaction
+`20261024T204500Z-2`, with UI749060 and Dates5396. Capture, worker lifecycle,
+authenticated endpoint and startup checks passed; physical lasso/actual reply
+acceptance is distinct. See the dated playbook receipt for exact artifacts.
+
+`dot_framebuffer::capture` is a read-only Ferrari 3.29.0.153 adapter for the
+already-loaded framebuffer-spy. It verifies the UI process incarnation and
+native-owner log, accepts only 1620x2160 RGB32 with a 6528-byte stride,
+reads rows from `/proc/PID/mem` without writing, and converts BGRA to RGBA.
+`Screenshot::normalize_image` applies the snapshot's orientation and normalizes
+selection and page from that same frame. Unknown layouts or split/reduced views
+fail closed instead of using legacy framebuffer guesses.
+
+`ops/package-dot-send-pro153.mjs` emits a hashed app delta; the device script
+backs up the existing app and QMD, requires a verified Mac copy, preserves the
+old OpenClaw environment/settings, derives a private Dot config from the
+already-paired Dot app, and publishes with rollback. Native activation is a
+separate freshly captured controller, retaining the existing PDF send/Restyle/
+WebPDF cohort. `examples/dot-capture-probe.rs` qualifies capture without input
+or networking. The runner's private empty working directory prevents dotenv
+from importing old OpenClaw secrets into the Dot process.
+
+## Historical Dot transport architecture (2026-10-16)
 
 `src/llm_engine/dot.rs` uses the real subscribed Dot inbox, not an OpenAI-like
 model endpoint. `request` binds a once-generated UUID, action, source, both PNG
 digests and normalized notebook context using the server's canonical JSON.
 `submit` retries that identical request after transport errors, server errors
 or an interrupted acceptance body. `validate_result` checks every response's
-identity/fingerprint and the final Markdown digest. `execute` returns after
-acceptance for send-only, or polls for a bounded answer-here window. No remote
+identity/fingerprint and the final Markdown digest. `execute` now rejects
+answer-writing before network access and returns after acceptance for send-only.
+The historical bounded answer polling code is unreachable in this release. No remote
 SVG, tool call or pen command is executed. Cross-language fixture and local
 HTTP tests cover canonicalization, binding, digest and retry behavior.
 

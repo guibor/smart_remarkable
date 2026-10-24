@@ -743,6 +743,12 @@ pub async fn processing_task(
     last_selection_fingerprint: Arc<Mutex<Option<u64>>>,
 ) -> Result<ProcessingOutcome> {
     info!("Processing task: starting");
+    let dot_receipt = (config.engine.as_deref() == Some("dot") && !config.is_test_mode())
+        .then(crate::dot_receipt::Receipt::new);
+    if config.engine.as_deref() == Some("dot") {
+        anyhow::ensure!(trigger_source == TriggerSource::SendButton,
+            "Dot only accepts the native send button; answer-writing is disabled");
+    }
     if let Ok(mut guard) = write_back_view_guard.lock() {
         *guard = WriteBackGuardState::Unrestricted;
     }
@@ -1203,7 +1209,11 @@ pub async fn processing_task(
     let has_selection = selection.is_some();
     let is_test_mode = config.is_test_mode();
     let mut legacy_selection_dismissed = false;
+    let dot_acknowledge = dot_receipt.as_ref().map(|receipt| receipt.acknowledgement());
     let status_callback = Some(Box::new(move |status: ModelExecutionStatus| {
+        if matches!(status, ModelExecutionStatus::RemoteAccepted) {
+            if let Some(acknowledge) = &dot_acknowledge { acknowledge(); }
+        }
         if !is_test_mode && !legacy_selection_dismissed && should_dismiss_legacy_accepted_selection(legacy_selection, trigger_source, has_selection, &status) {
             match keyboard_for_legacy.lock() {
                 Ok(mut keyboard) => match keyboard.dismiss_captured_selection() {

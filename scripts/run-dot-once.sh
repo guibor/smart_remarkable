@@ -39,12 +39,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 cleanup
 mkdir -m 0700 "$STATE/app-home"
-cd "$HERE"
+cd "$STATE/app-home"
 # No DOT_GUARDED_INK_QUALIFIED flag: injection remains gated until firmware
 # input/owner qualification. Queued/answered Dot/PDF delivery is independent.
 /usr/bin/env -i HOME="$STATE/app-home" PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-    RUST_LOG=info DOT_BASE_URL="$DOT_BASE_URL" DOT_TABLET_KEY="$DOT_TABLET_KEY" \
-    ./smart_remarkable --engine dot --model dot --select-mode \
+    RUST_LOG=info SMART_DOT_FRAMEBUFFER_SPY=1 DOT_BASE_URL="$DOT_BASE_URL" DOT_TABLET_KEY="$DOT_TABLET_KEY" \
+    "$HERE/smart_remarkable" --engine dot --model dot --select-mode \
     --trigger-corner buttons-only --prompt selection.json --no-draw-progress &
 WORKER=$!
 result=0
