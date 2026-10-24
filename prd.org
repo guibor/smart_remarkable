@@ -15,10 +15,12 @@
   invalid-envelope transport without submitting synthetic chat content.
 - [ ] Owner's physical notebook lasso and actual contextual Dot reply acceptance
   remains separate; installation does not wait for a manual-test checkpoint.
-- Usage: lasso ink/images in a full-size notebook, then tap the paper-plane
-  Send to Dot action. No AppLoad detour or long hold is required. The brief
+- Usage: lasso ink/images in a full-size notebook, then tap the icon-only
+  AI-sparkles action. No AppLoad detour or long hold is required. The brief
   receipt means queued in Dot, not that an answer has already arrived.
 * Changed send-only requirement
+- User prefers the stock AI-sparkles icon with no Send to Dot label for both
+  notebook lasso and PDF selection. This icon sends only; it does not write back.
 - Sending no longer waits for local answer-renderer qualification. That work
   stays disabled and separate; the current install must contain no Dot writer.
 

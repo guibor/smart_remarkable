@@ -508,8 +508,7 @@ AFFECT /qml/common/SceneSelectionHandler.qml
                     enabled: selectionRoot.smartRemarkableContextAllowed && !Values.smartDotSendBusy
                     focusPolicy: Qt.NoFocus
                     type: tools.type
-                    iconSource: "qrc:/ark/icons/send"
-                    text: qsTr("Send to Dot")
+                    iconSource: "qrc:/ark/icons/notebook_sparkles"
                     selected: smartRemarkableLlmButton.pendingMode === "whatsapp_only"
 
                     onClicked: smartRemarkableLlmButton.requestMode(

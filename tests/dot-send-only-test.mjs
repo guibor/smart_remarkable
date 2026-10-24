@@ -18,6 +18,9 @@ assert.doesNotMatch(qml,/MouseArea|TapHandler|focus:\s*true/);
 const source=fs.readFileSync(new URL('../xovi-qmd/llm-button-dot-3.29.0.153.source.qmd',import.meta.url),'utf8');
 assert.match(source,/id: smartRemarkableLlmButton\s+visible: false/);
 assert.match(source,/mode !== "whatsapp_only" \|\| Values.smartDotSendBusy/);
+const button=source.slice(source.indexOf('id: smartRemarkableSendButton'),source.indexOf('END AFFECT',source.indexOf('id: smartRemarkableSendButton')));
+assert.match(button,/iconSource: "qrc:\/ark\/icons\/notebook_sparkles"/);
+assert.doesNotMatch(button,/text: qsTr\("Send to Dot"\)/);
 const capture=source.slice(source.indexOf('function captureSnapshot()'),source.indexOf('function ensureAppLoadHelper()')).trim();
 const root={smartRemarkableContextAllowed:true,width:1620,height:2160,
  mapToGlobal:(x,y)=>({x,y}),smartRemarkableDocumentId:'11111111-1111-4111-8111-111111111111',

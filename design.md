@@ -7,6 +7,8 @@ the transport; `register_tools` registers no Dot answer callback. The launcher
 rejects non-send descriptors when Dot is configured. The native QMD hides the
 answer action and permits only `whatsapp_only` (legacy internal enum naming;
 the wire mode/destination is `send_to_dot`).
+The surviving send action uses the stock notebook-sparkles icon without a text
+label, matching the native PDF selection action. It still means send, not write.
 
 `dot_receipt::Receipt` publishes only a timestamp and capture/sent/failed state
 to a private atomic file in `/run`; its drop guard reports failures on early
@@ -16,7 +18,7 @@ accepted selection helper's passive toast without input interception. It never
 opens a notebook file or invokes a writer. Existing nonce-bound prepare/capture/
 close acknowledgements continue to bind the crop and supporting page to one
 native selection. The complete Pro cohort is active under transaction
-`20261024T204500Z-2`, with UI749060 and Dates5396. Capture, worker lifecycle,
+`20261024T205000Z-3`, with UI754916 and Dates5396. Capture, worker lifecycle,
 authenticated endpoint and startup checks passed; physical lasso/actual reply
 acceptance is distinct. See the dated playbook receipt for exact artifacts.
 

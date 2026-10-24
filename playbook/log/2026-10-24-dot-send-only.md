@@ -3,6 +3,22 @@
 User request: finish notebook lasso sending and install on Pro, explicitly keep
 answer-writing disabled. Current firmware branch is retained; Move is untouched.
 
+## Final icon-only follow-up
+
+The user requested the same icon-only AI sparkles on notebook and PDF selections.
+Both QMD changes remove only the label and replace the send icon. The final
+owner is`20261024T205000Z-3`, manifest
+`1d45b4e734a5ed1580710775a2e31b5d3265d18e8e0dbb3baf4e3c4056a6fb92`.
+UI754916/Dates5396, owner753408/watch754447all active with zero restarts;
+13runtimeQMDs, notebook/PDF Dot, WebPDF and Companion hosts ready, rootRO.
+All17settings and helper manifest remain exact. Native preimage
+`f10e32b2c702ddaa914018f3f895f74434779093fc66ffed2e3742f5abfd36d7`
+passed Mac hash/gzip/tar checks. Smart QMD is now
+`664f7ddf5233c293b55e574088be15a65222dfae7e3f61837b5711c1c7e9741e`;
+the accepted binary/helper payloads below are unchanged. Earlier204500runtime
+evidence below is historical, recovered through its own controller before this
+UI-only follow-up. Physical lasso/real reply acceptance remains separate.
+
 ## Implementation
 
 - Native lasso paper-plane sends ink/image/mixed selections through v3 snapshot,
