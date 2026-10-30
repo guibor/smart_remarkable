@@ -1,5 +1,13 @@
 #+title: Smart Remarkable Paper Pro Deployment
 
+* Privacy-preserving capture verification (2026-10-30)
+- The qualification probe supports =--verify-only=: exercise the same guarded
+  framebuffer capture in memory and report dimensions, without saving or
+  exporting screen contents. This does not send a request to Dot.
+- Keep physical selection and actual reply acceptance separate from this check.
+- [X] Build and run on the qualified Pro 3.29.1.0 owner: 1620x2160 capture
+  verified without writing pixels to disk or sending a chat request.
+
 * Send-only Pro activation (2026-10-24)
 - Enable notebook lasso Send to Dot with the selected image plus same-frame
   page view, notebook name and stable page identity/number. Keep all answer

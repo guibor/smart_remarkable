@@ -2303,6 +2303,19 @@ not full plugin registration, hook permissions, Gateway startup, or end-to-end
 device delivery; those remain separate deployment gates.
 ## Pro 3.29.1.0 qualification
 
+Operational correction 2026-10-30: the installed base-only Pro runtime caused
+`dot_framebuffer::capture` to refuse with `Capture requires qualified native
+owner`. This was an incomplete native restoration, not a reason to remove the
+capture guard. Maintenance activated the matching Companion native owner after
+backup/fresh-state checks; both Dot hosts are now ready and the guarded worker
+is rearmed. Both authenticated selection routes accept invalid-envelope checks
+without producing messages. Keep source capture/layout and send-only boundaries.
+
+`examples/dot-capture-probe.rs` exercises the production guarded framebuffer
+reader. With `--verify-only`, it holds the captured frame only in memory and
+reports dimensions; it neither saves nor exports pixels. The existing explicit
+output-path mode remains available for separately authorized visual diagnostics.
+
 This branch retains the accepted application behavior and device-local state.
 Firmware-specific generators, guards and qualification entrypoints use the
 fresh Ferrari stock binary and independently captured resource table. Historical
