@@ -703,3 +703,10 @@ content remains in memory; no durable local outbox is introduced.
 - Consider a user-friendly Mac shortcut for the one-shot SSH command.
 - Detect an already-occupied stock text object in the automatic placement area and choose the next free vertical position.
 - Treat every future firmware version as unsupported until a new exact resource extraction, compatibility allowlist, inert canary, and rollback validation are completed.
+* Pro 3.29.1.0 restoration (2026-10-30)
+- Preserve accepted features and this device's settings; Move remains independent.
+- [X] Complete exact-firmware composition and guarded base installation.
+- [X] Record installed hashes and recovery receipt separately from physical use.
+- See PRO-3.29.1.0-RECEIPT.md; final combined native activation is separately pending.
+** Changed requirements
+- This branch targets 3.29.1.0; older firmware receipts do not qualify it.

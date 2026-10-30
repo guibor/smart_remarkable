@@ -17,7 +17,7 @@ done
 . "$HERE/scripts/dot-runtime-env.sh"
 smart_load_dot_runtime_env "$HERE/.dot.env" || { echo 'Invalid private Dot configuration' >&2; exit 2; }
 [ -c /dev/uinput ] || { echo 'Built-in input support unavailable; no module will be loaded' >&2; exit 1; }
-grep -Fxq 'IMG_VERSION="3.29.0.153"' /etc/os-release || exit 1
+grep -Fxq 'IMG_VERSION="3.29.1.0"' /etc/os-release || exit 1
 [ "$(tr -d '\r\n' </sys/devices/soc0/machine)" = 'reMarkable Ferrari' ] || exit 1
 STATE=/run/smart-remarkable
 [ ! -L "$STATE" ] || exit 1

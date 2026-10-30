@@ -30,7 +30,7 @@ fn incarnation(pid: &str) -> Result<String> {
 }
 pub fn capture() -> Result<image::DynamicImage> {
     ensure!(fs::read_to_string("/sys/devices/soc0/machine")?.trim() == "reMarkable Ferrari", "Pro capture only");
-    ensure!(fs::read_to_string("/etc/os-release")?.lines().any(|l| l == "IMG_VERSION=\"3.29.0.153\""), "Unqualified capture firmware");
+    ensure!(fs::read_to_string("/etc/os-release")?.lines().any(|l| l == "IMG_VERSION=\"3.29.1.0\""), "Unqualified capture firmware");
     let output = std::process::Command::new("pidof").arg("xochitl").output()?;
     let pid = std::str::from_utf8(&output.stdout)?.trim();
     ensure!(!pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()), "Ambiguous UI process");

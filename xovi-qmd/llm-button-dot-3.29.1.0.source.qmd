@@ -1,0 +1,688 @@
+; Smart Remarkable send-only Dot selection menu. Answer-writing disabled.
+; Exact target: Ferrari firmware 3.29.1.0.
+; No credentials, file I/O, network I/O, native ABI calls, or Draw action.
+
+VERSION 3.29.1.0
+
+AFFECT /qml/common/Values.qml
+    TRAVERSE Item
+        LOCATE BEFORE ALL
+        INSERT {
+            property bool smartDotSendBusy: false
+            property double smartDotSendEpoch: 0
+            signal smartDotSendFailed()
+        }
+    END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/main/MainView.qml
+    TRAVERSE Background#root
+        LOCATE AFTER ALL
+        INSERT {
+            Loader {
+                id: smartDotReceiptHost
+                anchors.fill: parent
+                z: 21001
+                source: "file:///home/root/xovi/exthome/appload/smart-remarkable/integration/DotSendStatus.qml"
+                visible: item && item.notifying
+                onLoaded: console.log("Dot notebook: receipt host ready")
+            }
+            Connections {
+                target: Values
+                function onSmartDotSendFailed() {
+                    if (smartDotReceiptHost.item) smartDotReceiptHost.item.consume({state:"failed", epoch_ms:Date.now()})
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT
+
+AFFECT /qml/common/SceneSelectionHandler.qml
+    TRAVERSE Item#selectionRoot
+        LOCATE BEFORE SelectionContextualMenu#tools
+        INSERT {
+            // Exact DeviceSceneView bindings; no parent-chain discovery.
+            property var smartRemarkableOwner: null
+            property bool smartRemarkableContextAllowed: false
+            onSmartRemarkableContextAllowedChanged: {
+                if (!smartRemarkableContextAllowed) {
+                    smartRemarkableLlmButton.clearPendingMode()
+                    if (smartRemarkableOwner) smartRemarkableOwner.invalidateWrite()
+                }
+            }
+            property string smartRemarkableDocumentId: ""
+            property string smartRemarkablePageId: ""
+            property int smartRemarkablePageIndex: -1
+        }
+
+        TRAVERSE SelectionContextualMenu#tools
+            LOCATE AFTER ArkControls.ContextualMenu.Button#selectionDuplicate
+            INSERT {
+                ArkControls.ContextualMenu.Button {
+                    id: smartRemarkableLlmButton
+                    visible: false
+                    focusPolicy: Qt.NoFocus
+                    type: tools.type
+                    // One pending snapshot shared by both buttons prevents a
+                    // rapid answer-here + agent double tap from creating two
+                    // requests. The root-only launcher binds this snapshot to
+                    // a kernel-random nonce; QML never invents security tokens.
+                    enabled: selectionRoot.smartRemarkableContextAllowed
+                    property string pendingMode: ""
+                    property string pendingSnapshot: ""
+                    property bool pendingPrepared: false
+                    property var appLoadHelper: null
+                    iconSource: "qrc:/ark/icons/notebook_sparkles"
+                    selected: pendingMode === "write_back"
+
+                    // The stock file already derives SelectionPreview.tinted,
+                    // border visibility, and menu visibility from
+                    // controlsAreVisible. Override only that stock-owned flag:
+                    // the selected strokes/images remain rendered while tint
+                    // and chrome disappear, and the original binding/value is
+                    // restored on every failure.
+                    Binding {
+                        target: selectionRoot
+                        property: "controlsAreVisible"
+                        value: false
+                        when: smartRemarkableLlmButton.pendingPrepared
+                        restoreMode: Binding.RestoreBindingOrValue
+                    }
+
+                    Connections {
+                        target: selectionRoot
+                        function onVisibleChanged() {
+                            smartRemarkableLlmButton.clearPendingMode()
+                            if (selectionRoot.visible) {
+                                if (selectionRoot.smartRemarkableOwner)
+                                    selectionRoot.smartRemarkableOwner.invalidateWrite()
+                                // Compile/import the AppLoad helper while the
+                                // menu is already visible, before the user can
+                                // tap either action. Keep one parent-owned
+                                // helper for descriptor and acknowledgement
+                                // launches instead of recompiling each phase.
+                                Qt.callLater(function() {
+                                    if (selectionRoot.visible) {
+                                        smartRemarkableLlmButton.ensureAppLoadHelper()
+                                    }
+                                })
+                            }
+                        }
+                    }
+
+                    // The direct AppLoad library call reports only whether the
+                    // small launcher process started. If startup or
+                    // pre-acceptance transport fails, keep the selection
+                    // visible but release the UI guard after a bounded interval
+                    // so the same lasso can be retried.
+                    Timer {
+                        id: smartRemarkablePendingReset
+                        interval: 45000
+                        repeat: false
+                        onTriggered: smartRemarkableLlmButton.clearPendingMode(true)
+                    }
+
+                    // Phase one: immediately before capture, re-read the live
+                    // stock selection and hide its chrome only if geometry,
+                    // kind, and orientation still equal the tapped snapshot.
+                    Shortcut {
+                        enabled: smartRemarkableLlmButton.pendingMode !== "" &&
+                            !smartRemarkableLlmButton.pendingPrepared &&
+                            selectionRoot.visible
+                        sequence: "Ctrl+Alt+Shift+8"
+                        onActivated: {
+                            var snapshot = smartRemarkableLlmButton.captureSnapshot()
+                            if (snapshot === "" || snapshot !==
+                                    smartRemarkableLlmButton.pendingSnapshot) {
+                                smartRemarkableLlmButton.clearPendingMode()
+                                return
+                            }
+                            smartRemarkableLlmButton.pendingPrepared = true
+                            Qt.callLater(function() {
+                                if (!smartRemarkableLlmButton.pendingPrepared ||
+                                        !selectionRoot.visible ||
+                                        smartRemarkableLlmButton.captureSnapshot() !==
+                                            snapshot ||
+                                        selectionRoot.controlsAreVisible !== false ||
+                                        !smartRemarkableLlmButton.launchArgument(
+                                            "--selection-prepare-ack=" + snapshot)) {
+                                    smartRemarkableLlmButton.clearPendingMode()
+                                }
+                            })
+                        }
+                    }
+
+                    // A local capture/validation failure restores the prepared
+                    // selection without closing it. This shortcut is disabled
+                    // once close() has hidden the handler.
+                    Shortcut {
+                        enabled: smartRemarkableLlmButton.pendingMode !== "" &&
+                            smartRemarkableLlmButton.pendingPrepared &&
+                            selectionRoot.visible
+                        sequence: "Ctrl+Alt+Shift+7"
+                        onActivated: smartRemarkableLlmButton.clearPendingMode()
+                    }
+
+                    // Phase two: after the immutable crop exists, revalidate
+                    // the same live selection again and call the exact stock
+                    // close() path. AppLoad publishes an acknowledgement only
+                    // after the handler is no longer visible.
+                    Shortcut {
+                        enabled: smartRemarkableLlmButton.pendingMode !== "" &&
+                            smartRemarkableLlmButton.pendingPrepared &&
+                            selectionRoot.visible
+                        sequence: "Ctrl+Alt+Shift+9"
+                        onActivated: {
+                            var snapshot = smartRemarkableLlmButton.captureSnapshot()
+                            if (snapshot === "" || snapshot !==
+                                    smartRemarkableLlmButton.pendingSnapshot) {
+                                smartRemarkableLlmButton.clearPendingMode()
+                                return
+                            }
+                            selectionRoot.smartRemarkableOwner.closeAndAcknowledge(
+                                selectionRoot, snapshot, smartRemarkableLlmButton.pendingMode)
+                        }
+                    }
+
+                    function clearPendingMode(failed) {
+                        if (failed && Values.smartDotSendBusy) Values.smartDotSendFailed()
+                        smartRemarkablePendingReset.stop()
+                        pendingPrepared = false
+                        pendingSnapshot = ""
+                        pendingMode = ""
+                    }
+
+                    function requestMode(mode) {
+                        console.log("SR_WAND stage=click")
+                        if (pendingMode !== "") {
+                            console.warn("SR_WAND stage=pending-rejected")
+                            return
+                        }
+                        if (mode !== "whatsapp_only" || Values.smartDotSendBusy) {
+                            console.warn("SR_WAND stage=mode-rejected")
+                            return
+                        }
+                        var snapshot = captureSnapshot()
+                        if (snapshot === "") {
+                            console.warn("SR_WAND stage=snapshot-rejected")
+                            return
+                        }
+                        var descriptor = "v3," + mode + "," +
+                            snapshot.substring(3) + "," +
+                            Math.floor(Date.now())
+                        pendingMode = mode
+                        pendingSnapshot = snapshot
+                        pendingPrepared = false
+                        Values.smartDotSendEpoch = Date.now()
+                        Values.smartDotSendBusy = true
+                        smartRemarkablePendingReset.restart()
+                        // Let the stock selected state paint before AppLoad's
+                        // synchronous process-start check. Revalidate the exact
+                        // pending snapshot in case the stock menu changed in
+                        // the intervening event-loop turn.
+                        Qt.callLater(function() {
+                            console.log("SR_WAND stage=deferred-enter")
+                            if (pendingMode !== mode ||
+                                    pendingSnapshot !== snapshot) {
+                                console.warn(
+                                    "SR_WAND stage=deferred-pending-rejected")
+                                clearPendingMode(true)
+                                return
+                            }
+                            if (!selectionRoot.visible) {
+                                console.warn(
+                                    "SR_WAND stage=deferred-hidden-rejected")
+                                clearPendingMode(true)
+                                return
+                            }
+                            if (captureSnapshot() !== snapshot) {
+                                console.warn(
+                                    "SR_WAND stage=deferred-snapshot-rejected")
+                                clearPendingMode(true)
+                                return
+                            }
+                            if (!launchArgument(
+                                    "--selection-button-descriptor=" +
+                                    descriptor)) {
+                                console.warn(
+                                    "SR_WAND stage=launch-rejected")
+                                clearPendingMode(true)
+                            }
+                        })
+                    }
+
+                    function captureSnapshot() {
+                        if (!selectionRoot.smartRemarkableContextAllowed ||
+                                !controller || selectionRoot.width <= 0 ||
+                                selectionRoot.height <= 0) {
+                            return ""
+                        }
+
+                        var hasStroke =
+                            controller.selectionContainsStroke === true
+                        var hasImage =
+                            controller.selectionContainsImage === true
+                        var kind = ""
+                        if (hasStroke && hasImage) {
+                            kind = "mixed"
+                        } else if (hasStroke) {
+                            kind = "ink"
+                        } else if (hasImage) {
+                            kind = "image"
+                        } else {
+                            // Unknown/empty stock selections are not sent and
+                            // never fall back to framebuffer color detection.
+                            return ""
+                        }
+
+                        // Bind the descriptor to the stable transform from this
+                        // view into the physical scene. Fail closed for a 90°,
+                        // mirrored, sheared, or otherwise unknown transform.
+                        var rootOrigin = selectionRoot.mapToGlobal(0, 0)
+                        var rootX = selectionRoot.mapToGlobal(
+                            selectionRoot.width, 0)
+                        var rootY = selectionRoot.mapToGlobal(
+                            0, selectionRoot.height)
+                        var xDx = rootX.x - rootOrigin.x
+                        var xDy = rootX.y - rootOrigin.y
+                        var yDx = rootY.x - rootOrigin.x
+                        var yDy = rootY.y - rootOrigin.y
+                        // mapToGlobal may round a genuinely axis-aligned point
+                        // by a fraction of one logical pixel. Permit only that
+                        // bounded noise: a modest rotation or shear must not
+                        // be mislabelled as normal/rot180. The two finite,
+                        // positive axis scales must also describe one uniform
+                        // scene transform rather than an unknown distortion.
+                        var offAxisTolerance = 0.5
+                        var xScale = Math.abs(xDx) / selectionRoot.width
+                        var yScale = Math.abs(yDy) / selectionRoot.height
+                        // This send-only Pro release captures the physical
+                        // 1620x2160 viewport. Reject reduced/moved panes rather
+                        // than mapping relative coordinates onto another view.
+                        if (Math.abs(Math.min(rootOrigin.x, rootX.x, rootY.x)) > 1 ||
+                                Math.abs(Math.min(rootOrigin.y, rootX.y, rootY.y)) > 1 ||
+                                Math.abs(Math.max(rootOrigin.x, rootX.x, rootY.x) - 1620) > 1 ||
+                                Math.abs(Math.max(rootOrigin.y, rootX.y, rootY.y) - 2160) > 1) return ""
+                        var scaleTolerance = Math.max(
+                            0.001, Math.max(xScale, yScale) * 0.001)
+                        if (!isFinite(xDx) || !isFinite(xDy) ||
+                                !isFinite(yDx) || !isFinite(yDy) ||
+                                !isFinite(xScale) || !isFinite(yScale) ||
+                                xScale <= 0 || yScale <= 0 ||
+                                Math.abs(xDy) > offAxisTolerance ||
+                                Math.abs(yDx) > offAxisTolerance ||
+                                Math.abs(xScale - yScale) >
+                                    scaleTolerance) {
+                            return ""
+                        }
+                        var orientation = ""
+                        if (xDx > 0 && yDy > 0) {
+                            orientation = "normal"
+                        } else if (xDx < 0 && yDy < 0) {
+                            orientation = "rot180"
+                        } else {
+                            return ""
+                        }
+
+                        // Map all four selection corners into the full logical
+                        // view and transmit axis-aligned fixed-point bounds.
+                        var p0 = selection.mapToItem(selectionRoot, 0, 0)
+                        var p1 = selection.mapToItem(
+                            selectionRoot, selection.width, 0)
+                        var p2 = selection.mapToItem(
+                            selectionRoot, 0, selection.height)
+                        var p3 = selection.mapToItem(
+                            selectionRoot, selection.width, selection.height)
+                        var minX = Math.min(p0.x, p1.x, p2.x, p3.x)
+                        var minY = Math.min(p0.y, p1.y, p2.y, p3.y)
+                        var maxX = Math.max(p0.x, p1.x, p2.x, p3.x)
+                        var maxY = Math.max(p0.y, p1.y, p2.y, p3.y)
+                        if (!isFinite(minX) || !isFinite(minY) ||
+                                !isFinite(maxX) || !isFinite(maxY) ||
+                                minX < 0 || minY < 0 ||
+                                maxX > selectionRoot.width ||
+                                maxY > selectionRoot.height ||
+                                maxX <= minX || maxY <= minY) {
+                            return ""
+                        }
+
+                        var scale = 1000000
+                        var x0 = Math.round(
+                            minX * scale / selectionRoot.width)
+                        var y0 = Math.round(
+                            minY * scale / selectionRoot.height)
+                        var x1 = Math.round(
+                            maxX * scale / selectionRoot.width)
+                        var y1 = Math.round(
+                            maxY * scale / selectionRoot.height)
+                        if (x0 < 0 || y0 < 0 || x1 > scale ||
+                                y1 > scale || x1 <= x0 || y1 <= y0) {
+                            return ""
+                        }
+
+                        // Device/page identity and visible page geometry are
+                        // explicit firmware-pinned bindings supplied by
+                        // DeviceSceneView. Arbitrary parent walking and title
+                        // inference are intentionally forbidden.
+                        var documentId = String(
+                            selectionRoot.smartRemarkableDocumentId)
+                        var pageId = String(
+                            selectionRoot.smartRemarkablePageId)
+                        var pageIndex =
+                            selectionRoot.smartRemarkablePageIndex
+                        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+                                    documentId) ||
+                                !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(
+                                    pageId) ||
+                                !isFinite(pageIndex) ||
+                                Math.floor(pageIndex) !== pageIndex ||
+                                pageIndex < 0 || pageIndex > 1000000) {
+                            return ""
+                        }
+                        var pageIdHex = ""
+                        for (var pageIdIndex = 0;
+                                pageIdIndex < pageId.length;
+                                pageIdIndex++) {
+                            var byteHex = pageId.charCodeAt(
+                                pageIdIndex).toString(16)
+                            if (byteHex.length !== 2) {
+                                return ""
+                            }
+                            pageIdHex += byteHex
+                        }
+
+                        var pageRect = selectionRoot.pageBounds
+                        if (!pageRect || !isFinite(pageRect.x) ||
+                                !isFinite(pageRect.y) ||
+                                !isFinite(pageRect.width) ||
+                                !isFinite(pageRect.height) ||
+                                pageRect.width <= 0 ||
+                                pageRect.height <= 0) {
+                            return ""
+                        }
+                        var pageLeft = Math.max(0, pageRect.x)
+                        var pageTop = Math.max(0, pageRect.y)
+                        var pageRight = Math.min(selectionRoot.width,
+                            pageRect.x + pageRect.width)
+                        var pageBottom = Math.min(selectionRoot.height,
+                            pageRect.y + pageRect.height)
+                        if (pageRight <= pageLeft ||
+                                pageBottom <= pageTop) {
+                            return ""
+                        }
+                        var pageX0 = Math.floor(
+                            pageLeft * scale / selectionRoot.width)
+                        var pageY0 = Math.floor(
+                            pageTop * scale / selectionRoot.height)
+                        var pageX1 = Math.ceil(
+                            pageRight * scale / selectionRoot.width)
+                        var pageY1 = Math.ceil(
+                            pageBottom * scale / selectionRoot.height)
+                        if (pageX0 < 0 || pageY0 < 0 ||
+                                pageX1 > scale || pageY1 > scale ||
+                                pageX1 <= pageX0 || pageY1 <= pageY0) {
+                            return ""
+                        }
+                        var pageCompleteness =
+                            pageRect.x >= 0 && pageRect.y >= 0 &&
+                            pageRect.x + pageRect.width <=
+                                selectionRoot.width &&
+                            pageRect.y + pageRect.height <=
+                                selectionRoot.height ?
+                                "full_page" : "viewport_only"
+
+                        return "v3," + kind + "," + orientation + "," +
+                            x0 + "," + y0 + "," + x1 + "," + y1 + "," +
+                            documentId + "," + pageIdHex + "," +
+                            pageIndex + "," + pageX0 + "," + pageY0 + "," +
+                            pageX1 + "," + pageY1 + "," +
+                            pageCompleteness
+                    }
+
+                    function ensureAppLoadHelper() {
+                        // Resolve AppLoad dynamically after the stock selection
+                        // appears. Keeping the module out of the host file's
+                        // static imports lets the stock selection component
+                        // keep loading if AppLoad is ever absent or disabled.
+                        // Call AppLoadLibrary directly:
+                        // AppLoadLauncher broadcasts to every loaded AppLoad
+                        // view, and its non-QTFB receiver also dereferences an
+                        // undefined window after spawning the process. A
+                        // direct library call creates exactly one process and
+                        // returns its PID without entering that window path.
+                        if (appLoadHelper) {
+                            return appLoadHelper
+                        }
+                        try {
+                            appLoadHelper = Qt.createQmlObject(
+                                'import QtQuick;\n' +
+                                'import net.asivery.AppLoad 1.0;\n' +
+                                'AppLoadLibrary { function go(argument) { return launchExternal("external::smart-remarkable", -1, [argument], ({})) } }',
+                                selectionRoot,
+                                "smart_remarkable_appload_launcher"
+                            )
+                            if (appLoadHelper) {
+                                console.log(
+                                    "Smart Remarkable launcher helper ready")
+                            }
+                        } catch (error) {
+                            console.warn("Smart Remarkable launcher unavailable")
+                            if (appLoadHelper) {
+                                appLoadHelper.destroy()
+                                appLoadHelper = null
+                            }
+                        }
+                        return appLoadHelper
+                    }
+
+                    function launchArgument(argument) {
+                        var helper = ensureAppLoadHelper()
+                        if (!helper) {
+                            return false
+                        }
+                        try {
+                            var startedAt = Date.now()
+                            var pid = helper.go(argument)
+                            console.log(
+                                "Smart Remarkable launcher process start " +
+                                "pid=" + pid + " elapsed_ms=" +
+                                (Date.now() - startedAt))
+                            if (pid > 0) {
+                                return true
+                            }
+                            console.warn(
+                                "Smart Remarkable launcher did not start")
+                        } catch (error) {
+                            console.warn("Smart Remarkable launcher unavailable")
+                            helper.destroy()
+                            appLoadHelper = null
+                        }
+                        return false
+                    }
+
+                    onClicked: requestMode("write_back")
+                }
+
+                ArkControls.ContextualMenu.Button {
+                    id: smartRemarkableSendButton
+                    enabled: selectionRoot.smartRemarkableContextAllowed && !Values.smartDotSendBusy
+                    focusPolicy: Qt.NoFocus
+                    type: tools.type
+                    iconSource: "qrc:/ark/icons/notebook_sparkles"
+                    selected: smartRemarkableLlmButton.pendingMode === "whatsapp_only"
+
+                    onClicked: smartRemarkableLlmButton.requestMode(
+                        "whatsapp_only")
+                }
+            }
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+    TRAVERSE FocusScope
+
+        LOCATE BEFORE Component#selectionHandlerComponent
+        INSERT {
+            // Persistent per-DeviceSceneView owner. The stock selection child
+            // is destroyed by selectionCleared; delayed authorization must not
+            // live on that child or preserve it artificially.
+            Item {
+                id: smartDotOwner
+                width: 0
+                height: 0
+                property var helper: null
+                property string leaseSnapshot: ""
+                property string leaseIdentity: ""
+                property double leaseStarted: 0
+                property int writeChecks: 0
+                property int generation: 0
+                property bool contextAllowed: smartRemarkableSingleViewAllowed()
+                property string currentIdentity: root.document && root.document.id !== undefined ?
+                    String(root.document.id) + "/" + String(root.pageId) + "/" + String(root.page) : ""
+                onCurrentIdentityChanged: invalidateWrite()
+                onContextAllowedChanged: { if (!contextAllowed) invalidateWrite() }
+                function smartRemarkableSingleViewAllowed() {
+                        if (!root.visible) return false
+                        // Standalone stock view has no Companion owner property.
+                        if (root.cnDocumentViewOwner === undefined) return true
+                        var owner = root.cnDocumentViewOwner
+                        if (!owner || owner.cnSecondary || !owner.visible ||
+                                root.cnPaired || root.cnQuickPad ||
+                                root.cnLayoutBusy || root.cnAdmissionLocked) return false
+                        var host = owner.cnHost
+                        return !!host && !host.paired && !host.quickPadActive &&
+                            !host.cornerPaneActive && !host.transitionBusy &&
+                            !host.restoring && !host.modalOpen && !host.closing
+                    }
+                function invalidateWrite() {
+                    generation += 1
+                    leaseSnapshot = ""
+                    leaseIdentity = ""
+                    leaseStarted = 0
+                    writeChecks = 0
+                    leaseExpiry.stop()
+                }
+                function launch(argument) {
+                    try {
+                        if (!helper) {
+                            helper = Qt.createQmlObject(
+                                'import QtQuick; import net.asivery.AppLoad 1.0; AppLoadLibrary { function go(arg) { return launchExternal("external::smart-remarkable", -1, [arg], ({})) } }',
+                                smartDotOwner, "smart_dot_owner_launcher")
+                        }
+                        return helper && helper.go(argument) > 0
+                    } catch (error) {
+                        return false
+                    }
+                }
+                function closeAndAcknowledge(handler, snapshot, mode) {
+                    invalidateWrite()
+                    if (!contextAllowed || currentIdentity === "") return
+                    var identity = currentIdentity
+                    var originalGeneration = generation
+                    if (mode === "write_back") {
+                        leaseSnapshot = snapshot
+                        leaseIdentity = identity
+                        leaseStarted = Date.now()
+                        leaseExpiry.restart()
+                    }
+                    // The stock signal may destroy handler immediately.
+                    handler.close()
+                    Qt.callLater(function() {
+                        if (!contextAllowed || generation !== originalGeneration ||
+                                currentIdentity !== identity ||
+                                (root.selectionHandler && root.selectionHandler.visible) ||
+                                !launch("--selection-close-ack=" + snapshot)) {
+                            invalidateWrite()
+                        }
+                    })
+                }
+                function authorizeWrite(finalPhase) {
+                    if (!contextAllowed || leaseSnapshot === "" ||
+                            currentIdentity !== leaseIdentity || writeChecks !== (finalPhase ? 1 : 0) ||
+                            Date.now() - leaseStarted > 210000 ||
+                            (root.selectionHandler && root.selectionHandler.visible)) {
+                        invalidateWrite()
+                        return
+                    }
+                    var snapshot = leaseSnapshot
+                    var challenge = ""
+                    if (finalPhase) {
+                        try {
+                            var xhr = new XMLHttpRequest()
+                            xhr.open("GET", "file:///run/smart-remarkable/write-challenge", false)
+                            xhr.send()
+                            challenge = String(xhr.responseText).trim()
+                            if (!/^[a-f0-9]{64}$/.test(challenge)) { invalidateWrite(); return }
+                        } catch (error) { invalidateWrite(); return }
+                    }
+                    writeChecks += 1
+                    if (writeChecks === 2) {
+                        // Consume before entering AppLoad, so reentry cannot
+                        // grant a third authorization for the same reply.
+                        leaseSnapshot = ""
+                        leaseExpiry.stop()
+                    }
+                    var argument = finalPhase ?
+                        "--selection-write-final-ack=" + challenge + "," + snapshot :
+                        "--selection-write-ack=" + snapshot
+                    if (!launch(argument)) invalidateWrite()
+                }
+                Timer {
+                    id: leaseExpiry
+                    interval: 210000
+                    onTriggered: smartDotOwner.invalidateWrite()
+                }
+                Shortcut {
+                    sequence: "Ctrl+Alt+Shift+6"
+                    autoRepeat: false
+                    enabled: smartDotOwner.leaseSnapshot !== "" && smartDotOwner.contextAllowed && smartDotOwner.writeChecks === 0
+                    onActivated: smartDotOwner.authorizeWrite(false)
+                }
+                Shortcut {
+                    sequence: "Ctrl+Alt+Shift+5"
+                    autoRepeat: false
+                    enabled: smartDotOwner.leaseSnapshot !== "" && smartDotOwner.contextAllowed && smartDotOwner.writeChecks === 1
+                    onActivated: smartDotOwner.authorizeWrite(true)
+                }
+            }
+        }
+        TRAVERSE Component#selectionHandlerComponent
+            TRAVERSE SceneSelectionHandler#selectionHandler
+                LOCATE AFTER ALL
+                INSERT {
+                    smartRemarkableOwner: smartDotOwner
+                    smartRemarkableContextAllowed: smartDotOwner.contextAllowed
+                    function smartRemarkableBoundDocumentId() {
+                        if (!root.document ||
+                                root.document.id === undefined ||
+                                root.document.id === null) {
+                            return ""
+                        }
+                        return String(root.document.id)
+                    }
+
+                    function smartRemarkableBoundPageId() {
+                        if (root.pageId === undefined ||
+                                root.pageId === null) {
+                            return ""
+                        }
+                        return String(root.pageId)
+                    }
+
+                    function smartRemarkableBoundPageIndex() {
+                        return typeof root.page === "number" ?
+                            root.page : -1
+                    }
+
+                    pageBounds: root.pageBorderRect
+                    smartRemarkableDocumentId:
+                        smartRemarkableBoundDocumentId()
+                    smartRemarkablePageId: smartRemarkableBoundPageId()
+                    smartRemarkablePageIndex:
+                        smartRemarkableBoundPageIndex()
+                }
+            END TRAVERSE
+        END TRAVERSE
+    END TRAVERSE
+END AFFECT

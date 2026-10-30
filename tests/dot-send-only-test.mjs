@@ -15,7 +15,7 @@ Values.smartDotSendBusy=true;ctx.consume({state:'failed',epoch_ms:102});
 assert.equal(messages.length,2);assert.match(messages[1],/not confirmed/);
 assert.equal(ctx.toast.duration,6500);
 assert.doesNotMatch(qml,/MouseArea|TapHandler|focus:\s*true/);
-const source=fs.readFileSync(new URL('../xovi-qmd/llm-button-dot-3.29.0.153.source.qmd',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../xovi-qmd/llm-button-dot-3.29.1.0.source.qmd',import.meta.url),'utf8');
 assert.match(source,/id: smartRemarkableLlmButton\s+visible: false/);
 assert.match(source,/mode !== "whatsapp_only" \|\| Values.smartDotSendBusy/);
 const button=source.slice(source.indexOf('id: smartRemarkableSendButton'),source.indexOf('END AFFECT',source.indexOf('id: smartRemarkableSendButton')));
