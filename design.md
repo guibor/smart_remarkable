@@ -1,5 +1,21 @@
 # Design
 
+## Pro 3.30.0.108 integration
+
+The send-only QMD retains its persistent owner in DeviceSceneView, but forwards
+that owner and the exact scene reference into the new ItemSelection component.
+The selection handler derives stable document/page identity and page bounds
+from those explicit references, not a parent walk. Capture/close acknowledgements
+and Companion single-view exclusions are unchanged. Dispatch's menu closes the
+invoking toolbar through its native geometry container instead of root.toolbar.
+`dot_framebuffer::capture` and `run-dot-once.sh` have a new exact firmware gate;
+unchanged capture geometry still requires live read-only qualification before
+acceptance. No answer renderer or new server deployment is enabled.
+On November 5 the guarded native owner passed full startup, the worker rearmed,
+and `dot-capture-probe --verify-only` returned 1620x2160 without exporting pixels.
+Both authenticated Dot routes rejected empty envelopes with HTTP400. These
+checks do not claim that a new real selection/reply was sent during restoration.
+
 ## Send-only Pro installed (2026-10-24)
 
 The production Dot route now refuses write-back before capture and again in
@@ -2322,3 +2338,16 @@ fresh Ferrari stock binary and independently captured resource table. Historical
 controllers remain historical; maintenance seals a new combined controller from
 current files and settings before activation. Move and shared servers are unchanged.
 Static/build results are not installation or physical interaction acceptance.
+# 3.30 runtime toolbar correction
+
+The base inventory tracks the guarded timer r1 correction. A later r2 moves
+the timer below every stock Quick Settings control; update the inventory only
+after that signed transaction completes. Historical stage manifests stay sealed.
+
+The Dispatch notebook menu uses the native Utility group; ToolbarToolItem.type
+is read-only. Whole-stack tests reject legacy type assignments, and activation
+logs now explicitly reject invalid-property/unavailable-type startup errors.
+The first candidate was automatically returned to stock before retrying.
+Cross-repository composition also rejects unqualified token imports that shadow
+the stock Pages notification bar and requires an explicit keyboardsettings
+import wherever the native KeyboardSettings attached type is used.

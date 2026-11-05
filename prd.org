@@ -1,5 +1,18 @@
 #+title: Smart Remarkable Paper Pro Deployment
 
+* Pro 3.30.0.108 restoration (2026-11-05)
+- [ ] Reconcile the base inventory after the requested bottom-position timer.
+- Restore full single-view notebook lasso sending with same-frame page context,
+  icon-only sparkles and passive receipt; answer-writing remains disabled.
+- Preserve Dot pairing and all independent private settings. No server changes.
+- Adapt the moved ItemSelection component without losing DeviceSceneView identity
+  or permitting capture from unqualified Companion/split views.
+- [ ] Exact source/full-stack tests, worker build, guarded installation and
+  privacy-preserving capture verification. Move remains unchanged.
+** Changed requirement
+- The stock selection handler moved out of DeviceSceneView. Forward its owner
+  and page geometry explicitly; earlier 3.29 receipts do not qualify 3.30.
+
 * Privacy-preserving capture verification (2026-10-30)
 - The qualification probe supports =--verify-only=: exercise the same guarded
   framebuffer capture in memory and report dimensions, without saving or
@@ -718,3 +731,8 @@ content remains in memory; no durable local outbox is introduced.
 - See PRO-3.29.1.0-RECEIPT.md; final combined native activation is separately pending.
 ** Changed requirements
 - This branch targets 3.29.1.0; older firmware receipts do not qualify it.
+* Pro 3.30 runtime correction
+- [X] Activate corrected writable-group toolbar entries under a fresh watchdog.
+- [X] Verify in-RAM capture (1620x2160) and authenticated invalid-envelope
+  rejection on both Dot routes, without submitting notebook content.
+- Keep answer-writing disabled and native selection capture qualification separate.

@@ -1,0 +1,69 @@
+VERSION 3.30.0.108
+AFFECT /qml/common/Values.qml
+ TRAVERSE Item
+ LOCATE BEFORE ALL
+ INSERT { signal dispatchOpenRequested() }
+ END TRAVERSE
+END AFFECT
+AFFECT /qml/device/view/main/MainView.qml
+ TRAVERSE Background#root
+ LOCATE BEFORE ALL
+ INSERT {
+   Loader {
+     id: dispatchDocumentMenuLoader
+     anchors.fill: parent
+     z: 30000
+     onLoaded: {
+       if (item) item.openDispatch();
+     }
+     onStatusChanged: {
+       if (status === Loader.Error)
+         console.warn("Dispatch shortcut loader:", sourceComponent ? "component error" : source);
+     }
+   }
+   Connections {
+     target: Values
+     function onDispatchOpenRequested() {
+       if (!root.visible || !root.documentViewActive || root.passcodeHandler.userLocked) return;
+       if (dispatchDocumentMenuLoader.item) {
+         dispatchDocumentMenuLoader.item.openDispatch();
+       } else if (dispatchDocumentMenuLoader.status !== Loader.Loading) {
+         dispatchDocumentMenuLoader.setSource(
+           "file:///home/root/.local/lib/remarkable-dispatch-shortcut/DispatchLauncher.qml",
+           {appRoot: root, appWindowsRoot: navigator});
+       }
+     }
+   }
+ }
+ END TRAVERSE
+END AFFECT
+AFFECT /qt/qml/xofm/libs/toolbar/qml/SettingsMenu.qml
+ IMPORT common 1.0
+ TRAVERSE ToolbarTool#root
+ LOCATE BEFORE ALL
+ INSERT {
+   function dispatchCloseNotebookMenu() {
+     var container = Toolbar.geometry.container;
+     if (!container) return;
+     for (var i = 0; i < container.children.length; i++) {
+       var child = container.children[i];
+       if (typeof child.closeFoldout === "function") { child.closeFoldout(); return; }
+     }
+   }
+ }
+ TRAVERSE Component#settingsComponent > ColumnLayout#content
+ LOCATE BEFORE ALL
+ INSERT {
+   ToolbarTool {
+     group: ToolbarModel.ToolGroup.Utility
+     Layout.fillWidth: true
+     label: "Dispatch"
+     visible: root.documentType === "note" || root.documentType === "pdf"
+     shouldShow: root.documentType === "note" || root.documentType === "pdf"
+     iconSource: "qrc:/ark/icons/send"
+     onPressed: { root.dispatchCloseNotebookMenu(); Values.dispatchOpenRequested(); }
+   }
+ }
+ END TRAVERSE
+ END TRAVERSE
+END AFFECT
